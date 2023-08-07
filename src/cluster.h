@@ -36,4 +36,3 @@ typedef int (cluster_cb)(ntfs_inode *ino, ATTR_RECORD *attr, runlist_element *ru
 int cluster_find(ntfs_volume *vol, LCN c_begin, LCN c_end, cluster_cb *cb, void *data);
 
 #endif /* _CLUSTER_H_ */
-

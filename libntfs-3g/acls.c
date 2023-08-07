@@ -93,9 +93,9 @@ static const char authsidbytes[] = {
 		1,		/* revision */
 		1,		/* auth count */
 		0, 0, 0, 0, 0, 5,	/* base */
-		11, 0, 0, 0	/* 1st level */ 
+		11, 0, 0, 0	/* 1st level */
 };
-	        
+
 static const SID *authsid = (const SID*)authsidbytes;
 
 /*
@@ -1055,7 +1055,7 @@ BOOL ntfs_valid_posix(const struct POSIX_SECURITY *pxdesc)
 		}
 	}
 	if ((pxdesc->acccnt > 0)
-	   && ((checks[0].owners != 1) || (checks[0].groups != 1) 
+	   && ((checks[0].owners != 1) || (checks[0].groups != 1)
 		|| (checks[0].others != 1)))
 		ok = FALSE;
 		/* do not check owner, group or other are present in */
@@ -2024,7 +2024,7 @@ static BOOL build_group_denials_grant(ACL *pacl,
  *	- grants to owner (always present - first grant)
  *        + grants to designated user
  *        + mask denial to group (unless mask allows all)
- *	- denials to group (preventing grants to world to apply) 
+ *	- denials to group (preventing grants to world to apply)
  *	- grants to group (unless group has no more than world rights)
  *        + mask denials to designated group (unless mask allows all)
  *        + grants to designated group

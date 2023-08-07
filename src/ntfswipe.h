@@ -52,4 +52,3 @@ struct options {
 };
 
 #endif /* _NTFSWIPE_H_ */
-

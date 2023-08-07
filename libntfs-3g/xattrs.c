@@ -64,20 +64,20 @@
 /*
  *		       Posix ACL structures
  */
-        
+
 struct LE_POSIX_ACE {
 	le16 tag;
 	le16 perms;
-	le32 id;    
+	le32 id;
 } __attribute__((__packed__));
 
 struct LE_POSIX_ACL {
 	u8 version;
 	u8 flags;
-	le16 filler; 
+	le16 filler;
 	struct LE_POSIX_ACE ace[0];
 } __attribute__((__packed__));
-        
+
 #endif
 #endif
 

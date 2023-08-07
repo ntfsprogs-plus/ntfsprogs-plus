@@ -140,7 +140,7 @@ static int ntfs_bitmap_set_bits_in_run(ntfs_attr *na, s64 start_bit,
 	buf = ntfs_malloc(bufsize);
 	if (!buf)
 		return -1;
-	
+
 	/* Depending on @value, zero or set all bits in the allocated buffer. */
 	memset(buf, value ? 0xff : 0, bufsize);
 
@@ -246,9 +246,9 @@ static int ntfs_bitmap_set_bits_in_run(ntfs_attr *na, s64 start_bit,
 			goto free_err_out;
 		}
 	} while (count > 0);
-	
+
 	ret = 0;
-	
+
 free_err_out:
 	free(buf);
 	return ret;
@@ -267,8 +267,8 @@ free_err_out:
  */
 int ntfs_bitmap_set_run(ntfs_attr *na, s64 start_bit, s64 count)
 {
-	int ret; 
-	
+	int ret;
+
 	ntfs_log_enter("Set from bit %lld, count %lld\n",
 		       (long long)start_bit, (long long)count);
 	ret = ntfs_bitmap_set_bits_in_run(na, start_bit, count, 1);
@@ -289,12 +289,11 @@ int ntfs_bitmap_set_run(ntfs_attr *na, s64 start_bit, s64 count)
  */
 int ntfs_bitmap_clear_run(ntfs_attr *na, s64 start_bit, s64 count)
 {
-	int ret; 
-	
+	int ret;
+
 	ntfs_log_enter("Clear from bit %lld, count %lld\n",
 		       (long long)start_bit, (long long)count);
 	ret = ntfs_bitmap_set_bits_in_run(na, start_bit, count, 0);
 	ntfs_log_leave("\n");
 	return ret;
 }
-

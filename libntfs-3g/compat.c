@@ -147,7 +147,7 @@ int daemon(int nochdir, int noclose) {
 	}
 	return (0);
 }
-/* 
+/*
  *  End: src/lib/libresolv2/common/bsd/daemon.c
  *************************************************************/
 #endif /* HAVE_DAEMON */
@@ -209,7 +209,7 @@ static const char rcsid[] = "$Id: compat.c,v 1.1.1.1.2.1 2008-08-16 15:17:44 jpa
 
 /*
  * Get next token from string *stringp, where tokens are possibly-empty
- * strings separated by characters from delim.  
+ * strings separated by characters from delim.
  *
  * Writes NULs into the string at *stringp to end tokens.
  * delim need not remain constant from call to call.
@@ -243,8 +243,7 @@ char *strsep(char **stringp, const char *delim) {
 	/* NOTREACHED */
 }
 
-/* 
+/*
  *  End: src/lib/libresolv2/common/bsd/strsep.c
  *************************************************************/
 #endif /* HAVE_STRSEP */
-

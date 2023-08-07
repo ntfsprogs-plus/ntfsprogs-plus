@@ -714,4 +714,3 @@ int main(int argc, char **argv)
 	ntfs_umount(vol, FALSE);
 	return 0;
 }
-

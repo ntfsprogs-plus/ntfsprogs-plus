@@ -208,14 +208,14 @@ s64 ntfs_pread(struct ntfs_device *dev, const s64 pos, s64 count, void *b)
 	struct ntfs_device_operations *dops;
 
 	ntfs_log_trace("pos %lld, count %lld\n",(long long)pos,(long long)count);
-	
+
 	if (!b || count < 0 || pos < 0) {
 		errno = EINVAL;
 		return -1;
 	}
 	if (!count)
 		return 0;
-	
+
 	dops = dev->d_ops;
 
 	for (total = 0; count; count -= br, total += br) {
@@ -270,7 +270,7 @@ s64 ntfs_pwrite(struct ntfs_device *dev, const s64 pos, s64 count,
 		errno = EROFS;
 		goto out;
 	}
-	
+
 	dops = dev->d_ops;
 
 	NDevSetDirty(dev);
@@ -293,7 +293,7 @@ s64 ntfs_pwrite(struct ntfs_device *dev, const s64 pos, s64 count,
 		total--; /* on sync error, return partially written */
 	}
 	ret = total;
-out:	
+out:
 	return ret;
 }
 

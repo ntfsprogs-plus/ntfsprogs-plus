@@ -130,7 +130,7 @@ u32 mftrecsz;
 int mftrecbits;
 u32 mftcnt; /* number of entries */
 ntfs_inode *log_ni;
-ntfs_attr *log_na; 
+ntfs_attr *log_na;
 u64 logfilelcn;
 u32 logfilesz; /* bytes */
 u64 redos_met;
@@ -2210,7 +2210,7 @@ static void showlogr(CONTEXT *ctx, int k, const LOG_RECORD *logr)
 					" previous %016llx",
 					(long long)sle64_to_cpu(
 						logr->client_previous_lsn));
-				
+
 				if (logr->client_undo_next_lsn)
 					printf(" undo %016llx\n",
 						(long long)sle64_to_cpu(
@@ -2292,7 +2292,7 @@ static TRISTATE enqueue_action(CONTEXT *ctx, const LOG_RECORD *logr,
 	struct ACTION_RECORD *action;
 	TRISTATE state;
 	int err;
- 
+
 	err = 1;
 	state = T_ERR;
 		/* enqueue record */
@@ -3530,7 +3530,7 @@ static TRISTATE backward_rcrd(CONTEXT *ctx, u32 blk, int skipped,
 							stop = TRUE;
 					} else {
 						stop = TRUE;
-					}	  
+					}
 				}
 			}
 		} else {
@@ -4083,7 +4083,7 @@ static int walk(CONTEXT *ctx)
 				prevblk = BASEBLKS;
 			if (!err)
 				err = walkback(ctx, buf, blk,
-							prevbuf, prevblk); 
+							prevbuf, prevblk);
 		} else {
 			fprintf(stderr,"** No valid start block, aborting\n");
 			err = 1;
@@ -4114,7 +4114,7 @@ static void usage(void)
 {
 	fprintf(stderr,"Usage : for recovering the updates committed by Windows :\n");
 	fprintf(stderr,"        ntfsrecover partition\n");
-	fprintf(stderr,"                (e.g. ntfsrecover /dev/sda1)\n"); 
+	fprintf(stderr,"                (e.g. ntfsrecover /dev/sda1)\n");
 	fprintf(stderr,"Advanced : ntfsrecover [-b] [-c first-last] [-i] [-f] [-n] [-p count]\n");
 	fprintf(stderr,"                    [-r first-last] [-t] [-u count] [-v] partition\n");
 	fprintf(stderr,"	   -b : show the full log backward\n");

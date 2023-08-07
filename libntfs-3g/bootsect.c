@@ -75,7 +75,7 @@ BOOL ntfs_boot_sector_is_ntfs(NTFS_BOOT_SECTOR *b)
 	ntfs_log_debug("Checking bytes per sector.\n");
 	if (le16_to_cpu(b->bpb.bytes_per_sector) <  256 ||
 	    le16_to_cpu(b->bpb.bytes_per_sector) > 4096) {
-		ntfs_log_error("Unexpected bytes per sector value (%d).\n", 
+		ntfs_log_error("Unexpected bytes per sector value (%d).\n",
 			       le16_to_cpu(b->bpb.bytes_per_sector));
 		goto not_ntfs;
 	}
@@ -225,7 +225,7 @@ int ntfs_boot_sector_parse(ntfs_volume *vol, const NTFS_BOOT_SECTOR *bs)
 		ntfs_log_error("Volume size is set to zero.\n");
 		return -1;
 	}
-	if (vol->dev->d_ops->seek(vol->dev, 
+	if (vol->dev->d_ops->seek(vol->dev,
 				  (sectors - 1) << vol->sector_size_bits,
 				  SEEK_SET) == -1) {
 		ntfs_log_perror("Failed to read last sector (%lld)",

@@ -362,7 +362,7 @@ static int fstrim(ntfs_volume *vol, void *data, u64 *trimmed)
 				if (aligned_lcn >= end_lcn)
 					aligned_count = 0;
 				else {
-					aligned_count = 
+					aligned_count =
 						align_down(vol,
 							end_lcn - aligned_lcn,
 							discard_granularity);

@@ -8,4 +8,3 @@ void init_root_sd(u8 **sd_val, int *sd_val_len);
 void init_secure_sds(char *sd_val);
 
 #endif /* _NTFS_SD_H_ */
-

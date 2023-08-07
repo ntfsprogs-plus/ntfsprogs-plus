@@ -606,7 +606,7 @@ static s64 wipe_unused_fast(ntfs_volume *vol, int byte, enum action act)
 			buffer += vol->cluster_size;
 		}
 
-		if (!wipe_needed) { 
+		if (!wipe_needed) {
 			continue;
 		}
 			/* else wipe unused clusters in the block */

@@ -1,7 +1,7 @@
 /*
  *               Windows to Linux user mapping for ntfs-3g
  *
- * 
+ *
  * Copyright (c) 2007-2016 Jean-Pierre Andre
  *
  *    A quick'n dirty program scanning owners of files in
@@ -527,7 +527,7 @@ static void listaclusers(const char *accname, const unsigned char *attr,
 	cnt = get2l(attr, off + 4);
 	x = 8;
 	for (i = 0; i < cnt; i++) {
-		domapping(accname, (char *)NULL, (char*)NULL, 
+		domapping(accname, (char *)NULL, (char*)NULL,
                                        &attr[off + x + 8], 2);
 		x += get2l(attr, off + x + 2);
 	}
@@ -831,7 +831,7 @@ static boolean outputmap(const char *volume, const char *dir)
 		printf("* Creating file %s\n", fullname);
 		err = DENIED;
 #ifdef HAVE_WINDOWS_H
-		fn = open(fullname,O_CREAT + O_TRUNC + O_WRONLY + O_BINARY, 
+		fn = open(fullname,O_CREAT + O_TRUNC + O_WRONLY + O_BINARY,
 			S_IREAD + S_IWRITE);
 #else
 		fn = open(fullname,O_CREAT + O_TRUNC + O_WRONLY,

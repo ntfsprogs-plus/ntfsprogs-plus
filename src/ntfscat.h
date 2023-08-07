@@ -42,5 +42,3 @@ struct options {
 };
 
 #endif /* _NTFSCAT_H_ */
-
-

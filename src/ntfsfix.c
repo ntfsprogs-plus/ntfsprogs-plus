@@ -626,7 +626,7 @@ static int rewrite_upcase(ntfs_volume *vol, ntfs_attr *na)
 					> vol->lcnbmp_na->allocated_size)) {
 				ntfs_log_error("Corrupt cluster map size %lld"
 					" (allocated %lld minimum %lld)\n",
-					(long long)vol->lcnbmp_na->data_size, 
+					(long long)vol->lcnbmp_na->data_size,
 					(long long)vol->lcnbmp_na->allocated_size,
 					(long long)(vol->nr_clusters + 7) >> 3);
 			} else {
@@ -1128,7 +1128,7 @@ static int fix_selfloc_conditions(struct MFT_SELF_LOCATED *selfloc)
 				res = -1;
 		}
 			/* replace MFT2 by MFT1 and replace MFT1 by MFT2 */
-		if (!res 
+		if (!res
 		    && (ntfs_mst_pre_write_fixup((NTFS_RECORD*)selfloc->mft1,
 					vol->mft_record_size)
 			|| ntfs_mst_pre_write_fixup((NTFS_RECORD*)selfloc->mft2,
@@ -1464,7 +1464,7 @@ static int fix_startup(struct ntfs_device *dev, unsigned long flags)
 	vol = ntfs_volume_alloc();
 	if (!vol)
 		goto error_exit;
-	
+
 	/* Create the default upcase table. */
 	vol->upcase_len = ntfs_upcase_build_default(&vol->upcase);
 	if (!vol->upcase_len || !vol->upcase)
@@ -1473,14 +1473,14 @@ static int fix_startup(struct ntfs_device *dev, unsigned long flags)
 	/* Default with no locase table and case sensitive file names */
 	vol->locase = (ntfschar*)NULL;
 	NVolSetCaseSensitive(vol);
-	
+
 		/* by default, all files are shown and not marked hidden */
 	NVolSetShowSysFiles(vol);
 	NVolSetShowHidFiles(vol);
 	NVolClearHideDotFiles(vol);
 	if (flags & NTFS_MNT_RDONLY)
 		NVolSetReadOnly(vol);
-	
+
 	/* ...->open needs bracketing to compile with glibc 2.7 */
 	if ((dev->d_ops->open)(dev, NVolReadOnly(vol) ? O_RDONLY: O_RDWR)) {
 		ntfs_log_perror("Error opening '%s'", dev->d_name);
@@ -1489,7 +1489,7 @@ static int fix_startup(struct ntfs_device *dev, unsigned long flags)
 	dev_open = TRUE;
 	/* Attach the device to the volume. */
 	vol->dev = dev;
-	
+
 	sector_size = ntfs_device_sector_size_get(dev);
 	if (sector_size <= 0)
 		sector_size = DEFAULT_SECTOR_SIZE;
@@ -1712,4 +1712,3 @@ error_exit:
 		exit(ret);
 	return ret;
 }
-

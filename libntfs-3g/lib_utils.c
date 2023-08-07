@@ -207,4 +207,3 @@ int utils_is_metadata(ntfs_inode *inode)
 
 	return 0;
 }
-

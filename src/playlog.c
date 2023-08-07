@@ -435,7 +435,7 @@ static char *read_raw(ntfs_volume *vol, const LOG_RECORD *logr)
 	if (!count) {
 		printf("** Error : no lcn to read from\n");
 		buffer = (char*)NULL;
-	} else 
+	} else
 		buffer = (char*)malloc(clustersz*count);
 // TODO error messages
 	if (buffer) {
@@ -1287,7 +1287,7 @@ static int remove_resident(ntfs_volume *vol, const struct ACTION_RECORD *action,
 		/* This has to be an idempotent action */
 	/* For AT_DATA the value is not always present */
 		if (attr->type == AT_DATA)
-			found = !memcmp(buffer + target, data, 
+			found = !memcmp(buffer + target, data,
 				le16_to_cpu(attr->value_offset));
 		else
 			found = !memcmp(buffer + target, data, length);
@@ -2985,7 +2985,7 @@ static int undo_add_index(ntfs_volume *vol,
 		}
 		if (optv > 1) {
 			printf("-> INDX record %s\n",
-				(found ? "removed" : "unchanged")); 
+				(found ? "removed" : "unchanged"));
 		}
 	}
 	return (err);

@@ -357,9 +357,9 @@ int ntfs_log_redirect(const char *function, const char *file,
 #define LOG_LINE_LEN 	512
 
 int ntfs_log_handler_syslog(const char *function  __attribute__((unused)),
-			    const char *file __attribute__((unused)), 
-			    int line __attribute__((unused)), u32 level, 
-			    void *data __attribute__((unused)), 
+			    const char *file __attribute__((unused)),
+			    int line __attribute__((unused)), u32 level,
+			    void *data __attribute__((unused)),
 			    const char *format, va_list args)
 {
 	char logbuf[LOG_LINE_LEN];
@@ -368,20 +368,20 @@ int ntfs_log_handler_syslog(const char *function  __attribute__((unused)),
 #ifndef DEBUG
 	if ((level & NTFS_LOG_LEVEL_PERROR) && errno == ENOSPC)
 		return 1;
-#endif	
+#endif
 	ret = vsnprintf(logbuf, LOG_LINE_LEN, format, args);
 	if (ret < 0) {
 		vsyslog(LOG_NOTICE, format, args);
 		ret = 1;
 		goto out;
 	}
-	
+
 	if ((LOG_LINE_LEN > ret + 3) && (level & NTFS_LOG_LEVEL_PERROR)) {
 		strncat(logbuf, ": ", LOG_LINE_LEN - ret - 1);
 		strncat(logbuf, strerror(olderr), LOG_LINE_LEN - (ret + 3));
 		ret = strlen(logbuf);
 	}
-	
+
 	syslog(LOG_NOTICE, "%s", logbuf);
 out:
 	errno = olderr;
@@ -453,10 +453,10 @@ int ntfs_log_handler_fprintf(const char *function, const char *file,
 			tab--;
 		return 0;
 	}
-	
+
 	for (i = 0; i < tab; i++)
 		ret += fprintf(stream, " ");
-#endif	
+#endif
 	if ((ntfs_log.flags & NTFS_LOG_FLAG_ONLYNAME) &&
 	    (strchr(file, PATH_SEP)))		/* Abbreviate the filename */
 		file = strrchr(file, PATH_SEP) + 1;
@@ -482,7 +482,7 @@ int ntfs_log_handler_fprintf(const char *function, const char *file,
 #ifdef DEBUG
 	if (level == NTFS_LOG_LEVEL_ENTER)
 		tab++;
-#endif	
+#endif
 	fflush(stream);
 	errno = olderr;
 	return ret;
@@ -634,4 +634,3 @@ BOOL ntfs_log_parse_option(const char *option)
 	ntfs_log_debug("Unknown logging option '%s'\n", option);
 	return FALSE;
 }
-

@@ -52,8 +52,8 @@
 #include "logging.h"
 #include "misc.h"
 
-#undef le16_to_cpup 
-/* the standard le16_to_cpup() crashes for unaligned data on some processors */ 
+#undef le16_to_cpup
+/* the standard le16_to_cpup() crashes for unaligned data on some processors */
 #define le16_to_cpup(p) (*(u8*)(p) + (((u8*)(p))[1] << 8))
 
 /**
@@ -270,7 +270,7 @@ static void ntfs_skip_position(struct COMPRESS_CONTEXT *pctx, const int i)
  *
  *	Returns the size of the compressed block, including the
  *			header (minimal size is 2, maximum size is 4098)
- *		0 if an error has been met. 
+ *		0 if an error has been met.
  */
 
 static unsigned int ntfs_compress_block(const char *inbuf, const int bufsize,
@@ -647,7 +647,7 @@ return_overflow:
  * code.  Might be a bit confusing to debug but there really should never be
  * errors coming from here.
  */
-static BOOL ntfs_is_cb_compressed(ntfs_attr *na, runlist_element *rl, 
+static BOOL ntfs_is_cb_compressed(ntfs_attr *na, runlist_element *rl,
 				  VCN cb_start_vcn, int cb_clusters)
 {
 	/*
@@ -773,12 +773,12 @@ s64 ntfs_compressed_attr_pread(ntfs_attr *na, s64 pos, s64 count, void *b)
 	cb_size = na->compression_block_size;
 	cb_size_mask = cb_size - 1UL;
 	cb_clusters = na->compression_block_clusters;
-	
+
 	/* Need a temporary buffer for each loaded compression block. */
 	cb = (u8*)ntfs_malloc(cb_size);
 	if (!cb)
 		return -1;
-	
+
 	/* Need a temporary buffer for each uncompressed block. */
 	dest = (u8*)ntfs_malloc(cb_size);
 	if (!dest) {

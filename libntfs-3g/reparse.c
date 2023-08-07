@@ -426,7 +426,7 @@ static int ntfs_drive_letter(ntfs_volume *vol, ntfschar letter)
 
 /*
  *		Check whether reparse data describes a valid wsl special file
- *	which is either a socket, a fifo, or a character or block device 
+ *	which is either a socket, a fifo, or a character or block device
  *
  *	Return zero if valid, otherwise returns a negative error code
  */

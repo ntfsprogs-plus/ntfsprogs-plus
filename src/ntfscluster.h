@@ -59,5 +59,3 @@ struct match {
 };
 
 #endif /* _NTFSCLUSTER_H_ */
-
-

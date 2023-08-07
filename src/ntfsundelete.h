@@ -109,4 +109,3 @@ struct ufile {
 };
 
 #endif /* _NTFSUNDELETE_H_ */
-

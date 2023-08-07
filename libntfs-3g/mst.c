@@ -255,4 +255,3 @@ void ntfs_mst_post_write_fixup(NTFS_RECORD *b)
 		data_pos += NTFS_BLOCK_SIZE/sizeof(u16);
 	}
 }
-

@@ -461,4 +461,3 @@ abort :
 		/* "result" may be a negative reply of a library function */
 	return (result ? 1 : 0);
 }
-

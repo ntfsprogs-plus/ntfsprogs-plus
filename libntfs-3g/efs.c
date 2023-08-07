@@ -109,7 +109,7 @@ int ntfs_get_efs_info(ntfs_inode *ni, char *value, size_t size)
 		} else {
 			errno = ENODATA;
 			ntfs_log_trace("Inode %lld is not encrypted\n",
-				(long long)ni->mft_no); 
+				(long long)ni->mft_no);
 		}
 	}
 	return (attr_size ? (int)attr_size : -errno);
@@ -148,7 +148,7 @@ static int fixup_loop(ntfs_inode *ni)
 		}
 		cnt = 0;
 		while (!restart && !res
-			&& !ntfs_attr_lookup(AT_DATA, NULL, 0, 
+			&& !ntfs_attr_lookup(AT_DATA, NULL, 0,
 				   CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 			cnt++;
 			a = ctx->attr;
@@ -208,7 +208,7 @@ static int fixup_loop(ntfs_inode *ni)
 
 int ntfs_set_efs_info(ntfs_inode *ni, const char *value, size_t size,
 			int flags)
-			
+
 {
 	int res;
 	int written;
@@ -288,7 +288,7 @@ int ntfs_set_efs_info(ntfs_inode *ni, const char *value, size_t size,
 			if (!(ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)) {
 				/* iterate over AT_DATA attributes */
                         	/* set encrypted flag, truncate attribute to match padding bytes */
-			
+
 			if (fixup_loop(ni))
 				return -1;
 			}
@@ -308,13 +308,13 @@ int ntfs_set_efs_info(ntfs_inode *ni, const char *value, size_t size,
  *     read padding length from last two bytes
  *     truncate attribute, make non-resident,
  *     set data size to match padding length
- *     set ATTR_IS_ENCRYPTED flag on attribute 
+ *     set ATTR_IS_ENCRYPTED flag on attribute
  *
  *	Return 0 if successful
  *		-1 if failed (errno tells why)
  */
 
-int ntfs_efs_fixup_attribute(ntfs_attr_search_ctx *ctx, ntfs_attr *na) 
+int ntfs_efs_fixup_attribute(ntfs_attr_search_ctx *ctx, ntfs_attr *na)
 {
 	s64 newsize;
 	s64 oldsize;
@@ -334,7 +334,7 @@ int ntfs_efs_fixup_attribute(ntfs_attr_search_ctx *ctx, ntfs_attr *na)
 			goto err_out;
 		}
 		close_ctx = TRUE;
-		if (ntfs_attr_lookup(AT_DATA, na->name, na->name_len, 
+		if (ntfs_attr_lookup(AT_DATA, na->name, na->name_len,
 				CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 			ntfs_log_error("attr lookup for AT_DATA attribute failed in efs fixup\n");
 			goto err_out;
@@ -369,7 +369,7 @@ int ntfs_efs_fixup_attribute(ntfs_attr_search_ctx *ctx, ntfs_attr *na)
 		}
 		newsize = oldsize - padding_length - 2;
 		/*
-		 * truncate attribute to possibly free clusters allocated 
+		 * truncate attribute to possibly free clusters allocated
 		 * for the last two bytes, but do not truncate to new size
 		 * to avoid losing useful data
 		 */
@@ -400,7 +400,7 @@ int ntfs_efs_fixup_attribute(ntfs_attr_search_ctx *ctx, ntfs_attr *na)
 			 * the context is not used elsewhere.
 			 */
 			ntfs_attr_reinit_search_ctx(ctx);
-			if (ntfs_attr_lookup(AT_DATA, na->name, na->name_len, 
+			if (ntfs_attr_lookup(AT_DATA, na->name, na->name_len,
 					CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 				ntfs_log_error("attr lookup for AT_DATA attribute failed in efs fixup\n");
 				goto err_out;
@@ -421,7 +421,7 @@ int ntfs_efs_fixup_attribute(ntfs_attr_search_ctx *ctx, ntfs_attr *na)
 	ctx->attr->flags |= ATTR_IS_ENCRYPTED;
 	if (close_ctx)
 		ntfs_attr_put_search_ctx(ctx);
-		
+
 	return (0);
 err_out:
 	if (close_ctx && ctx)

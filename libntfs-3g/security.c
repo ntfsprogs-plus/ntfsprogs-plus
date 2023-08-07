@@ -127,8 +127,8 @@ struct SDH {		/* this is an image of an $SDH index entry */
 
 static ntfschar sii_stream[] = { const_cpu_to_le16('$'),
 				 const_cpu_to_le16('S'),
-				 const_cpu_to_le16('I'),   
-				 const_cpu_to_le16('I'),   
+				 const_cpu_to_le16('I'),
+				 const_cpu_to_le16('I'),
 				 const_cpu_to_le16(0) };
 static ntfschar sdh_stream[] = { const_cpu_to_le16('$'),
 				 const_cpu_to_le16('S'),
@@ -695,7 +695,7 @@ static le32 entersecurityattr(ntfs_volume *vol,
 		retries = 0;
 		while (entry) {
 			next = ntfs_index_next(entry,xsii);
-			if (next) { 
+			if (next) {
 				psii = (struct SII*)next;
 					/* save last key and */
 					/* available position */
@@ -1050,7 +1050,7 @@ static int update_secur_descr(ntfs_volume *vol,
  *	This is intended to allow graceful upgrades for files which
  *	were created in previous versions, with a security attributes
  *	and no security id.
- *	
+ *
  *      It will allocate a security id and replace the individual
  *	security attribute by a reference to the global one
  *
@@ -1517,7 +1517,7 @@ static int leg_compare(const struct CACHED_PERMISSIONS_LEGACY *cached,
 /*
  *	Resize permission cache table
  *	do not call unless resizing is needed
- *	
+ *
  *	If allocation fails, the cache size is not updated
  *	Lack of memory is not considered as an error, the cache is left
  *	consistent and errno is not set.
@@ -2167,7 +2167,7 @@ static int ntfs_get_perm(struct SECURITY_CONTEXT *scx,
  */
 
 int ntfs_get_posix_acl(struct SECURITY_CONTEXT *scx, ntfs_inode *ni,
-			const char *name, char *value, size_t size) 
+			const char *name, char *value, size_t size)
 {
 	const SECURITY_DESCRIPTOR_RELATIVE *phead;
 	struct POSIX_SECURITY *pxdesc;
@@ -2517,7 +2517,7 @@ int ntfs_get_owner_mode(struct SECURITY_CONTEXT *scx,
 					stbuf->st_uid = ntfs_find_user(scx->mapping[MAPUSERS],usid);
 #else
 					if (!perm && ntfs_same_sid(usid, adminsid)) {
-						stbuf->st_uid = 
+						stbuf->st_uid =
 							find_tenant(scx,
 								securattr);
 						if (stbuf->st_uid)
@@ -2640,7 +2640,7 @@ static struct POSIX_SECURITY *inherit_posix(struct SECURITY_CONTEXT *scx,
 
 /*
  *		Allocate a security_id for a file being created
- *	
+ *
  *	Returns zero if not possible (NTFS v3.x required)
  */
 
@@ -2862,7 +2862,7 @@ le32 ntfs_alloc_securid(struct SECURITY_CONTEXT *scx,
 /*
  *		Update ownership and mode of a file, reusing an existing
  *	security descriptor when possible
- *	
+ *
  *	Returns zero if successful
  */
 
@@ -3367,7 +3367,7 @@ int ntfs_sd_add_everyone(ntfs_inode *ni)
 	ACCESS_ALLOWED_ACE *ace;
 	SID *sid;
 	int ret, sd_len;
-	
+
 	/* Create SECURITY_DESCRIPTOR attribute (everyone has full access). */
 	/*
 	 * Calculate security descriptor length. We have 2 sub-authorities in
@@ -3375,14 +3375,14 @@ int ntfs_sd_add_everyone(ntfs_inode *ni)
 	 * 4 bytes to every SID.
 	 */
 	sd_len = sizeof(SECURITY_DESCRIPTOR_ATTR) + 2 * (sizeof(SID) + 4) +
-		sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE); 
+		sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE);
 	sd = (SECURITY_DESCRIPTOR_RELATIVE*)ntfs_calloc(sd_len);
 	if (!sd)
 		return -1;
-	
+
 	sd->revision = SECURITY_DESCRIPTOR_REVISION;
 	sd->control = SE_DACL_PRESENT | SE_SELF_RELATIVE;
-	
+
 	sid = (SID*)((u8*)sd + sizeof(SECURITY_DESCRIPTOR_ATTR));
 	sid->revision = SID_REVISION;
 	sid->sub_authority_count = 2;
@@ -3390,21 +3390,21 @@ int ntfs_sd_add_everyone(ntfs_inode *ni)
 	sid->sub_authority[1] = const_cpu_to_le32(DOMAIN_ALIAS_RID_ADMINS);
 	sid->identifier_authority.value[5] = 5;
 	sd->owner = cpu_to_le32((u8*)sid - (u8*)sd);
-	
-	sid = (SID*)((u8*)sid + sizeof(SID) + 4); 
+
+	sid = (SID*)((u8*)sid + sizeof(SID) + 4);
 	sid->revision = SID_REVISION;
 	sid->sub_authority_count = 2;
 	sid->sub_authority[0] = const_cpu_to_le32(SECURITY_BUILTIN_DOMAIN_RID);
 	sid->sub_authority[1] = const_cpu_to_le32(DOMAIN_ALIAS_RID_ADMINS);
 	sid->identifier_authority.value[5] = 5;
 	sd->group = cpu_to_le32((u8*)sid - (u8*)sd);
-	
+
 	acl = (ACL*)((u8*)sid + sizeof(SID) + 4);
 	acl->revision = ACL_REVISION;
 	acl->size = const_cpu_to_le16(sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE));
 	acl->ace_count = const_cpu_to_le16(1);
 	sd->dacl = cpu_to_le32((u8*)acl - (u8*)sd);
-	
+
 	ace = (ACCESS_ALLOWED_ACE*)((u8*)acl + sizeof(ACL));
 	ace->type = ACCESS_ALLOWED_ACE_TYPE;
 	ace->flags = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
@@ -3419,7 +3419,7 @@ int ntfs_sd_add_everyone(ntfs_inode *ni)
 			    sd_len);
 	if (ret)
 		ntfs_log_perror("Failed to add initial SECURITY_DESCRIPTOR");
-	
+
 	free(sd);
 	return ret;
 }
@@ -3568,7 +3568,7 @@ int ntfs_allowed_create(struct SECURITY_CONTEXT *scx,
  *
  *	Returns true if access is allowed, including user is root and
  *		no user mapping defined
- *	
+ *
  *	Sets errno if there is a problem or if not allowed
  *
  *	This is used for Posix ACL and checking creation of DOS file names
@@ -3718,7 +3718,7 @@ int ntfs_set_owner(struct SECURITY_CONTEXT *scx, ntfs_inode *ni,
 				mode &= 01777;
 #endif
 #if POSIXACLS
-			res = ntfs_set_owner_mode(scx, ni, uid, gid, 
+			res = ntfs_set_owner_mode(scx, ni, uid, gid,
 				mode, pxdesc);
 #else
 			res = ntfs_set_owner_mode(scx, ni, uid, gid, mode);
@@ -3834,7 +3834,7 @@ int ntfs_set_ownmod(struct SECURITY_CONTEXT *scx, ntfs_inode *ni,
 			if ((int)gid < 0)
 				gid = filegid;
 #if POSIXACLS
-			res = ntfs_set_owner_mode(scx, ni, uid, gid, 
+			res = ntfs_set_owner_mode(scx, ni, uid, gid,
 				mode, newpxdesc);
 #else
 			res = ntfs_set_owner_mode(scx, ni, uid, gid, mode);
@@ -5396,4 +5396,3 @@ BOOL ntfs_leave_file_security(struct SECURITY_API *scapi)
 	}
 	return (ok);
 }
-

@@ -1484,7 +1484,7 @@ static void write_set(char *buff, u32 csize, s64 *current_lcn,
 		    || (write_all(&fd_out, &buff[k*csize], csize) == -1))
 			perr_exit("Failed to write_all");
 		*current_lcn = target_lcn + 1;
-			
+
 		if (++wj >= rl[wi].length) {
 			wj = 0;
 			wi++;
@@ -2565,7 +2565,7 @@ static void check_dest_free_space(u64 src_bytes)
 		       strerror(errno));
 		return;
 	}
-	
+
 	/* If file is a FIFO then there is no point in checking the size. */
 	if (!fstat(fd_out, &st)) {
 		if (S_ISFIFO(st.st_mode))

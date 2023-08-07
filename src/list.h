@@ -191,4 +191,3 @@ static __inline__ void ntfs_list_splice(struct ntfs_list_head *list,
 		pos = n, n = pos->next)
 
 #endif /* defined _NTFS_LIST_H */
-

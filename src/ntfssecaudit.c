@@ -818,7 +818,7 @@ static unsigned int utf8size(const ntfschar *utf16, int length)
 			if ((c >= 0xdc00) && (c < 0xe000)) {
 				surrog = FALSE;
 				count += 4;
-			} else 
+			} else
 				fail = TRUE;
 		} else
 			if (c < 0x80)
@@ -835,10 +835,10 @@ static unsigned int utf8size(const ntfschar *utf16, int length)
 			else if (c >= 0xe000)
 #endif
 				count += 3;
-			else 
+			else
 				fail = TRUE;
 	}
-	if (surrog) 
+	if (surrog)
 		fail = TRUE;
 
 	return (fail ? 0 : count);
@@ -6322,7 +6322,7 @@ int main(int argc, char *argv[])
 			case 2 :
 #ifdef HAVE_WINDOWS_H
 				if (!splitarg(split, argv[xarg + 1]))
-					fail = setperms(split[0], 
+					fail = setperms(split[0],
 							argv[xarg], split[1]);
 				else
 					cmderr = TRUE;

@@ -3642,7 +3642,7 @@ static int write_bootsector(expand_t *expand)
 		ntfs_log_verbose("Rewriting the backup bootsector\n");
 	if (opt.ro_flag)
 		bw = vol->sector_size;
-	else 
+	else
 		bw = ntfs_pwrite(vol->dev,
 				expand->new_sectors*vol->sector_size,
 				vol->sector_size, expand->bootsector);
@@ -4491,7 +4491,7 @@ static int expand_to_beginning(void)
 	struct ntfs_device *dev;
 	int sector_size;
 	s64 new_sectors;
-	        
+
 	ret = -1;
 	dev = ntfs_device_alloc(opt.volume, 0, &ntfs_device_default_io_ops,
 			NULL);

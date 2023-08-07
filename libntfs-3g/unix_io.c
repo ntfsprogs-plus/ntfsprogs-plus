@@ -86,16 +86,16 @@ static int ntfs_fsync(int fildes)
 # ifndef F_FULLFSYNC
 #  error "Mac OS X: F_FULLFSYNC is not defined. Either you didn't include fcntl.h or you're using an older, unsupported version of Mac OS X (pre-10.3)."
 # endif
-	/* 
+	/*
 	 * Apple has disabled fsync() for internal disk drives in OS X.
 	 * To force a synchronization of disk contents, we use a Mac OS X
-	 * specific fcntl, F_FULLFSYNC. 
+	 * specific fcntl, F_FULLFSYNC.
 	 */
 	ret = fcntl(fildes, F_FULLFSYNC, NULL);
 	if (ret) {
-		/* 
+		/*
 		 * If we are not on a file system that supports this,
-		 * then fall back to a plain fsync. 
+		 * then fall back to a plain fsync.
 		 */
 		ret = fsync(fildes);
 	}
@@ -130,14 +130,14 @@ static int ntfs_device_unix_io_open(struct ntfs_device *dev, int flags)
 	}
 	if (S_ISBLK(sbuf.st_mode))
 		NDevSetBlock(dev);
-	
+
 	dev->d_private = ntfs_malloc(sizeof(int));
 	if (!dev->d_private)
 		return -1;
 	/*
 	 * Open file for exclusive access if mounting r/w.
 	 * Fuseblk takes care about block devices.
-	 */ 
+	 */
 	if (!NDevBlock(dev) && (flags & O_RDWR) == O_RDWR)
 		flags |= O_EXCL;
 	*(int*)dev->d_private = open(dev->d_name, flags);
@@ -168,10 +168,10 @@ static int ntfs_device_unix_io_open(struct ntfs_device *dev, int flags)
    		}
 	}
 #endif
-	
+
 	if ((flags & O_RDWR) != O_RDWR)
 		NDevSetReadOnly(dev);
-	
+
 	memset(&flk, 0, sizeof(flk));
 	if (NDevReadOnly(dev))
 		flk.l_type = F_RDLCK;
@@ -181,13 +181,13 @@ static int ntfs_device_unix_io_open(struct ntfs_device *dev, int flags)
 	flk.l_start = flk.l_len = 0LL;
 	if (fcntl(DEV_FD(dev), F_SETLK, &flk)) {
 		err = errno;
-		ntfs_log_perror("Failed to %s lock '%s'", NDevReadOnly(dev) ? 
+		ntfs_log_perror("Failed to %s lock '%s'", NDevReadOnly(dev) ?
 				"read" : "write", dev->d_name);
 		if (close(DEV_FD(dev)))
 			ntfs_log_perror("Failed to close '%s'", dev->d_name);
 		goto err_out;
 	}
-	
+
 	NDevSetOpen(dev);
 	return 0;
 err_out:
@@ -369,7 +369,7 @@ static s64 ntfs_device_unix_io_pwrite(struct ntfs_device *dev, const void *buf,
 static int ntfs_device_unix_io_sync(struct ntfs_device *dev)
 {
 	int res = 0;
-	
+
 	if (!NDevReadOnly(dev)) {
 		res = ntfs_fsync(DEV_FD(dev));
 		if (res)

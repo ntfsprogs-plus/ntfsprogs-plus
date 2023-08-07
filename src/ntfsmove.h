@@ -42,5 +42,3 @@ struct options {
 };
 
 #endif /* _NTFSMOVE_H_ */
-
-

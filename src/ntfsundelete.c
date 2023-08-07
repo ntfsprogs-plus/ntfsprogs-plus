@@ -1098,7 +1098,7 @@ static struct filename *rescue_name(MFT_RECORD *mft, ntfs_attr_search_ctx *ctx)
 			/* check whether the name is fully allocated */
 			if ((type <= 3)
 			   && (length > 0)
-			   && ((off_name + 2*length + 2) 
+			   && ((off_name + 2*length + 2)
 				<= (int)le32_to_cpu(mft->bytes_allocated))) {
 				/* create a (partial) name record */
 				name = (struct filename*)
@@ -2532,4 +2532,3 @@ free:
 
 	return result;
 }
-

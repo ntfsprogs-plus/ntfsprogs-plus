@@ -168,15 +168,15 @@ static void usage(void)
 {
 
 	printf("\nUsage: %s [OPTIONS] DEVICE1 DEVICE2\n"
-		"    Compare two NTFS volumes and tell the differences.\n"
-		"\n"
-		"    -P, --no-progress-bar  Don't show progress bar\n"
-		"    -v, --verbose          More output\n"
-		"    -h, --help             Display this help\n"
+			"    Compare two NTFS volumes and tell the differences.\n"
+			"\n"
+			"    -P, --no-progress-bar  Don't show progress bar\n"
+			"    -v, --verbose          More output\n"
+			"    -h, --help             Display this help\n"
 #ifdef DEBUG
-		"    -d, --debug            Show debug information\n"
+			"    -d, --debug            Show debug information\n"
 #endif
-		"\n", EXEC_NAME);
+			"\n", EXEC_NAME);
 	printf("%s%s", ntfs_bugs, ntfs_home);
 	exit(1);
 }
@@ -249,7 +249,7 @@ static void parse_options(int argc, char **argv)
 	fflush(stderr);
 
 #ifdef DEBUG
-	 if (!opt.debug)
+	if (!opt.debug)
 		if (!freopen("/dev/null", "w", stderr))
 			perr_exit("Failed to redirect stderr to /dev/null");
 #endif
@@ -416,9 +416,9 @@ static void free_name(char **name)
 }
 
 static char *get_attr_name(u64 mft_no,
-			   ATTR_TYPES atype,
-			   const ntfschar *uname,
-			   const int uname_len)
+		ATTR_TYPES atype,
+		const ntfschar *uname,
+		const int uname_len)
 {
 	char *name = NULL;
 	int name_len;
@@ -510,7 +510,7 @@ struct cmp_ia {
 static int setup_cmp_ia(ntfs_attr *na, struct cmp_ia *cia)
 {
 	cia->bitmap = ntfs_attr_readall(na->ni, AT_BITMAP, na->name,
-					na->name_len, &cia->bm_size);
+			na->name_len, &cia->bm_size);
 	if (!cia->bitmap) {
 		perr_println("Failed to readall BITMAP");
 		return -1;
@@ -574,9 +574,9 @@ static void cmp_index_allocation(ntfs_attr *na1, ntfs_attr *na2)
 				continue;
 
 			if (cmp_buffer(((u8 *)cia1.tmp_ia) + 0x18,
-					((u8 *)cia2.tmp_ia) + 0x18,
-					le32_to_cpu(cia1.ia->
-					index.index_length), na1))
+						((u8 *)cia2.tmp_ia) + 0x18,
+						le32_to_cpu(cia1.ia->
+							index.index_length), na1))
 				goto out;
 		}
 
@@ -612,10 +612,10 @@ static void cmp_attribute_data(ntfs_attr *na1, ntfs_attr *na2)
 		if (count1 != count2) {
 			print_na(na1);
 			printf("abrupt length:   %lld  !=  %lld ",
-				(long long)na1->data_size,
-				(long long)na2->data_size);
+					(long long)na1->data_size,
+					(long long)na2->data_size);
 			printf("(count: %lld  !=  %lld)",
-				(long long)count1, (long long)count2);
+					(long long)count1, (long long)count2);
 			puts("");
 			return;
 		}
@@ -624,7 +624,7 @@ static void cmp_attribute_data(ntfs_attr *na1, ntfs_attr *na2)
 			err_printf("%s read error: ", __FUNCTION__);
 			print_na(na1);
 			printf("len = %lld, pos = %lld\n",
-				(long long)na1->data_size, (long long)pos);
+					(long long)na1->data_size, (long long)pos);
 			exit(1);
 		}
 
@@ -647,7 +647,7 @@ static void cmp_attribute_data(ntfs_attr *na1, ntfs_attr *na2)
 	err_printf("%s read overrun: ", __FUNCTION__);
 	print_na(na1);
 	err_printf("(len = %lld, pos = %lld, count = %lld)\n",
-		  (long long)na1->data_size, (long long)pos, (long long)count1);
+			(long long)na1->data_size, (long long)pos, (long long)count1);
 	exit(1);
 }
 
@@ -669,7 +669,7 @@ static int cmp_attribute_header(ATTR_RECORD *a1, ATTR_RECORD *a2)
 }
 
 static void cmp_attribute(ntfs_attr_search_ctx *ctx1,
-			  ntfs_attr_search_ctx *ctx2)
+		ntfs_attr_search_ctx *ctx2)
 {
 	ATTR_RECORD *a1 = ctx1->attr;
 	ATTR_RECORD *a2 = ctx2->attr;
@@ -695,7 +695,7 @@ static void cmp_attribute(ntfs_attr_search_ctx *ctx1,
 	if (na1->data_size != na2->data_size) {
 		print_na(na1);
 		printf("length:   %lld  !=  %lld\n",
-			(long long)na1->data_size, (long long)na2->data_size);
+				(long long)na1->data_size, (long long)na2->data_size);
 		goto close_attribs;
 	}
 
@@ -729,10 +729,10 @@ static void vprint_attribute(ATTR_TYPES atype, char  *name)
 }
 
 static void print_attributes(ntfs_inode *ni,
-			     ATTR_TYPES atype1,
-			     ATTR_TYPES atype2,
-			     char  *name1,
-			     char  *name2)
+		ATTR_TYPES atype1,
+		ATTR_TYPES atype2,
+		char  *name1,
+		char  *name2)
 {
 	if (!opt.verbose)
 		return;
@@ -761,8 +761,8 @@ static int new_name(ntfs_attr_search_ctx *ctx, char *prev_name)
 }
 
 static int new_attribute(ntfs_attr_search_ctx *ctx,
-			 ATTR_TYPES prev_atype,
-			 char *prev_name)
+		ATTR_TYPES prev_atype,
+		char *prev_name)
 {
 	if (!prev_atype && !prev_name)
 		return 1;
@@ -780,15 +780,15 @@ static int new_attribute(ntfs_attr_search_ctx *ctx,
 		print_inode(base_inode(ctx)->mft_no);
 		print_attribute_ctx(ctx);
 		printf("record %llu lowest_vcn %lld:    SKIPPED\n",
-			(unsigned long long)ctx->ntfs_ino->mft_no,
-			(long long)sle64_to_cpu(ctx->attr->lowest_vcn));
+				(unsigned long long)ctx->ntfs_ino->mft_no,
+				(long long)sle64_to_cpu(ctx->attr->lowest_vcn));
 	}
 
 	return 0;
 }
 
 static void set_prev(char **prev_name, ATTR_TYPES *prev_atype,
-		     char *name, ATTR_TYPES atype)
+		char *name, ATTR_TYPES atype)
 {
 	free_name(prev_name);
 	if (name) {
@@ -809,7 +809,7 @@ static void set_cmp_attr(ntfs_attr_search_ctx *ctx, ATTR_TYPES *atype, char **na
 }
 
 static int next_attr(ntfs_attr_search_ctx *ctx, ATTR_TYPES *atype, char **name,
-		     int *err)
+		int *err)
 {
 	int ret;
 
@@ -846,7 +846,7 @@ static int cmp_attributes(ntfs_inode *ni1, ntfs_inode *ni2)
 		old_atype1 = atype1;
 		old_ret1 = ret1;
 		if (!ret1 && (le32_to_cpu(atype1) <= le32_to_cpu(atype2) ||
-				ret2))
+					ret2))
 			ret1 = next_attr(ctx1, &atype1, &name1, &errno1);
 		if (!ret2 && (le32_to_cpu(old_atype1) >= le32_to_cpu(atype2) ||
 					old_ret1))
@@ -858,7 +858,7 @@ static int cmp_attributes(ntfs_inode *ni1, ntfs_inode *ni2)
 			if (errno1 != errno2) {
 				print_inode_ni(ni1);
 				printf("attribute walk (errno):   %d  !=  %d\n",
-				       errno1, errno2);
+						errno1, errno2);
 			}
 			break;
 		}
@@ -912,7 +912,7 @@ static int cmp_inodes(ntfs_volume *vol1, ntfs_volume *vol2)
 	if (nr_mft_records != nr_mft_records2) {
 
 		printf("Number of mft records:   %lld  !=  %lld\n",
-		       (long long)nr_mft_records, (long long)nr_mft_records2);
+				(long long)nr_mft_records, (long long)nr_mft_records2);
 
 		if (nr_mft_records > nr_mft_records2)
 			nr_mft_records = nr_mft_records2;
@@ -929,7 +929,7 @@ static int cmp_inodes(ntfs_volume *vol1, ntfs_volume *vol2)
 		if (ret1 != ret2) {
 			print_inode(inode);
 			printf("open:   %s  !=  %s\n",
-			       err2string(ret1), err2string(ret2));
+					err2string(ret1), err2string(ret2));
 			goto close_inodes;
 		}
 
@@ -960,13 +960,13 @@ static ntfs_volume *mount_volume(const char *volume)
 	if (ntfs_check_if_mounted(volume, &mntflag)) {
 		perr_println("Failed to check '%s' mount state", volume);
 		printf("Probably /etc/mtab is missing. It's too risky to "
-		       "continue. You might try\nan another Linux distro.\n");
+				"continue. You might try\nan another Linux distro.\n");
 		exit(1);
 	}
 	if (mntflag & NTFS_MF_MOUNTED) {
 		if (!(mntflag & NTFS_MF_READONLY))
 			err_exit("Device '%s' is mounted read-write. "
-				 "You must 'umount' it first.\n", volume);
+					"You must 'umount' it first.\n", volume);
 	}
 
 	vol = ntfs_mount(volume, NTFS_MNT_RDONLY);
@@ -999,7 +999,7 @@ int main(int argc, char **argv)
 	utils_set_locale();
 
 	vol1 = mount_volume(opt.vol1);
-        vol2 = mount_volume(opt.vol2);
+	vol2 = mount_volume(opt.vol2);
 
 	if (cmp_inodes(vol1, vol2) != 0)
 		exit(1);

@@ -89,15 +89,15 @@ s64 opt_alloc_len;
 ATTR_DEF *attr_defs;
 
 static struct {
-				/* -h, print usage and exit. */
+	/* -h, print usage and exit. */
 	int no_action;		/*     do not write to device, only display
 				       what would be done. */
 	int no_size_change;	/* -n, do not change the apparent size */
 	int quiet;		/* -q, quiet execution. */
 	int verbose;		/* -v, verbose execution, given twice, really
-				       verbose execution (debug mode). */
+				   verbose execution (debug mode). */
 	int force;		/* -f, force allocation. */
-				/* -V, print version and exit. */
+	/* -V, print version and exit. */
 } opts;
 
 static const struct option lopt[] = {
@@ -214,40 +214,40 @@ static s64 option_value(const char *arg)
 		count = 0;
 		switch (*s++) {
 		case 'E' : count++;
-			/* FALLTHRU */
+			   /* FALLTHRU */
 		case 'P' : count++;
-			/* FALLTHRU */
+			   /* FALLTHRU */
 		case 'T' : count++;
-			/* FALLTHRU */
+			   /* FALLTHRU */
 		case 'G' : count++;
-			/* FALLTHRU */
+			   /* FALLTHRU */
 		case 'M' : count++;
-			/* FALLTHRU */
+			   /* FALLTHRU */
 		case 'K' : count++;
-			switch (*s++) {
-			case 'i' :
-				fact = 1024;
-				if (*s++ != 'B')
-					err = TRUE;
-				break;
-			case 'B' :
-				fact = 1000;
-				break;
-			case '\0' :
-				fact = 1024;
-				s--;
-				break;
-			default :
-				err = TRUE;
-				fact = 1;
-				break;
-			}
-			if (*s)
-				err = TRUE;
-			break;
+			   switch (*s++) {
+				   case 'i' :
+					   fact = 1024;
+					   if (*s++ != 'B')
+						   err = TRUE;
+					   break;
+				   case 'B' :
+					   fact = 1000;
+					   break;
+				   case '\0' :
+					   fact = 1024;
+					   s--;
+					   break;
+				   default :
+					   err = TRUE;
+					   fact = 1;
+					   break;
+			   }
+			   if (*s)
+				   err = TRUE;
+			   break;
 		default :
-			err = TRUE;
-			break;
+			   err = TRUE;
+			   break;
 		}
 		if (err)
 			err_exit((ntfs_volume*)NULL,
@@ -256,7 +256,7 @@ static s64 option_value(const char *arg)
 			while (count-- > 0) {
 				if (ll > LLONG_MAX/1024)
 					err_exit((ntfs_volume*)NULL,
-						"Too big value : %s\n",arg);
+							"Too big value : %s\n",arg);
 				ll *= fact;
 			}
 	}
@@ -304,17 +304,17 @@ static void parse_options(int argc, char *argv[])
 		case 'l':
 			ll = option_value(argv[optind - 1]);
 			if ((ll <= 0)
-			    || (ll >= LLONG_MAX && errno == ERANGE))
+					|| (ll >= LLONG_MAX && errno == ERANGE))
 				err_usage("Invalid length : %s\n",
-					argv[optind - 1]);
+						argv[optind - 1]);
 			opt_alloc_len = ll;
 			break;
 		case 'o':
 			ll = option_value(argv[optind - 1]);
 			if ((ll < 0)
-			    || (ll >= LLONG_MAX && errno == ERANGE))
+					|| (ll >= LLONG_MAX && errno == ERANGE))
 				err_usage("Invalid offset : %s\n",
-					argv[optind - 1]);
+						argv[optind - 1]);
 			opt_alloc_offs = ll;
 			break;
 		case 'h':
@@ -338,7 +338,7 @@ static void parse_options(int argc, char *argv[])
 
 	if (opts.verbose > 1)
 		ntfs_log_set_levels(NTFS_LOG_LEVEL_DEBUG | NTFS_LOG_LEVEL_TRACE |
-			NTFS_LOG_LEVEL_VERBOSE | NTFS_LOG_LEVEL_QUIET);
+				NTFS_LOG_LEVEL_VERBOSE | NTFS_LOG_LEVEL_QUIET);
 
 	/* Get the device. */
 	dev_name = argv[optind++];
@@ -388,7 +388,7 @@ static void parse_options(int argc, char *argv[])
 		}
 	}
 	ntfs_log_verbose("attribute type = 0x%lx\n",
-					(unsigned long)le32_to_cpu(attr_type));
+			(unsigned long)le32_to_cpu(attr_type));
 	if (attr_name == AT_UNNAMED)
 		ntfs_log_verbose("attribute name = \"\" (UNNAMED)\n");
 	else
@@ -424,7 +424,7 @@ static runlist_element *ntfs_save_rl(runlist_element *rl)
  */
 
 static void free_common(ntfs_volume *vol, runlist_element *brl, s64 blth,
-				runlist_element *grl, s64 glth)
+		runlist_element *grl, s64 glth)
 {
 	VCN begin_common;
 	VCN end_common;
@@ -433,13 +433,13 @@ static void free_common(ntfs_volume *vol, runlist_element *brl, s64 blth,
 	end_common = min(grl->vcn + glth, brl->vcn + blth);
 	if (end_common > begin_common) {
 		if (ntfs_bitmap_clear_run(vol->lcnbmp_na,
-			brl->lcn + begin_common - brl->vcn,
+					brl->lcn + begin_common - brl->vcn,
 					end_common - begin_common))
 			ntfs_log_error("Failed to free %lld clusters "
-				"from 0x%llx\n",
-				(long long)end_common - begin_common,
-				(long long)(brl->lcn + begin_common
-							- brl->vcn));
+					"from 0x%llx\n",
+					(long long)end_common - begin_common,
+					(long long)(brl->lcn + begin_common
+						- brl->vcn));
 	}
 }
 
@@ -456,23 +456,23 @@ static void ntfs_restore_rl(ntfs_attr *na, runlist_element *oldrl)
 	ntfs_volume *vol;
 
 	vol = na->ni->vol;
-		/* Examine allocated entries from the bad runlist */
+	/* Examine allocated entries from the bad runlist */
 	for (brl=na->rl; brl->length; brl++) {
 		if (brl->lcn != LCN_HOLE) {
-// TODO improve by examining both list in parallel
-		/* Find the holes in the good runlist which overlap */
-			for (grl=oldrl; grl->length
-			   && (grl->vcn<=(brl->vcn+brl->length)); grl++) {
+			// TODO improve by examining both list in parallel
+			/* Find the holes in the good runlist which overlap */
+			for (grl=oldrl; grl->length &&
+					(grl->vcn<=(brl->vcn+brl->length)); grl++) {
 				if (grl->lcn == LCN_HOLE) {
 					free_common(vol, brl, brl->length, grl,
-						grl->length);
+							grl->length);
 				}
 			}
 			/* Free allocations beyond the end of good runlist */
-			if (grl && !grl->length
-			    && ((brl->vcn + brl->length) > grl->vcn)) {
+			if (grl && !grl->length &&
+					((brl->vcn + brl->length) > grl->vcn)) {
 				free_common(vol, brl, brl->length, grl,
-					brl->vcn + brl->length - grl->vcn);
+						brl->vcn + brl->length - grl->vcn);
 			}
 		}
 	}
@@ -504,18 +504,17 @@ static int ntfs_inner_zero(ntfs_attr *na, runlist_element *rl)
 		memset(buf, 0, vol->cluster_size);
 		zrl = rl;
 		pos = zrl->vcn << vol->cluster_size_bits;
-		while (zrl->length
-	 	    && !err
-	    	    && (pos < na->initialized_size)) {
+		while (zrl->length && !err &&
+				(pos < na->initialized_size)) {
 			for (cofs=0; cofs<zrl->length && !err; cofs++) {
 				zeroed = ntfs_pwrite(vol->dev,
-					(rl->lcn + cofs)
+						(rl->lcn + cofs)
 						<< vol->cluster_size_bits,
-					vol->cluster_size, buf);
+						vol->cluster_size, buf);
 				if (zeroed != vol->cluster_size) {
 					ntfs_log_error("Failed to zero at "
-						"offset %lld\n",
-						(long long)pos);
+							"offset %lld\n",
+							(long long)pos);
 					errno = EIO;
 					err = -1;
 				}
@@ -538,7 +537,7 @@ static int ntfs_inner_zero(ntfs_attr *na, runlist_element *rl)
  */
 
 static int ntfs_merge_allocation(ntfs_attr *na, runlist_element *rl,
-				s64 size)
+		s64 size)
 {
 	ntfs_volume *vol;
 	int err;
@@ -556,12 +555,12 @@ static int ntfs_merge_allocation(ntfs_attr *na, runlist_element *rl,
 				na->data_flags &= ~ATTR_IS_SPARSE;
 				if (na->compressed_size > na->allocated_size) {
 					ntfs_log_error("File size error : "
-						"apparent %lld, "
-						"compressed %lld > "
-						"allocated %lld",
-						(long long)na->data_size,
-						(long long)na->compressed_size,
-						(long long)na->allocated_size);
+							"apparent %lld, "
+							"compressed %lld > "
+							"allocated %lld",
+							(long long)na->data_size,
+							(long long)na->compressed_size,
+							(long long)na->allocated_size);
 					errno = EIO;
 					err = -1;
 				}
@@ -575,10 +574,10 @@ static int ntfs_merge_allocation(ntfs_attr *na, runlist_element *rl,
 			err = -1;
 		} else {
 			na->rl = rl;
-				/* Update the runlist */
+			/* Update the runlist */
 			if (ntfs_attr_update_mapping_pairs(na, 0)) {
 				ntfs_log_error(
-					"Failed to update the runlist\n");
+						"Failed to update the runlist\n");
 				err = -1;
 			}
 		}
@@ -603,18 +602,18 @@ static int ntfs_inner_allocation(ntfs_attr *na, s64 alloc_offs, s64 alloc_len)
 
 	err = 0;
 	vol = na->ni->vol;
-		/* Find holes which overlap the requested allocation */
+	/* Find holes which overlap the requested allocation */
 	from_vcn = alloc_offs >> vol->cluster_size_bits;
-	end_vcn = (alloc_offs + alloc_len + vol->cluster_size - 1)
-			>> vol->cluster_size_bits;
+	end_vcn = (alloc_offs + alloc_len + vol->cluster_size - 1) >>
+		vol->cluster_size_bits;
 	do {
 		done = FALSE;
 		rl = na->rl;
-		while (rl->length
-		    && ((rl->lcn >= 0)
-		    	|| ((rl->vcn + rl->length) <= from_vcn)
-			|| (rl->vcn >= end_vcn)))
-				rl++;
+		while (rl->length &&
+				((rl->lcn >= 0) ||
+				 ((rl->vcn + rl->length) <= from_vcn) ||
+				 (rl->vcn >= end_vcn)))
+			rl++;
 		if (!rl->length)
 			done = TRUE;
 		else {
@@ -623,7 +622,7 @@ static int ntfs_inner_allocation(ntfs_attr *na, s64 alloc_offs, s64 alloc_len)
 			need = end_hole - from_hole;
 			lcn_seek_from = -1;
 			if (rl->vcn) {
-					/* Avoid fragmentation when possible */
+				/* Avoid fragmentation when possible */
 				prl = rl;
 				if ((--prl)->lcn >= 0) {
 					lcn_seek_from = prl->lcn
@@ -632,17 +631,17 @@ static int ntfs_inner_allocation(ntfs_attr *na, s64 alloc_offs, s64 alloc_len)
 			}
 			if (need <= 0) {
 				ntfs_log_error("Wrong hole size %lld\n",
-							(long long)need);
+						(long long)need);
 				errno = EIO;
 				err = -1;
 			} else {
 				rlc = ntfs_cluster_alloc(vol, from_hole, need,
-					 lcn_seek_from, DATA_ZONE);
+						lcn_seek_from, DATA_ZONE);
 				if (!rlc)
 					err = -1;
 				else
 					err = ntfs_merge_allocation(na, rlc,
-						need << vol->cluster_size_bits);
+							need << vol->cluster_size_bits);
 			}
 		}
 	} while (!err && !done);
@@ -650,7 +649,7 @@ static int ntfs_inner_allocation(ntfs_attr *na, s64 alloc_offs, s64 alloc_len)
 }
 
 static int ntfs_full_allocation(ntfs_attr *na, ntfs_attr_search_ctx *ctx,
-				s64 alloc_offs, s64 alloc_len)
+		s64 alloc_offs, s64 alloc_len)
 {
 	ATTR_RECORD *attr;
 	ntfs_inode *ni;
@@ -670,7 +669,7 @@ static int ntfs_full_allocation(ntfs_attr *na, ntfs_attr_search_ctx *ctx,
 		err = ntfs_attr_truncate(na, alloc_offs);
 		if (!err)
 			err = ntfs_attr_truncate_solid(na,
-						alloc_offs + alloc_len);
+					alloc_offs + alloc_len);
 	} else {
 		/*
 		 * Request overlaps what was already allocated :
@@ -682,11 +681,11 @@ static int ntfs_full_allocation(ntfs_attr *na, ntfs_attr_search_ctx *ctx,
 		if (!err)
 			err = ntfs_inner_allocation(na, alloc_offs, alloc_len);
 	}
-		/* Set the sizes, even after an error, to keep consistency */
+	/* Set the sizes, even after an error, to keep consistency */
 	na->initialized_size = initialized_size;
-		/* Restore the original apparent size if requested or error */
-	if (err || opts.no_size_change
-	    || ((alloc_offs + alloc_len) < data_size))
+	/* Restore the original apparent size if requested or error */
+	if (err || opts.no_size_change ||
+			((alloc_offs + alloc_len) < data_size))
 		na->data_size = data_size;
 	else {
 		/*
@@ -695,19 +694,19 @@ static int ntfs_full_allocation(ntfs_attr *na, ntfs_attr_search_ctx *ctx,
 		 * Assuming the same as no FALLOC_FL_KEEP_SIZE in fallocate(2) :
 		 * "the file size will be changed if offset + len is greater
 		 * than the  file  size"
-// TODO check the behavior of another file system
-		 */
+		// TODO check the behavior of another file system
+		*/
 		na->data_size = alloc_offs + alloc_len;
 	}
 
 	if (!err) {
-	/* Find the attribute, which may have been relocated for allocations */
+		/* Find the attribute, which may have been relocated for allocations */
 		if (ntfs_attr_lookup(attr_type, attr_name, attr_name_len,
 					CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 			err = -1;
 			ntfs_log_error("Failed to locate the attribute\n");
 		} else {
-				/* Feed the sizes into the attribute */
+			/* Feed the sizes into the attribute */
 			attr = ctx->attr;
 			attr->data_size = cpu_to_sle64(na->data_size);
 			attr->initialized_size
@@ -794,7 +793,8 @@ static int ntfs_fallocate(ntfs_inode *ni, s64 alloc_offs, s64 alloc_len)
 						errno = save_errno;
 					} else {
 						free(oldrl);
-	/* Mark file name dirty, to update the sizes in directories */
+						/* Mark file name dirty,
+						 * to update the sizes in directories */
 						NInoFileNameSetDirty(ni);
 						NInoSetDirty(ni);
 					}
@@ -857,14 +857,14 @@ int main(int argc, char **argv)
 	vol = ntfs_mount(dev_name, ul);
 	if (!vol)
 		err_exit(vol, "Failed to mount %s: %s\n", dev_name,
-			strerror(errno));
+				strerror(errno));
 
 	if ((vol->flags & VOLUME_IS_DIRTY) && !opts.force)
 		err_exit(vol, "Volume is dirty, please run chkdsk.\n");
 
 	if (ntfs_volume_get_free_space(vol))
 		err_exit(vol, "Failed to get free clusters %s: %s\n",
-					dev_name, strerror(errno));
+				dev_name, strerror(errno));
 
 	/* Open the specified inode. */
 #ifdef HAVE_WINDOWS_H

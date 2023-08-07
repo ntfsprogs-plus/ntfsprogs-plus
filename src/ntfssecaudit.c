@@ -325,19 +325,19 @@
 struct CALLBACK;
 
 typedef int (*dircallback)(void *context, const ntfschar *ntfsname,
-	const int length, const int type, const s64 pos,
-	const MFT_REF mft_ref, const unsigned int dt_type);
+		const int length, const int type, const s64 pos,
+		const MFT_REF mft_ref, const unsigned int dt_type);
 
 #if POSIXACLS
 
 static BOOL same_posix(struct POSIX_SECURITY *pxdesc1,
-			struct POSIX_SECURITY *pxdesc2);
+		struct POSIX_SECURITY *pxdesc2);
 
 #endif /* POSIXACLS */
 
 #ifndef HAVE_SYSLOG_H
 void ntfs_log_early_error(const char *format, ...)
-			__attribute__((format(printf, 1, 2)));
+	__attribute__((format(printf, 1, 2)));
 #endif /* HAVE_SYSLOG_H */
 
 #define ACCOUNTSIZE 256  /* maximum size of an account name */
@@ -350,7 +350,7 @@ void ntfs_log_early_error(const char *format, ...)
 typedef enum { RECSHOW, RECSET, RECSETPOSIX } RECURSE;
 typedef enum { MAPNONE, MAPEXTERN, MAPLOCAL, MAPDUMMY } MAPTYPE;
 typedef enum { CMD_AUDIT, CMD_BACKUP, CMD_HEX, CMD_HELP, CMD_SET,
-			CMD_TEST, CMD_USERMAP, CMD_VERSION, CMD_NONE } CMDS;
+	CMD_TEST, CMD_USERMAP, CMD_VERSION, CMD_NONE } CMDS;
 
 
 #define MAXSECURID 262144
@@ -364,19 +364,19 @@ typedef enum { CMD_AUDIT, CMD_BACKUP, CMD_HEX, CMD_HELP, CMD_SET,
 #define DIRSEP "/"
 #endif
 
-	/* standard owner (and administrator) rights */
+/* standard owner (and administrator) rights */
 
 #define OWNER_RIGHTS (DELETE | READ_CONTROL | WRITE_DAC | WRITE_OWNER \
-			| SYNCHRONIZE \
-			| FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES \
-			| FILE_READ_EA | FILE_WRITE_EA)
+		| SYNCHRONIZE \
+		| FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES \
+		| FILE_READ_EA | FILE_WRITE_EA)
 
-	/* standard world rights */
+/* standard world rights */
 
 #define WORLD_RIGHTS (READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_READ_EA \
-			| SYNCHRONIZE)
+		| SYNCHRONIZE)
 
-	  /* inheritance flags for files and directories */
+/* inheritance flags for files and directories */
 
 #define FILE_INHERITANCE NO_PROPAGATE_INHERIT_ACE
 #define DIR_INHERITANCE (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)
@@ -431,7 +431,7 @@ struct SDH {		/* this is an image of an $SDH index entry */
 	le32 dataoffsh;
 	le32 datasize;
 	le32 fill3;
-	} ;
+} ;
 
 #ifdef HAVE_WINDOWS_H
 /*
@@ -460,17 +460,17 @@ struct CALLBACK {
 } ;
 
 static int callback(void *context, const ntfschar *ntfsname,
-	const int length, const int type, const s64 pos,
-	const MFT_REF mft_ref, const unsigned int dt_type);
+		const int length, const int type, const s64 pos,
+		const MFT_REF mft_ref, const unsigned int dt_type);
 
 struct SECURITY_DATA {
-        u64 offset;
-        char *attr;
-        u32 hash;
-        u32 length;
-        unsigned int filecount:16;
-        unsigned int mode:12;
-        unsigned int flags:4;
+	u64 offset;
+	char *attr;
+	u32 hash;
+	u32 length;
+	unsigned int filecount:16;
+	unsigned int mode:12;
+	unsigned int flags:4;
 } ;
 
 /*
@@ -487,24 +487,24 @@ struct SECURITY_DATA {
 
 #define DUMMYAUTH "S-1-5-21-3141592653-589793238-462843383-"
 char dummymapping[] =	"500::" DUMMYAUTH "1000\n"
-			"501::" DUMMYAUTH "1001\n"
-			"502::" DUMMYAUTH "1002\n"
-			"503::" DUMMYAUTH "1003\n"
-			"516::" DUMMYAUTH "1016\n"
-			":500:" DUMMYAUTH "513\r\n"
-			":511:S-1-5-21-1607551490-981732888-1819828000-513\n"
-			":516:" DUMMYAUTH "1012\r\n"
-			"::"	DUMMYAUTH "10000\n";
+"501::" DUMMYAUTH "1001\n"
+"502::" DUMMYAUTH "1002\n"
+"503::" DUMMYAUTH "1003\n"
+"516::" DUMMYAUTH "1016\n"
+":500:" DUMMYAUTH "513\r\n"
+":511:S-1-5-21-1607551490-981732888-1819828000-513\n"
+":516:" DUMMYAUTH "1012\r\n"
+"::"	DUMMYAUTH "10000\n";
 
 /*
  *		SID for authenticated user (S-1-5-11)
  */
 
 static const char authsidbytes[] = {
-		1,		/* revision */
-		1,		/* auth count */
-		0, 0, 0, 0, 0, 5,	/* base */
-		11, 0, 0, 0	/* 1st level */
+	1,		/* revision */
+	1,		/* auth count */
+	0, 0, 0, 0, 0, 5,	/* base */
+	11, 0, 0, 0	/* 1st level */
 };
 
 static const SID *authsid = (const SID*)authsidbytes;
@@ -514,11 +514,11 @@ static const SID *authsid = (const SID*)authsidbytes;
  */
 
 static const char localsidbytes[] = {
-		1,		/* revision */
-		2,		/* auth count */
-		0, 0, 0, 0, 0, 5,	/* base */
-		32, 0, 0, 0,	/* 1st level */
-		33, 2, 0, 0	/* 2nd level */
+	1,		/* revision */
+	2,		/* auth count */
+	0, 0, 0, 0, 0, 5,	/* base */
+	32, 0, 0, 0,	/* 1st level */
+	33, 2, 0, 0	/* 2nd level */
 };
 
 static const SID *localsid = (const SID*)localsidbytes;
@@ -528,11 +528,11 @@ static const SID *localsid = (const SID*)localsidbytes;
  */
 
 static const char systemsidbytes[] = {
-		1,		/* revision */
-		1,		/* auth count */
-		0, 0, 0, 0, 0, 5,	/* base */
-		18, 0, 0, 0	/* 1st level */
-	};
+	1,		/* revision */
+	1,		/* auth count */
+	0, 0, 0, 0, 0, 5,	/* base */
+	18, 0, 0, 0	/* 1st level */
+};
 
 static const SID *systemsid = (const SID*)systemsidbytes;
 
@@ -587,7 +587,7 @@ static BOOL open_volume(const char *volume, unsigned long flags)
 						" are not compatible\n");
 			} else {
 				fprintf(stderr,"\"%s\" opened %s\n",volume,
-					(flags & NTFS_MNT_RDONLY
+						(flags & NTFS_MNT_RDONLY
 						 ? "read-only" : "read-write"));
 				mappingtype = MAPEXTERN;
 				ok = TRUE;
@@ -596,17 +596,17 @@ static BOOL open_volume(const char *volume, unsigned long flags)
 			fprintf(stderr,"Could not open \"%s\"\n",volume);
 #ifdef HAVE_WINDOWS_H
 			switch (errno) {
-			case EACCES :
-				fprintf(stderr,"You need Administrator rights to open \"%s\"\n",
+				case EACCES :
+					fprintf(stderr,"You need Administrator rights to open \"%s\"\n",
 							volume);
-				break;
-			case EBUSY :
-				fprintf(stderr,"Looks like \"%s\" is mounted,\n",volume);
-				fprintf(stderr,"close all applications using it\n");
-				break;
-			default :
-				fprintf(stderr,"Close all applications using %s\n", volume);
-				fprintf(stderr,"to make sure it is not mounted\n");
+					break;
+				case EBUSY :
+					fprintf(stderr,"Looks like \"%s\" is mounted,\n",volume);
+					fprintf(stderr,"close all applications using it\n");
+					break;
+				default :
+					fprintf(stderr,"Close all applications using %s\n", volume);
+					fprintf(stderr,"to make sure it is not mounted\n");
 			}
 #else
 			fprintf(stderr,"Make sure \"%s\" is not mounted\n",volume);
@@ -893,14 +893,14 @@ static void printerror(FILE *file)
 	if (errno)
 		fprintf(file,"Error code %d : %s\n",errno,strerror(errno));
 	switch (errno) {
-	case EACCES :
-		fprintf(file,"You probably need Administrator rights\n");
-		break;
-	case EBUSY :
-		fprintf(file,"You probably try to write to a mounted device\n");
-		break;
-	default :
-		break;
+		case EACCES :
+			fprintf(file,"You probably need Administrator rights\n");
+			break;
+		case EBUSY :
+			fprintf(file,"You probably try to write to a mounted device\n");
+			break;
+		default :
+			break;
 	}
 }
 
@@ -974,138 +974,138 @@ static void showsid(const char *attr, int off, const char *prefix, int level)
 	known = FALSE;
 	/* SID names taken from https://support.microsoft.com/en-us/kb/243330 */
 	if ((attr[off] == 1) /* revision */
-	     && cnt
-	     && (auth < 100)) {
+			&& cnt
+			&& (auth < 100)) {
 		first = get4l(attr,off+8);
 		switch (cnt) {
-		case 0 : /* no level (error) */
-			break;
-		case 1 : /* single level */
-			switch (auth) {
-			case 0 :
-				if (first == 0) {
-					known = TRUE;
-					printf("%*cNull SID\n",-level,marker);
+			case 0 : /* no level (error) */
+				break;
+			case 1 : /* single level */
+				switch (auth) {
+					case 0 :
+						if (first == 0) {
+							known = TRUE;
+							printf("%*cNull SID\n",-level,marker);
+						}
+						break;
+					case 1 :
+						if (first == 0) {
+							known = TRUE;
+							printf("%*cWorld SID\n",-level,marker);
+						}
+						break;
+					case 3 :
+						switch (first) {
+							case 0 :
+								known = TRUE;
+								printf("%*cCreator owner SID\n",-level,marker);
+								break;
+							case 1 :
+								known = TRUE;
+								printf("%*cCreator group SID\n",-level,marker);
+								break;
+						}
+						break;
+					case 5 :
+						switch (first) {
+							case 1 :
+								known = TRUE;
+								printf("%*cDialup SID\n",-level,marker);
+								break;
+							case 2 :
+								known = TRUE;
+								printf("%*cNetwork SID\n",-level,marker);
+								break;
+							case 3 :
+								known = TRUE;
+								printf("%*cBatch SID\n",-level,marker);
+								break;
+							case 4 :
+								known = TRUE;
+								printf("%*cInteractive SID\n",-level,marker);
+								break;
+							case 6 :
+								known = TRUE;
+								printf("%*cService SID\n",-level,marker);
+								break;
+							case 7 :
+								known = TRUE;
+								printf("%*cAnonymous SID\n",-level,marker);
+								break;
+							case 11 :
+								known = TRUE;
+								printf("%*cAuthenticated Users SID\n",-level,marker);
+								break;
+							case 13 :
+								known = TRUE;
+								printf("%*cTerminal Server Users SID\n",-level,marker);
+								break;
+							case 14 :
+								known = TRUE;
+								printf("%*cRemote Interactive Logon SID\n",-level,marker);
+								break;
+							case 18 :
+								known = TRUE;
+								printf("%*cLocal System SID\n",-level,marker);
+								break;
+						}
+						break;
 				}
 				break;
-			case 1 :
-				if (first == 0) {
-					known = TRUE;
-					printf("%*cWorld SID\n",-level,marker);
+			case 2 : /* double level */
+				second = get4l(attr,off+12);
+				switch (auth) {
+					case 5 :
+						if (first == 32) {
+							known = TRUE;
+							switch (second) {
+								case 544 :
+									printf("%*cAdministrators SID\n",-level,marker);
+									break;
+								case 545 :
+									printf("%*cUsers SID\n",-level,marker);
+									break;
+								case 546 :
+									printf("%*cGuests SID\n",-level,marker);
+									break;
+								default :
+									printf("%*cSome domain SID\n",-level,marker);
+									break;
+							}
+						}
+						break;
 				}
 				break;
-			case 3 :
-				switch (first) {
-				case 0 :
-					known = TRUE;
-					printf("%*cCreator owner SID\n",-level,marker);
-					break;
-				case 1 :
-					known = TRUE;
-					printf("%*cCreator group SID\n",-level,marker);
-					break;
+			default : /* three levels or more */
+				second = get4l(attr,off+12);
+				last = get4l(attr,off+4+4*cnt);
+				switch (auth) {
+					case 5 :
+						if (first == 21) {
+							known = TRUE;
+							switch (last) {
+								case 500 :
+									printf("%*cAdministrator SID\n",-level,marker);
+									break;
+								case 501 :
+									printf("%*cGuest SID\n",-level,marker);
+									break;
+								case 512 :
+									printf("%*cDomain Admins SID\n",-level,marker);
+									break;
+								case 513 :
+									printf("%*cDomain Users SID\n",-level,marker);
+									break;
+								case 514 :
+									printf("%*cDomain Guests SID\n",-level,marker);
+									break;
+								default :
+									printf("%*cLocal user-%lu SID\n",-level,marker,last);
+									break;
+							}
+						}
+						break;
 				}
-				break;
-			case 5 :
-				switch (first) {
-				case 1 :
-					known = TRUE;
-					printf("%*cDialup SID\n",-level,marker);
-					break;
-				case 2 :
-					known = TRUE;
-					printf("%*cNetwork SID\n",-level,marker);
-					break;
-				case 3 :
-					known = TRUE;
-					printf("%*cBatch SID\n",-level,marker);
-					break;
-				case 4 :
-					known = TRUE;
-					printf("%*cInteractive SID\n",-level,marker);
-					break;
-				case 6 :
-					known = TRUE;
-					printf("%*cService SID\n",-level,marker);
-					break;
-				case 7 :
-					known = TRUE;
-					printf("%*cAnonymous SID\n",-level,marker);
-					break;
-				case 11 :
-					known = TRUE;
-					printf("%*cAuthenticated Users SID\n",-level,marker);
-					break;
-				case 13 :
-					known = TRUE;
-					printf("%*cTerminal Server Users SID\n",-level,marker);
-					break;
-				case 14 :
-					known = TRUE;
-					printf("%*cRemote Interactive Logon SID\n",-level,marker);
-					break;
-				case 18 :
-					known = TRUE;
-					printf("%*cLocal System SID\n",-level,marker);
-					break;
-				}
-				break;
-			}
-			break;
-		case 2 : /* double level */
-			second = get4l(attr,off+12);
-			switch (auth) {
-			case 5 :
-				if (first == 32) {
-					known = TRUE;
-					switch (second) {
-					case 544 :
-						printf("%*cAdministrators SID\n",-level,marker);
-						break;
-					case 545 :
-						printf("%*cUsers SID\n",-level,marker);
-						break;
-					case 546 :
-						printf("%*cGuests SID\n",-level,marker);
-						break;
-					default :
-						printf("%*cSome domain SID\n",-level,marker);
-						break;
-					}
-				}
-				break;
-			}
-			break;
-		default : /* three levels or more */
-			second = get4l(attr,off+12);
-			last = get4l(attr,off+4+4*cnt);
-			switch (auth) {
-			case 5 :
-				if (first == 21) {
-					known = TRUE;
-					switch (last) {
-					case 500 :
-						printf("%*cAdministrator SID\n",-level,marker);
-						break;
-					case 501 :
-						printf("%*cGuest SID\n",-level,marker);
-						break;
-					case 512 :
-						printf("%*cDomain Admins SID\n",-level,marker);
-						break;
-					case 513 :
-						printf("%*cDomain Users SID\n",-level,marker);
-						break;
-					case 514 :
-						printf("%*cDomain Guests SID\n",-level,marker);
-						break;
-					default :
-						printf("%*cLocal user-%lu SID\n",-level,marker,last);
-						break;
-					}
-				}
-				break;
-			}
 		}
 	}
 	if (!known)
@@ -1173,34 +1173,34 @@ static void showownership(const char *attr)
 
 	for (shown=SHOWOWN; shown<SHOWDONE; ) {
 		switch (shown) {
-		case SHOWOWN :
-			off = get4l(attr,4);
-			sid = &attr[off];
-			prefix = "Windows owner";
-			shown = SHOWGRP;
-			break;
-		case SHOWGRP :
-			off = get4l(attr,8);
-			sid = &attr[off];
-			prefix = "Windows group";
-			shown = SHOWINT;
-			break;
+			case SHOWOWN :
+				off = get4l(attr,4);
+				sid = &attr[off];
+				prefix = "Windows owner";
+				shown = SHOWGRP;
+				break;
+			case SHOWGRP :
+				off = get4l(attr,8);
+				sid = &attr[off];
+				prefix = "Windows group";
+				shown = SHOWINT;
+				break;
 #if OWNERFROMACL
-		case SHOWINT :
-			off = get4l(attr,4);
-			prefix = "Interpreted owner";
-			sid = (const char*)ntfs_acl_owner((const char*)attr);
-			if (ntfs_same_sid((const SID*)sid,
-						(const SID*)&attr[off]))
-				sid = (const char*)NULL;
-			shown = SHOWDONE;
-			break;
+			case SHOWINT :
+				off = get4l(attr,4);
+				prefix = "Interpreted owner";
+				sid = (const char*)ntfs_acl_owner((const char*)attr);
+				if (ntfs_same_sid((const SID*)sid,
+							(const SID*)&attr[off]))
+					sid = (const char*)NULL;
+				shown = SHOWDONE;
+				break;
 #endif /* OWNERFROMACL */
-		default :
-			sid = (const char*)NULL;
-			prefix = (const char*)NULL;
-			shown = SHOWDONE;
-			break;
+			default :
+				sid = (const char*)NULL;
+				prefix = (const char*)NULL;
+				shown = SHOWDONE;
+				break;
 		}
 		if (sid) {
 			cnt = sid[1] & 255;
@@ -1217,8 +1217,8 @@ static void showownership(const char *attr)
 			accountsz = ACCOUNTSIZE;
 			domainsz = ACCOUNTSIZE;
 			if (LookupAccountSidA((const char*)NULL, sidcopy,
-					account, &accountsz,
-					(char*)NULL, &domainsz, &use))
+						account, &accountsz,
+						(char*)NULL, &domainsz, &use))
 				printf(" (%s)", account);
 #endif /* HAVE_WINDOWS_H */
 			printf("\n");
@@ -1288,18 +1288,18 @@ static void showace(const char *attr, int off, int isdir, int level)
 		marker = ' ';
 	printf("%*ctype     %d\n",-level,marker,attr[off]);
 	switch (attr[off]) {
-	case 0 :
-		printf("%*cAccess allowed\n",-level-4,marker);
-		break;
-	case 1 :
-		printf("%*cAccess denied\n",-level-4,marker);
-		break;
-	case 2 :
-		printf("%*cSystem audit\n",-level-4,marker);
-		break;
-	default :
-		printf("%*cunknown\n",-level-4,marker);
-		break;
+		case 0 :
+			printf("%*cAccess allowed\n",-level-4,marker);
+			break;
+		case 1 :
+			printf("%*cAccess denied\n",-level-4,marker);
+			break;
+		case 2 :
+			printf("%*cSystem audit\n",-level-4,marker);
+			break;
+		default :
+			printf("%*cunknown\n",-level-4,marker);
+			break;
 	}
 	flags = attr[off+1] & 255;
 	printf("%*cflags    0x%x\n",-level,marker,flags);
@@ -1344,7 +1344,7 @@ static void showace(const char *attr, int off, int isdir, int level)
 			printf("%*cWrite attributes\n",-level-8,marker);
 	}
 	else {
-	     /* see FILE_READ_DATA etc in winnt.h */
+		/* see FILE_READ_DATA etc in winnt.h */
 		if (rights & 0x01)
 			printf("%*cRead data\n",-level-8,marker);
 		if (rights & 0x02)
@@ -1556,35 +1556,35 @@ static void showposix(const struct POSIX_SECURITY *pxdesc)
 			else
 				txtype = "access ";
 			switch (tag) {
-			case POSIX_ACL_USER :
-				txtag = "USER ";
-				break;
-			case POSIX_ACL_USER_OBJ :
-				txtag = "USR-O";
-				break;
-			case POSIX_ACL_GROUP :
-				txtag = "GROUP";
-				break;
-			case POSIX_ACL_GROUP_OBJ :
-				txtag = "GRP-O";
-				break;
-			case POSIX_ACL_MASK :
-				txtag = "MASK ";
-				break;
-			case POSIX_ACL_OTHER :
-				txtag = "OTHER";
-				break;
-			case POSIX_ACL_SPECIAL :
-				txtag = "SPECL";
-				break;
-			default :
-				txtag = "UNKWN";
-				break;
+				case POSIX_ACL_USER :
+					txtag = "USER ";
+					break;
+				case POSIX_ACL_USER_OBJ :
+					txtag = "USR-O";
+					break;
+				case POSIX_ACL_GROUP :
+					txtag = "GROUP";
+					break;
+				case POSIX_ACL_GROUP_OBJ :
+					txtag = "GRP-O";
+					break;
+				case POSIX_ACL_MASK :
+					txtag = "MASK ";
+					break;
+				case POSIX_ACL_OTHER :
+					txtag = "OTHER";
+					break;
+				case POSIX_ACL_SPECIAL :
+					txtag = "SPECL";
+					break;
+				default :
+					txtag = "UNKWN";
+					break;
 			}
 			id = pxace->id;
 			printf("ace %d : %s %s %4ld perms 0%03o %s\n",
-				l,txtype,txtag,(long)id,
-				perms,txperm);
+					l,txtype,txtag,(long)id,
+					perms,txperm);
 		}
 	} else
 		printf("** NULL ACL\n");
@@ -1597,7 +1597,7 @@ static void showposix(const struct POSIX_SECURITY *pxdesc)
  */
 
 static uid_t relay_find_user(const struct MAPPING *mapping __attribute__((unused)),
-			const SID *usid)
+		const SID *usid)
 {
 	int uid;
 
@@ -1610,7 +1610,7 @@ static uid_t relay_find_user(const struct MAPPING *mapping __attribute__((unused
  */
 
 static gid_t relay_find_group(const struct MAPPING *mapping __attribute__((unused)),
-			const SID *gsid)
+		const SID *gsid)
 {
 	int gid;
 
@@ -1813,7 +1813,7 @@ static int dummyread(void *fileid  __attribute__((unused)),
  */
 
 static int do_default_mapping(struct MAPPING *mapping[],
-			 const SID *usid)
+		const SID *usid)
 {
 	struct MAPPING *usermapping;
 	struct MAPPING *groupmapping;
@@ -1894,10 +1894,10 @@ static int local_build_mapping(struct MAPPING *mapping[], const char *usermap_pa
 
 	if (usermap_path) {
 #ifdef HAVE_WINDOWS_H
-/* TODO : check whether the device can store acls */
+		/* TODO : check whether the device can store acls */
 		strcpy(mapfile,"x:\\" MAPDIR "\\" MAPFILE);
 		if (((const le16*)usermap_path)[1] == ':')
-  			mapfile[0] = usermap_path[0];
+			mapfile[0] = usermap_path[0];
 		else {
 			getcwd(currpath,MAXFILENAME);
 			mapfile[0] = currpath[0];
@@ -1908,14 +1908,14 @@ static int local_build_mapping(struct MAPPING *mapping[], const char *usermap_pa
 		mapfile = (char*)malloc(MAXFILENAME);
 		if (mapfile) {
 			/* build a full path to locate the mapping file */
-/*
-			if ((usermap_path[0] != '/')
+			/*
+			   if ((usermap_path[0] != '/')
 			   && getcwd(mapfile,MAXFILENAME)) {
-				strcat(mapfile,"/");
-				strcat(mapfile,usermap_path);
-			} else
-				strcpy(mapfile,usermap_path);
-*/
+			   strcat(mapfile,"/");
+			   strcat(mapfile,usermap_path);
+			   } else
+			   strcpy(mapfile,usermap_path);
+			   */
 			p = ntfs_realpath(usermap_path, mapfile);
 			if (p)
 				p = strrchr(mapfile,'/');
@@ -2046,16 +2046,16 @@ static BOOL ishexdump(const char *line, int first, int lth)
 	for (i=0; ((first+i)<lth) && ok; i++) {
 		b = line[first + i];
 		if ((i == 6)
-		    || (i == 7)
-		    || (i == 16)
-		    || (i == 25)
-		    || (i == 34)
-		    || (i == 43))
+				|| (i == 7)
+				|| (i == 16)
+				|| (i == 25)
+				|| (i == 34)
+				|| (i == 43))
 			ok = (b == ' ') || (b == '\n');
 		else
 			ok = ((b >= '0') && (b <= '9'))
-			    || ((b >= 'a') && (b <= 'f'))
-			    || ((b >= 'A') && (b <= 'F'));
+				|| ((b >= 'a') && (b <= 'f'))
+				|| ((b >= 'A') && (b <= 'F'));
 	}
 	return (ok);
 }
@@ -2091,7 +2091,7 @@ static void showhex(FILE *fd)
 	off = 0;
 	done = FALSE;
 	do {
-			/* input a (partial) line without displaying */
+		/* input a (partial) line without displaying */
 		lth = 0;
 		first = -1;
 		do {
@@ -2104,28 +2104,28 @@ static void showhex(FILE *fd)
 				if (c != '\r')
 					line[lth++] = c;
 		} while (!done && (c != '\n') && (lth < MAXLINE));
-			/* check whether this looks like an hexadecimal dump */
+		/* check whether this looks like an hexadecimal dump */
 		isdump = ishexdump(line, first, lth);
 		if (isdump) off = getmsbhex(&line[first]);
-			/* line is not an hexadecimal dump */
-			/* display what we have in store if acceptable */
+		/* line is not an hexadecimal dump */
+		/* display what we have in store if acceptable */
 		acceptable = ((!isdump || !off)
 				&& (pos >= 20))
-				&& (pos > get4l(attr,4))
-				&& (pos > get4l(attr,8))
-				&& (pos > get4l(attr,12))
-				&& (pos > get4l(attr,16))
-				&& (pos >= ntfs_attr_size(attr));
+			&& (pos > get4l(attr,4))
+			&& (pos > get4l(attr,8))
+			&& (pos > get4l(attr,12))
+			&& (pos > get4l(attr,16))
+			&& (pos >= ntfs_attr_size(attr));
 		if (acceptable) {
 			printf("	Computed hash : 0x%08lx\n",
-				    (unsigned long)hash((le32*)attr,
-				    ntfs_attr_size(attr)));
+					(unsigned long)hash((le32*)attr,
+						ntfs_attr_size(attr)));
 			isdir = guess_dir(attr);
 			printf("    Estimated type : %s\n",
 					(isdir ? "directory" : "file"));
 			if (!ntfs_valid_descr((char*)attr,pos)) {
 				printf("**  Bad descriptor,"
-					" trying to display anyway\n");
+						" trying to display anyway\n");
 				errors++;
 			}
 			showheader(attr,4);
@@ -2137,10 +2137,10 @@ static void showhex(FILE *fd)
 			mode = linux_permissions(attr,isdir);
 			printf("Interpreted Unix mode 0%03o\n",mode);
 #if POSIXACLS
-				/*
-				 * Posix display not possible when user
-				 * mapping is not available (option -h)
-				 */
+			/*
+			 * Posix display not possible when user
+			 * mapping is not available (option -h)
+			 */
 			if (mappingtype != MAPNONE) {
 				pxdesc = linux_permissions_posix(attr,isdir);
 				if (pxdesc) {
@@ -2153,8 +2153,8 @@ static void showhex(FILE *fd)
 		}
 		if (isdump && !off)
 			pos = off;
-			/* line looks like an hexadecimal dump */
-			/* decode it into attribute */
+		/* line looks like an hexadecimal dump */
+		/* decode it into attribute */
 		if (isdump && (off == pos)) {
 			for (i=first+8; i<lth; i+=9) {
 				pattr = (le32*)&attr[pos];
@@ -2163,7 +2163,7 @@ static void showhex(FILE *fd)
 				pos += 4;
 			}
 		}
-			/* display (full) current line */
+		/* display (full) current line */
 		if (lth) printf("! ");
 		for (i=0; i<lth; i++) {
 			c = line[i];
@@ -2180,7 +2180,7 @@ static void showhex(FILE *fd)
 }
 
 static BOOL applyattr(const char *fullname, const char *attr,
-			BOOL withattr, int attrib, s32 key)
+		BOOL withattr, int attrib, s32 key)
 {
 	struct SECURITY_DATA *psecurdata;
 	const char *curattr;
@@ -2199,11 +2199,11 @@ static BOOL applyattr(const char *fullname, const char *attr,
 			newblock(key);
 		if (securdata[key >> SECBLKSZ]) {
 			psecurdata = &securdata[key >> SECBLKSZ]
-					[key & ((1 << SECBLKSZ) - 1)];
+				[key & ((1 << SECBLKSZ) - 1)];
 		}
 	}
 
-			/* If we have a usable attrib value. Try applying */
+	/* If we have a usable attrib value. Try applying */
 	badattrib = FALSE;
 	if (opt_e && (attrib != INVALID_FILE_ATTRIBUTES)) {
 		badattrib = !ntfs_set_file_attributes(ntfs_context, fullname, attrib);
@@ -2240,7 +2240,7 @@ static BOOL applyattr(const char *fullname, const char *attr,
 			| DACL_SECURITY_INFORMATION
 			| SACL_SECURITY_INFORMATION;
 		bad = !ntfs_set_file_security(ntfs_context,fullname,
-			selection, (const char*)curattr);
+				selection, (const char*)curattr);
 		if (bad) {
 			printf("** Could not set the ACL of ");
 			printname(stdout,fullname);
@@ -2305,7 +2305,7 @@ static BOOL restore(FILE *fd)
 	fullname[0] = 0;
 	attrib = INVALID_FILE_ATTRIBUTES;
 	do {
-			/* input a (partial) line without processing */
+		/* input a (partial) line without processing */
 		lth = 0;
 		first = -1;
 		do {
@@ -2318,17 +2318,17 @@ static BOOL restore(FILE *fd)
 				if (c != '\r')
 					line[lth++] = c;
 		} while (!done && (c != '\n') && (lth < (MAXFILENAME + 24)));
-			/* check whether this looks like an hexadecimal dump */
+		/* check whether this looks like an hexadecimal dump */
 		isdump = ishexdump(line, first, lth);
 		if (isdump) off = getmsbhex(&line[first]);
-			/* line is not an hexadecimal dump */
-			/* apply what we have in store, only if valid */
+		/* line is not an hexadecimal dump */
+		/* apply what we have in store, only if valid */
 		if ((!isdump || !off) && pos && ntfs_valid_descr((char*)attr,pos)) {
 			withattr = TRUE;
 			if (opt_v >= 2) {
 				printf("	Computed hash : 0x%08lx\n",
-					    (unsigned long)hash((le32*)attr,
-					    ntfs_attr_size(attr)));
+						(unsigned long)hash((le32*)attr,
+							ntfs_attr_size(attr)));
 				isdir = guess_dir(attr);
 				printf("    Estimated type : %s\n",(isdir ? "directory" : "file"));
 				showheader(attr,4);
@@ -2344,8 +2344,8 @@ static BOOL restore(FILE *fd)
 		}
 		if (isdump && !off)
 			pos = off;
-			/* line looks like an hexadecimal dump */
-			/* decode it into attribute */
+		/* line looks like an hexadecimal dump */
+		/* decode it into attribute */
 		if (isdump && (off == pos)) {
 			for (i=first+8; i<lth; i+=9) {
 				pattr = (le32*)&attr[pos];
@@ -2354,7 +2354,7 @@ static BOOL restore(FILE *fd)
 				pos += 4;
 			}
 		}
-			/* display (full) current line unless dump or verbose */
+		/* display (full) current line unless dump or verbose */
 		if (!isdump || opt_v) {
 			if(lth) printf("! ");
 			for (i=0; i<lth; i++) {
@@ -2373,7 +2373,7 @@ static BOOL restore(FILE *fd)
 
 		line[lth] = 0;
 		while ((lth > 0)
-		    && ((line[lth-1] == '\n') || (line[lth-1] == '\r')))
+				&& ((line[lth-1] == '\n') || (line[lth-1] == '\r')))
 			line[--lth] = 0;
 		if (!strncmp(line,"Computed hash : 0x",18))
 			oldhash = getmsbhex(&line[18]);
@@ -2382,8 +2382,8 @@ static BOOL restore(FILE *fd)
 		if (!strncmp(line,"Windows attrib : 0x",19))
 			attrib = getmsbhex(&line[19]);
 		if (done
-		    || !strncmp(line,"File ",5)
-		    || !strncmp(line,"Directory ",10)) {
+				|| !strncmp(line,"File ",5)
+				|| !strncmp(line,"Directory ",10)) {
 			/*
 			 *  New file or directory (or end of file) :
 			 *  apply attribute just collected
@@ -2391,8 +2391,8 @@ static BOOL restore(FILE *fd)
 			 */
 
 			if (withattr
-			    && oldhash
-			    && (hash((const le32*)attr,ntfs_attr_size(attr)) != oldhash)) {
+					&& oldhash
+					&& (hash((const le32*)attr,ntfs_attr_size(attr)) != oldhash)) {
 				printf("** ACL rejected, its hash is not as expected\n");
 				errors++;
 			} else
@@ -2402,7 +2402,7 @@ static BOOL restore(FILE *fd)
 					if (phead->control & SE_DACL_AUTO_INHERITED)
 						phead->control |= SE_DACL_AUTO_INHERIT_REQ;
 					if (!applyattr(fullname,attr,withattr,
-							attrib,key))
+								attrib,key))
 						errors++;
 					else
 						count++;
@@ -2433,7 +2433,7 @@ static BOOL dorestore(const char *volume, FILE *fd)
 
 	err = FALSE;
 	if (!getuid()) {
- 		if (open_security_api()) {
+		if (open_security_api()) {
 			if (open_volume(volume,NTFS_MNT_NONE)) {
 				if (restore(fd)) err = TRUE;
 				close_volume(volume);
@@ -2488,37 +2488,37 @@ static u32 merge_rights(const struct POSIX_SECURITY *pxdesc, BOOL def)
 	pxace = pxdesc->acl.ace;
 	for (i=first; i<=last; i++) {
 		switch (pxace[i].tag) {
-		case POSIX_ACL_USER_OBJ :
-			rights |= (pxace[i].perms & 7) << 6;
-			break;
-		case POSIX_ACL_USER :
-			if (users < 2)
-				rights |= ((u32)pxace[i].perms & 7) << (24 - 3*users);
-			users++;
-			break;
-		case POSIX_ACL_GROUP_OBJ :
-			rights |= (pxace[i].perms & 7) << 3;
-			break;
-		case POSIX_ACL_GROUP :
-			if (groups < 2)
-				rights |= ((u32)pxace[i].perms & 7) << (18 - 3*groups);
-			groups++;
-			break;
-		case POSIX_ACL_MASK :
-			rights |= ((u32)pxace[i].perms & 7) << 12;
-			break;
-		case POSIX_ACL_OTHER :
-			rights |= (pxace[i].perms & 7);
-			break;
-		default :
-			break;
+			case POSIX_ACL_USER_OBJ :
+				rights |= (pxace[i].perms & 7) << 6;
+				break;
+			case POSIX_ACL_USER :
+				if (users < 2)
+					rights |= ((u32)pxace[i].perms & 7) << (24 - 3*users);
+				users++;
+				break;
+			case POSIX_ACL_GROUP_OBJ :
+				rights |= (pxace[i].perms & 7) << 3;
+				break;
+			case POSIX_ACL_GROUP :
+				if (groups < 2)
+					rights |= ((u32)pxace[i].perms & 7) << (18 - 3*groups);
+				groups++;
+				break;
+			case POSIX_ACL_MASK :
+				rights |= ((u32)pxace[i].perms & 7) << 12;
+				break;
+			case POSIX_ACL_OTHER :
+				rights |= (pxace[i].perms & 7);
+				break;
+			default :
+				break;
 		}
 	}
 	return (rights);
 }
 
 static BOOL same_posix(struct POSIX_SECURITY *pxdesc1,
-			struct POSIX_SECURITY *pxdesc2)
+		struct POSIX_SECURITY *pxdesc2)
 {
 	BOOL same;
 	int i;
@@ -2535,15 +2535,15 @@ static BOOL same_posix(struct POSIX_SECURITY *pxdesc1,
 	i = 0;
 	while (same && (i < pxdesc1->acccnt)) {
 		same = (pxdesc1->acl.ace[i].tag == pxdesc2->acl.ace[i].tag)
-		   && (pxdesc1->acl.ace[i].perms == pxdesc2->acl.ace[i].perms)
-		   && (pxdesc1->acl.ace[i].id == pxdesc2->acl.ace[i].id);
+			&& (pxdesc1->acl.ace[i].perms == pxdesc2->acl.ace[i].perms)
+			&& (pxdesc1->acl.ace[i].id == pxdesc2->acl.ace[i].id);
 		i++;
 	}
 	i = pxdesc1->firstdef;
 	while (same && (i < pxdesc1->firstdef + pxdesc1->defcnt)) {
 		same = (pxdesc1->acl.ace[i].tag == pxdesc2->acl.ace[i].tag)
-		   && (pxdesc1->acl.ace[i].perms == pxdesc2->acl.ace[i].perms)
-		   && (pxdesc1->acl.ace[i].id == pxdesc2->acl.ace[i].id);
+			&& (pxdesc1->acl.ace[i].perms == pxdesc2->acl.ace[i].perms)
+			&& (pxdesc1->acl.ace[i].id == pxdesc2->acl.ace[i].id);
 		i++;
 	}
 	return (same);
@@ -2556,17 +2556,17 @@ static BOOL same_posix(struct POSIX_SECURITY *pxdesc1,
 static void tryposix(struct POSIX_SECURITY *pxdesc)
 {
 	le32 owner_sid[] = /* S-1-5-21-3141592653-589793238-462843383-1016 */
-		{
+	{
 		cpu_to_le32(0x501), cpu_to_le32(0x05000000), cpu_to_le32(21),
 		cpu_to_le32(DEFSECAUTH1), cpu_to_le32(DEFSECAUTH2),
 		cpu_to_le32(DEFSECAUTH3), cpu_to_le32(1016)
-		} ;
+	} ;
 	le32 group_sid[] = /* S-1-5-21-3141592653-589793238-462843383-513 */
-		{
+	{
 		cpu_to_le32(0x501), cpu_to_le32(0x05000000), cpu_to_le32(21),
 		cpu_to_le32(DEFSECAUTH1), cpu_to_le32(DEFSECAUTH2),
 		cpu_to_le32(DEFSECAUTH3), cpu_to_le32(513)
-		} ;
+	} ;
 
 	char *attr;
 	BOOL isdir;
@@ -2621,10 +2621,10 @@ static void tryposix(struct POSIX_SECURITY *pxdesc)
  */
 
 static char *build_dummy_descr(BOOL isdir __attribute__((unused)),
-			const SID *usid, const SID *gsid,
-			int cnt,
-			 /* seq of int allow, SID *sid, int flags, u32 mask */
-			...)
+		const SID *usid, const SID *gsid,
+		int cnt,
+		/* seq of int allow, SID *sid, int flags, u32 mask */
+		...)
 {
 	char *attr;
 	int attrsz;
@@ -2656,9 +2656,9 @@ static char *build_dummy_descr(BOOL isdir __attribute__((unused)),
 
 	/* allocate enough space for the new security attribute */
 	attrsz = sizeof(SECURITY_DESCRIPTOR_RELATIVE)	/* header */
-	    + usidsz + gsidsz	/* usid and gsid */
-	    + sizeof(ACL)	/* acl header */
-	    + cnt*40;
+		+ usidsz + gsidsz	/* usid and gsid */
+		+ sizeof(ACL)	/* acl header */
+		+ cnt*40;
 
 	attr = (char*)ntfs_malloc(attrsz);
 	if (attr) {
@@ -2666,16 +2666,16 @@ static char *build_dummy_descr(BOOL isdir __attribute__((unused)),
 		pnhead = (SECURITY_DESCRIPTOR_RELATIVE*) attr;
 		pnhead->revision = SECURITY_DESCRIPTOR_REVISION;
 		pnhead->alignment = 0;
-			/*
-			 * The flag SE_DACL_PROTECTED prevents the ACL
-			 * to be changed in an inheritance after creation
-			 */
+		/*
+		 * The flag SE_DACL_PROTECTED prevents the ACL
+		 * to be changed in an inheritance after creation
+		 */
 		pnhead->control = SE_DACL_PRESENT | SE_DACL_PROTECTED
-				    | SE_SELF_RELATIVE;
-			/*
-			 * Windows prefers ACL first, do the same to
-			 * get the same hash value and avoid duplication
-			 */
+			| SE_SELF_RELATIVE;
+		/*
+		 * Windows prefers ACL first, do the same to
+		 * get the same hash value and avoid duplication
+		 */
 		/* build the ACL header */
 		pos = sizeof(SECURITY_DESCRIPTOR_RELATIVE);
 		pacl = (ACL*)&attr[pos];
@@ -2725,7 +2725,7 @@ static char *build_dummy_descr(BOOL isdir __attribute__((unused)),
 		if (cnt) {
 			pacl->size = cpu_to_le16(aclsz);
 			pnhead->dacl =
-			    cpu_to_le32(sizeof(SECURITY_DESCRIPTOR_RELATIVE));
+				cpu_to_le32(sizeof(SECURITY_DESCRIPTOR_RELATIVE));
 		} else
 			pnhead->dacl = cpu_to_le32(0);
 		if (!ntfs_valid_descr(attr,pos+usidsz+gsidsz)) {
@@ -2761,35 +2761,35 @@ static void check_samples(void)
 	const char *txsample;
 #endif /* POSIXACLS */
 	le32 owner1[] = /* S-1-5-21-1833069642-4243175381-1340018762-1003 */
-		{
+	{
 		cpu_to_le32(0x501), cpu_to_le32(0x05000000), cpu_to_le32(21),
 		cpu_to_le32(1833069642), cpu_to_le32(4243175381U),
 		cpu_to_le32(1340018762), cpu_to_le32(1003)
-		} ;
+	} ;
 	le32 group1[] = /* S-1-5-21-1833069642-4243175381-1340018762-513 */
-		{
+	{
 		cpu_to_le32(0x501), cpu_to_le32(0x05000000), cpu_to_le32(21),
 		cpu_to_le32(1833069642), cpu_to_le32(4243175381U),
 		cpu_to_le32(1340018762), cpu_to_le32(513)
-		} ;
+	} ;
 	le32 group2[] = /* S-1-5-21-1607551490-981732888-1819828000-513 */
-		{
+	{
 		cpu_to_le32(0x501), cpu_to_le32(0x05000000), cpu_to_le32(21),
 		cpu_to_le32(1607551490), cpu_to_le32(981732888),
 		cpu_to_le32(1819828000), cpu_to_le32(513)
-		} ;
+	} ;
 	le32 owner3[] = /* S-1-5-21-3141592653-589793238-462843383-1016 */
-		{
+	{
 		cpu_to_le32(0x501), cpu_to_le32(0x05000000), cpu_to_le32(21),
 		cpu_to_le32(DEFSECAUTH1), cpu_to_le32(DEFSECAUTH2),
 		cpu_to_le32(DEFSECAUTH3), cpu_to_le32(1016)
-		} ;
+	} ;
 	le32 group3[] = /* S-1-5-21-3141592653-589793238-462843383-513 */
-		{
+	{
 		cpu_to_le32(0x501), cpu_to_le32(0x05000000), cpu_to_le32(21),
 		cpu_to_le32(DEFSECAUTH1), cpu_to_le32(DEFSECAUTH2),
 		cpu_to_le32(DEFSECAUTH3), cpu_to_le32(513)
-		} ;
+	} ;
 
 #if POSIXACLS
 	struct {
@@ -2906,67 +2906,67 @@ static void check_samples(void)
 #if POSIXACLS
 	for (cnt=1; cnt<=8; cnt++) {
 		switch (cnt) {
-		case 1 :
-			pxsample = &sampletry1.head;
-			txsample = "sampletry1-a";
-			isdir = FALSE;
-			descr = ntfs_build_descr_posix(context.mapping,&sampletry1.head,
-				isdir, (const SID*)owner3, (const SID*)group3);
-			break;
-		case 2 :
-			pxsample = &sampletry1.head;
-			txsample = "sampletry1-b";
-			isdir = FALSE;
-			descr = ntfs_build_descr_posix(context.mapping,&sampletry1.head,
-				isdir, (const SID*)adminsid, (const SID*)group3);
-			break;
-		case 3 :
-			isdir = FALSE;
-			pxsample = &sampletry3.head;
-			txsample = "sampletry3";
-			descr = ntfs_build_descr_posix(context.mapping,pxsample,
-				isdir, (const SID*)group3, (const SID*)group3);
-			break;
-		case 4 :
-			isdir = FALSE;
-			pxsample = &sampletry4.head;
-			txsample = "sampletry4";
-			descr = ntfs_build_descr_posix(context.mapping,pxsample,
-				isdir, (const SID*)owner3, (const SID*)group3);
-			break;
-		case 5 :
-			isdir = FALSE;
-			pxsample = &sampletry5.head;
-			txsample = "sampletry5";
-			descr = ntfs_build_descr_posix(context.mapping,pxsample,
-				isdir, (const SID*)owner3, (const SID*)group3);
-			break;
-		case 6 :
-			isdir = FALSE;
-			pxsample = &sampletry6.head;
-			txsample = "sampletry6-a";
-			descr = ntfs_build_descr_posix(context.mapping,pxsample,
-				isdir, (const SID*)owner3, (const SID*)group3);
-			break;
-		case 7 :
-			isdir = FALSE;
-			pxsample = &sampletry6.head;
-			txsample = "sampletry6-b";
-			descr = ntfs_build_descr_posix(context.mapping,pxsample,
-				isdir, (const SID*)adminsid, (const SID*)adminsid);
-			break;
-		case 8 :
-			pxsample = &sampletry8.head;
-			txsample = "sampletry8";
-			isdir = FALSE;
-			descr = ntfs_build_descr_posix(context.mapping,&sampletry8.head,
-				isdir, (const SID*)owner3, (const SID*)group3);
-			break;
-		default :
-			pxsample = (struct POSIX_SECURITY*)NULL;
-			txsample = (const char*)NULL;
+			case 1 :
+				pxsample = &sampletry1.head;
+				txsample = "sampletry1-a";
+				isdir = FALSE;
+				descr = ntfs_build_descr_posix(context.mapping,&sampletry1.head,
+						isdir, (const SID*)owner3, (const SID*)group3);
+				break;
+			case 2 :
+				pxsample = &sampletry1.head;
+				txsample = "sampletry1-b";
+				isdir = FALSE;
+				descr = ntfs_build_descr_posix(context.mapping,&sampletry1.head,
+						isdir, (const SID*)adminsid, (const SID*)group3);
+				break;
+			case 3 :
+				isdir = FALSE;
+				pxsample = &sampletry3.head;
+				txsample = "sampletry3";
+				descr = ntfs_build_descr_posix(context.mapping,pxsample,
+						isdir, (const SID*)group3, (const SID*)group3);
+				break;
+			case 4 :
+				isdir = FALSE;
+				pxsample = &sampletry4.head;
+				txsample = "sampletry4";
+				descr = ntfs_build_descr_posix(context.mapping,pxsample,
+						isdir, (const SID*)owner3, (const SID*)group3);
+				break;
+			case 5 :
+				isdir = FALSE;
+				pxsample = &sampletry5.head;
+				txsample = "sampletry5";
+				descr = ntfs_build_descr_posix(context.mapping,pxsample,
+						isdir, (const SID*)owner3, (const SID*)group3);
+				break;
+			case 6 :
+				isdir = FALSE;
+				pxsample = &sampletry6.head;
+				txsample = "sampletry6-a";
+				descr = ntfs_build_descr_posix(context.mapping,pxsample,
+						isdir, (const SID*)owner3, (const SID*)group3);
+				break;
+			case 7 :
+				isdir = FALSE;
+				pxsample = &sampletry6.head;
+				txsample = "sampletry6-b";
+				descr = ntfs_build_descr_posix(context.mapping,pxsample,
+						isdir, (const SID*)adminsid, (const SID*)adminsid);
+				break;
+			case 8 :
+				pxsample = &sampletry8.head;
+				txsample = "sampletry8";
+				isdir = FALSE;
+				descr = ntfs_build_descr_posix(context.mapping,&sampletry8.head,
+						isdir, (const SID*)owner3, (const SID*)group3);
+				break;
+			default :
+				pxsample = (struct POSIX_SECURITY*)NULL;
+				txsample = (const char*)NULL;
 		}
-				/* check we get original back */
+		/* check we get original back */
 		if (descr)
 			pxdesc = linux_permissions_posix(descr, isdir);
 		else
@@ -2987,143 +2987,143 @@ static void check_samples(void)
 #endif /* POSIXACLS */
 
 
-		/*
-		 *		Check a few samples built by Windows,
-		 *	which cannot be generated by Linux
-		 */
+	/*
+	 *		Check a few samples built by Windows,
+	 *	which cannot be generated by Linux
+	 */
 
 	for (cnt=1; cnt<=10; cnt++) {
 		switch(cnt) {
-		case 1 :  /* hp/tmp */
-			isdir = TRUE;
-			descr = build_dummy_descr(isdir,
-				(const SID*)owner1, (const SID*)group1,
-				1,
-				(int)TRUE, worldsid, (int)0x3, (u32)0x1f01ff);
-			expect = expectacc = 0777;
-			expectdef = 0;
-			break;
-		case 2 :  /* swsetup */
-			isdir = TRUE;
-			descr = build_dummy_descr(isdir, adminsid, (const SID*)group2,
-				2,
-				(int)TRUE, worldsid, (int)0x0, (u32)0x1f01ff,
-				(int)TRUE, worldsid, (int)0xb, (u32)0x1f01ff);
-			expectacc = expect = 0777;
-			expectdef = 0777;
-			break;
-		case 3 :  /* Dr Watson */
-			isdir = TRUE;
-			descr = build_dummy_descr(isdir, (const SID*)owner3, (const SID*)group3,
-				0);
-			expectacc = expect = 0700;
-			expectdef = 0;
-			break;
-		case 4 :
-			isdir = FALSE;
-			descr = build_dummy_descr(isdir,
-				(const SID*)owner3, (const SID*)group3,
-				4,
-				(int)TRUE, (const SID*)owner3, 0,
-					le32_to_cpu(FILE_READ_DATA | OWNER_RIGHTS),
-				(int)TRUE, (const SID*)group3, 0,
-					le32_to_cpu(FILE_WRITE_DATA),
-				(int)TRUE, (const SID*)group2, 0,
-					le32_to_cpu(FILE_WRITE_DATA | FILE_READ_DATA),
-				(int)TRUE, (const SID*)worldsid, 0,
-					le32_to_cpu(FILE_EXECUTE));
-			expect = 0731;
-			expectacc = 07070731;
-			expectdef = 0;
-			break;
-		case 5 :  /* Vista/JP */
-			isdir = TRUE;
-			descr = build_dummy_descr(isdir, systemsid, systemsid,
-				6,
-				(int)TRUE, owner1, (int)0x0, (u32)0x1f01ff,
-				(int)TRUE, systemsid, (int)0x0, (u32)0x1f01ff,
-				(int)TRUE, adminsid, (int)0x0, (u32)0x1f01ff,
-				(int)TRUE, owner1, (int)0xb, (u32)0x10000000,
-				(int)TRUE, systemsid, (int)0xb, (u32)0x10000000,
-				(int)TRUE, adminsid, (int)0xb, (u32)0x10000000);
-			expectacc = expect = 0700;
-			expectdef = 0700;
-			break;
-		case 6 :  /* Vista/JP2 */
-			isdir = TRUE;
-			descr = build_dummy_descr(isdir, systemsid, systemsid,
-				7,
-				(int)TRUE, owner1,    (int)0x0, (u32)0x1f01ff,
-				(int)TRUE, systemsid, (int)0x0, (u32)0x1f01ff,
-				(int)TRUE, adminsid,  (int)0x0, (u32)0x1f01ff,
-				(int)TRUE, owner1,    (int)0xb, (u32)0x1f01ff,
-				(int)TRUE, systemsid, (int)0xb, (u32)0x1f01ff,
-				(int)TRUE, adminsid,  (int)0xb, (u32)0x1f01ff,
-				(int)TRUE, owner3,    (int)0x3, (u32)0x1200a9);
-			expectacc = 0500070700;
-			expectdef = expect = 0700;
-			break;
-		case 7 :  /* WinXP/JP */
-			isdir = TRUE;
-			descr = build_dummy_descr(isdir, adminsid, systemsid,
-				6,
-				(int)TRUE, owner1, (int)0x0, (u32)0x1f01ff,
-				(int)TRUE, systemsid, (int)0x0, (u32)0x1f01ff,
-				(int)TRUE, adminsid, (int)0x0, (u32)0x1f01ff,
-				(int)TRUE, owner1, (int)0xb, (u32)0x10000000,
-				(int)TRUE, systemsid, (int)0xb, (u32)0x10000000,
-				(int)TRUE, adminsid, (int)0xb, (u32)0x10000000);
-			expectacc = expect = 0700;
-			expectdef = 0700;
-			break;
-		case 8 :  /* WinXP/JP2 */
-			isdir = TRUE;
-			descr = build_dummy_descr(isdir, adminsid, systemsid,
-				6,
-				(int)TRUE, owner1,    (int)0x0, (u32)0x1f01ff,
-				(int)TRUE, systemsid, (int)0x0, (u32)0x1f01ff,
-				(int)TRUE, adminsid,  (int)0x0, (u32)0x1f01ff,
-				(int)TRUE, owner1,    (int)0xb, (u32)0x10000000,
-				(int)TRUE, systemsid, (int)0xb, (u32)0x10000000,
-				(int)TRUE, adminsid,  (int)0xb, (u32)0x10000000);
-			expectacc = expect = 0700;
-			expectdef = 0700;
-			break;
-		case 9 :  /* Win8/bin */
-			isdir = TRUE;
-			descr = build_dummy_descr(isdir,
-				(const SID*)owner3, (const SID*)owner3,
-				6,
-				(int)TRUE, authsid,   (int)0x3,  (u32)0x1f01ff,
-				(int)TRUE, adminsid,  (int)0x13, (u32)0x1f01ff,
-				(int)TRUE, systemsid, (int)0x13, (u32)0x1f01ff,
-				(int)TRUE, localsid,  (int)0x13, (u32)0x1200a9,
-				(int)TRUE, authsid,   (int)0x10, (u32)0x1301bf,
-				(int)TRUE, authsid,   (int)0x1b, (u32)0xe0010000);
-			expectacc = expect = 0777;
-			expectdef = 0777;
-			break;
-		case 10 :  /* Win8/bin/linem.exe */
-			isdir = FALSE;
-			descr = build_dummy_descr(isdir,
-				(const SID*)owner3, (const SID*)owner3,
-				4,
-				(int)TRUE, authsid,   (int)0x10, (u32)0x1f01ff,
-				(int)TRUE, adminsid,  (int)0x10, (u32)0x1f01ff,
-				(int)TRUE, systemsid, (int)0x10, (u32)0x1ff,
-				(int)TRUE, localsid,  (int)0x10, (u32)0x1200a9);
-			expectacc = expect = 0777;
-			expectdef = 0;
-			break;
-		default :
-			expectacc = expectdef = 0;
-			break;
+			case 1 :  /* hp/tmp */
+				isdir = TRUE;
+				descr = build_dummy_descr(isdir,
+						(const SID*)owner1, (const SID*)group1,
+						1,
+						(int)TRUE, worldsid, (int)0x3, (u32)0x1f01ff);
+				expect = expectacc = 0777;
+				expectdef = 0;
+				break;
+			case 2 :  /* swsetup */
+				isdir = TRUE;
+				descr = build_dummy_descr(isdir, adminsid, (const SID*)group2,
+						2,
+						(int)TRUE, worldsid, (int)0x0, (u32)0x1f01ff,
+						(int)TRUE, worldsid, (int)0xb, (u32)0x1f01ff);
+				expectacc = expect = 0777;
+				expectdef = 0777;
+				break;
+			case 3 :  /* Dr Watson */
+				isdir = TRUE;
+				descr = build_dummy_descr(isdir, (const SID*)owner3, (const SID*)group3,
+						0);
+				expectacc = expect = 0700;
+				expectdef = 0;
+				break;
+			case 4 :
+				isdir = FALSE;
+				descr = build_dummy_descr(isdir,
+						(const SID*)owner3, (const SID*)group3,
+						4,
+						(int)TRUE, (const SID*)owner3, 0,
+						le32_to_cpu(FILE_READ_DATA | OWNER_RIGHTS),
+						(int)TRUE, (const SID*)group3, 0,
+						le32_to_cpu(FILE_WRITE_DATA),
+						(int)TRUE, (const SID*)group2, 0,
+						le32_to_cpu(FILE_WRITE_DATA | FILE_READ_DATA),
+						(int)TRUE, (const SID*)worldsid, 0,
+						le32_to_cpu(FILE_EXECUTE));
+				expect = 0731;
+				expectacc = 07070731;
+				expectdef = 0;
+				break;
+			case 5 :  /* Vista/JP */
+				isdir = TRUE;
+				descr = build_dummy_descr(isdir, systemsid, systemsid,
+						6,
+						(int)TRUE, owner1, (int)0x0, (u32)0x1f01ff,
+						(int)TRUE, systemsid, (int)0x0, (u32)0x1f01ff,
+						(int)TRUE, adminsid, (int)0x0, (u32)0x1f01ff,
+						(int)TRUE, owner1, (int)0xb, (u32)0x10000000,
+						(int)TRUE, systemsid, (int)0xb, (u32)0x10000000,
+						(int)TRUE, adminsid, (int)0xb, (u32)0x10000000);
+				expectacc = expect = 0700;
+				expectdef = 0700;
+				break;
+			case 6 :  /* Vista/JP2 */
+				isdir = TRUE;
+				descr = build_dummy_descr(isdir, systemsid, systemsid,
+						7,
+						(int)TRUE, owner1,    (int)0x0, (u32)0x1f01ff,
+						(int)TRUE, systemsid, (int)0x0, (u32)0x1f01ff,
+						(int)TRUE, adminsid,  (int)0x0, (u32)0x1f01ff,
+						(int)TRUE, owner1,    (int)0xb, (u32)0x1f01ff,
+						(int)TRUE, systemsid, (int)0xb, (u32)0x1f01ff,
+						(int)TRUE, adminsid,  (int)0xb, (u32)0x1f01ff,
+						(int)TRUE, owner3,    (int)0x3, (u32)0x1200a9);
+				expectacc = 0500070700;
+				expectdef = expect = 0700;
+				break;
+			case 7 :  /* WinXP/JP */
+				isdir = TRUE;
+				descr = build_dummy_descr(isdir, adminsid, systemsid,
+						6,
+						(int)TRUE, owner1, (int)0x0, (u32)0x1f01ff,
+						(int)TRUE, systemsid, (int)0x0, (u32)0x1f01ff,
+						(int)TRUE, adminsid, (int)0x0, (u32)0x1f01ff,
+						(int)TRUE, owner1, (int)0xb, (u32)0x10000000,
+						(int)TRUE, systemsid, (int)0xb, (u32)0x10000000,
+						(int)TRUE, adminsid, (int)0xb, (u32)0x10000000);
+				expectacc = expect = 0700;
+				expectdef = 0700;
+				break;
+			case 8 :  /* WinXP/JP2 */
+				isdir = TRUE;
+				descr = build_dummy_descr(isdir, adminsid, systemsid,
+						6,
+						(int)TRUE, owner1,    (int)0x0, (u32)0x1f01ff,
+						(int)TRUE, systemsid, (int)0x0, (u32)0x1f01ff,
+						(int)TRUE, adminsid,  (int)0x0, (u32)0x1f01ff,
+						(int)TRUE, owner1,    (int)0xb, (u32)0x10000000,
+						(int)TRUE, systemsid, (int)0xb, (u32)0x10000000,
+						(int)TRUE, adminsid,  (int)0xb, (u32)0x10000000);
+				expectacc = expect = 0700;
+				expectdef = 0700;
+				break;
+			case 9 :  /* Win8/bin */
+				isdir = TRUE;
+				descr = build_dummy_descr(isdir,
+						(const SID*)owner3, (const SID*)owner3,
+						6,
+						(int)TRUE, authsid,   (int)0x3,  (u32)0x1f01ff,
+						(int)TRUE, adminsid,  (int)0x13, (u32)0x1f01ff,
+						(int)TRUE, systemsid, (int)0x13, (u32)0x1f01ff,
+						(int)TRUE, localsid,  (int)0x13, (u32)0x1200a9,
+						(int)TRUE, authsid,   (int)0x10, (u32)0x1301bf,
+						(int)TRUE, authsid,   (int)0x1b, (u32)0xe0010000);
+				expectacc = expect = 0777;
+				expectdef = 0777;
+				break;
+			case 10 :  /* Win8/bin/linem.exe */
+				isdir = FALSE;
+				descr = build_dummy_descr(isdir,
+						(const SID*)owner3, (const SID*)owner3,
+						4,
+						(int)TRUE, authsid,   (int)0x10, (u32)0x1f01ff,
+						(int)TRUE, adminsid,  (int)0x10, (u32)0x1f01ff,
+						(int)TRUE, systemsid, (int)0x10, (u32)0x1ff,
+						(int)TRUE, localsid,  (int)0x10, (u32)0x1200a9);
+				expectacc = expect = 0777;
+				expectdef = 0;
+				break;
+			default :
+				expectacc = expectdef = 0;
+				break;
 		}
 		if (descr) {
 			perms = linux_permissions(descr, isdir);
 			if (perms != expect) {
 				printf("** Error in sample %d, perms 0%03o expected 0%03o\n",
-					cnt,perms,expect);
+						cnt,perms,expect);
 				showall(descr,0);
 				errors++;
 			} else {
@@ -3137,14 +3137,14 @@ static void check_samples(void)
 					else
 						mixmode = (expect & 07707) | ((accrights >> 9) & 070);
 					if ((pxdesc->mode != mixmode)
-					  || (accrights != expectacc)
-					  || (defrights != expectdef)) {
+							|| (accrights != expectacc)
+							|| (defrights != expectdef)) {
 						printf("** Error in sample %d : mode %03o expected 0%03o\n",
-							cnt,pxdesc->mode,mixmode);
+								cnt,pxdesc->mode,mixmode);
 						printf("     Posix access rights 0%03lo expected 0%03lo\n",
-							(long)accrights,(long)expectacc);
+								(long)accrights,(long)expectacc);
 						printf("          default rights 0%03lo expected 0%03lo\n",
-							(long)defrights,(long)expectdef);
+								(long)defrights,(long)expectdef);
 						showall(descr,0);
 						showposix(pxdesc);
 					}
@@ -3152,7 +3152,7 @@ static void check_samples(void)
 				}
 #endif /* POSIXACLS */
 			}
-		free(descr);
+			free(descr);
 		}
 	}
 }
@@ -3231,16 +3231,16 @@ static void basictest(int kind, BOOL isdir, const SID *owner, const SID *group)
 				else
 					gotback = 0;
 			} else {
-			/*
-			 * Build a NTFS ACL from the Posix ACL, expecting to
-			 * get exactly the same NTFS ACL, then decode to a
-			 * mode, expecting to get the original mode back.
-			 */
+				/*
+				 * Build a NTFS ACL from the Posix ACL, expecting to
+				 * get exactly the same NTFS ACL, then decode to a
+				 * mode, expecting to get the original mode back.
+				 */
 				pxattr = ntfs_build_descr_posix(context.mapping,
 						pxdesc,isdir,owner,
 						(const SID*)group);
 				if (pxattr && !memcmp(pxattr,attr,
-						 ntfs_attr_size(attr))) {
+							ntfs_attr_size(attr))) {
 					phead = (const SECURITY_DESCRIPTOR_RELATIVE*)attr;
 					pacl = (const ACL*)&attr[le32_to_cpu(phead->dacl)];
 					pxacecount += le16_to_cpu(pacl->ace_count);
@@ -3267,93 +3267,93 @@ static void basictest(int kind, BOOL isdir, const SID *owner, const SID *group)
 			err = ERRMA;
 
 		switch (err) {
-		case ERRMA :
-			printf("** no or wrong permission settings "
-				"for kind %d perm %03o\n",kind,perm);
-			if (attr && opt_v)
-				hexdump(attr,ntfs_attr_size(attr),8);
-			if (attr && (opt_v >= 2)) {
-				showheader(attr,4);
-				showusid(attr,4);
-				showgsid(attr,4);
-				showdacl(attr,isdir,4);
-				showsacl(attr,isdir,4);
-			}
-			errors++;
-			break;
-		case ERRPA :
-			printf("** no or wrong permission settings from PX "
-				"for kind %d perm %03o\n",kind,perm);
-			errors++;
-			break;
+			case ERRMA :
+				printf("** no or wrong permission settings "
+						"for kind %d perm %03o\n",kind,perm);
+				if (attr && opt_v)
+					hexdump(attr,ntfs_attr_size(attr),8);
+				if (attr && (opt_v >= 2)) {
+					showheader(attr,4);
+					showusid(attr,4);
+					showgsid(attr,4);
+					showdacl(attr,isdir,4);
+					showsacl(attr,isdir,4);
+				}
+				errors++;
+				break;
+			case ERRPA :
+				printf("** no or wrong permission settings from PX "
+						"for kind %d perm %03o\n",kind,perm);
+				errors++;
+				break;
 #if POSIXACLS
-		case ERRAM :
-			printf("** wrong permission settings, "
-				"kind %d perm 0%03o, gotback %03o\n",
-				kind, perm, gotback);
-			if (opt_v)
-				hexdump(pxattr,ntfs_attr_size(pxattr),8);
-			if (opt_v >= 2) {
-				showheader(pxattr,4);
-				showusid(pxattr,4);
-				showgsid(pxattr,4);
-				showdacl(pxattr,isdir,4);
-				showsacl(pxattr,isdir,4);
-			}
-			errors++;
-			break;
-		case ERRAP :
-			/* continued */
+			case ERRAM :
+				printf("** wrong permission settings, "
+						"kind %d perm 0%03o, gotback %03o\n",
+						kind, perm, gotback);
+				if (opt_v)
+					hexdump(pxattr,ntfs_attr_size(pxattr),8);
+				if (opt_v >= 2) {
+					showheader(pxattr,4);
+					showusid(pxattr,4);
+					showgsid(pxattr,4);
+					showdacl(pxattr,isdir,4);
+					showsacl(pxattr,isdir,4);
+				}
+				errors++;
+				break;
+			case ERRAP :
+				/* continued */
 #else /* POSIXACLS */
-		case ERRAM :
-		case ERRAP :
+			case ERRAM :
+			case ERRAP :
 #endif /* POSIXACLS */
-			printf("** wrong permission settings, "
-				"kind %d perm 0%03o, gotback %03o\n",
-				kind, perm, gotback);
-			if (opt_v)
-				hexdump(attr,ntfs_attr_size(attr),8);
-			if (opt_v >= 2) {
-				showheader(attr,4);
-				showusid(attr,4);
-				showgsid(attr,4);
-				showdacl(attr,isdir,4);
-				showsacl(attr,isdir,4);
-			}
-			errors++;
-			free(attr);
-			break;
-		default :
-			break;
+				printf("** wrong permission settings, "
+						"kind %d perm 0%03o, gotback %03o\n",
+						kind, perm, gotback);
+				if (opt_v)
+					hexdump(attr,ntfs_attr_size(attr),8);
+				if (opt_v >= 2) {
+					showheader(attr,4);
+					showusid(attr,4);
+					showgsid(attr,4);
+					showdacl(attr,isdir,4);
+					showsacl(attr,isdir,4);
+				}
+				errors++;
+				free(attr);
+				break;
+			default :
+				break;
 		}
 	}
 	printf("%lu ACLs built from mode, %lu ACE built, mean count %lu.%02lu\n",
-		(unsigned long)count,(unsigned long)acecount,
-		(unsigned long)acecount/count,acecount*100L/count%100L);
+			(unsigned long)count,(unsigned long)acecount,
+			(unsigned long)acecount/count,acecount*100L/count%100L);
 	if (acecount != expectcnt[kind]) {
 		printf("** Error : ACE count %lu instead of %lu\n",
-			(unsigned long)acecount,
-			(unsigned long)expectcnt[kind]);
+				(unsigned long)acecount,
+				(unsigned long)expectcnt[kind]);
 		errors++;
 	}
 	if (globhash != expecthash[kind]) {
 		printf("** Error : wrong global hash 0x%lx instead of 0x%lx\n",
-			(unsigned long)globhash, (unsigned long)expecthash[kind]);
+				(unsigned long)globhash, (unsigned long)expecthash[kind]);
 		errors++;
 	}
 #if POSIXACLS
 	printf("%lu ACLs built from Posix ACLs, %lu ACE built, mean count %lu.%02lu\n",
-		(unsigned long)pxcount,(unsigned long)pxacecount,
-		(unsigned long)pxacecount/pxcount,pxacecount*100L/pxcount%100L);
+			(unsigned long)pxcount,(unsigned long)pxacecount,
+			(unsigned long)pxacecount/pxcount,pxacecount*100L/pxcount%100L);
 	if (pxacecount != expectcnt[kind]) {
 		printf("** Error : ACE count %lu instead of %lu\n",
-			(unsigned long)pxacecount,
-			(unsigned long)expectcnt[kind]);
+				(unsigned long)pxacecount,
+				(unsigned long)expectcnt[kind]);
 		errors++;
 	}
 	if (pxglobhash != expecthash[kind]) {
 		printf("** Error : wrong global hash 0x%lx instead of 0x%lx\n",
-			(unsigned long)pxglobhash, (unsigned long)expecthash[kind]);
+				(unsigned long)pxglobhash, (unsigned long)expecthash[kind]);
 		errors++;
 	}
 #endif /* POSIXACLS */
@@ -3367,7 +3367,7 @@ static void basictest(int kind, BOOL isdir, const SID *owner, const SID *group)
  */
 
 static void posixtest(int kind, BOOL isdir,
-			const SID *owner, const SID *group)
+		const SID *owner, const SID *group)
 {
 	struct POSIX_SECURITY *pxdesc;
 	struct {
@@ -3443,7 +3443,7 @@ static void posixtest(int kind, BOOL isdir,
 	count = 0;
 	acecount = 0;
 	globhash = 0;
-				/* fill headers */
+	/* fill headers */
 	pxdesc = &desc.pxdesc;
 	pxdesc->mode = 0;
 	pxdesc->defcnt = 0;
@@ -3459,7 +3459,7 @@ static void posixtest(int kind, BOOL isdir,
 	pxdesc->acl.version = POSIX_VERSION;
 	pxdesc->acl.flags = 0;
 	pxdesc->acl.filler = 0;
-				/* prefill aces */
+	/* prefill aces */
 	pxdesc->acl.ace[0].tag = POSIX_ACL_USER_OBJ;
 	pxdesc->acl.ace[0].id = -1;
 	if (kind & 32) {
@@ -3487,94 +3487,94 @@ static void posixtest(int kind, BOOL isdir,
 	minmsk = 0;
 	maxmsk = 7;
 	for (mask=minmsk; mask<=maxmsk; mask++)
-	for (ownobj=1; ownobj<7; ownobj++)
-	for (grpobj=1; grpobj<7; grpobj++)
-	for (wrld=0; wrld<8; wrld++)
-	for (usr=mindes; usr<=maxdes; usr++)
-	if (usr != 4)
-	for (grp=mindes; grp<=maxdes; grp++)
-	if (grp != 4) {
-		pxdesc->mode = (ownobj << 6) | (mask << 3) | wrld;
+		for (ownobj=1; ownobj<7; ownobj++)
+			for (grpobj=1; grpobj<7; grpobj++)
+				for (wrld=0; wrld<8; wrld++)
+					for (usr=mindes; usr<=maxdes; usr++)
+						if (usr != 4)
+							for (grp=mindes; grp<=maxdes; grp++)
+								if (grp != 4) {
+									pxdesc->mode = (ownobj << 6) | (mask << 3) | wrld;
 
-		pxdesc->acl.ace[0].perms = ownobj;
-		if (kind & 32) {
-			pxdesc->acl.ace[1].perms = grpobj;
-			pxdesc->acl.ace[2].perms = mask;
-			pxdesc->acl.ace[3].perms = wrld;
-		} else {
-			pxdesc->acl.ace[1].perms = usr;
-			pxdesc->acl.ace[2].perms = grpobj;
-			pxdesc->acl.ace[3].perms = grp;
-			pxdesc->acl.ace[4].perms = mask;
-			pxdesc->acl.ace[5].perms = wrld;
-		}
+									pxdesc->acl.ace[0].perms = ownobj;
+									if (kind & 32) {
+										pxdesc->acl.ace[1].perms = grpobj;
+										pxdesc->acl.ace[2].perms = mask;
+										pxdesc->acl.ace[3].perms = wrld;
+									} else {
+										pxdesc->acl.ace[1].perms = usr;
+										pxdesc->acl.ace[2].perms = grpobj;
+										pxdesc->acl.ace[3].perms = grp;
+										pxdesc->acl.ace[4].perms = mask;
+										pxdesc->acl.ace[5].perms = wrld;
+									}
 
-		gotback = (struct POSIX_SECURITY*)NULL;
-		pxattr = ntfs_build_descr_posix(context.mapping,
-				pxdesc,isdir,owner,group);
-		if (pxattr && ntfs_valid_descr(pxattr, ntfs_attr_size(pxattr))) {
-			phead = (const SECURITY_DESCRIPTOR_RELATIVE*)pxattr;
-			pacl = (const ACL*)&pxattr[le32_to_cpu(phead->dacl)];
-			acecount += le16_to_cpu(pacl->ace_count);
-			globhash += hash((const le32*)pxattr,ntfs_attr_size(pxattr));
-			count++;
-			gotback = linux_permissions_posix(pxattr, isdir);
-			if (gotback) {
-				if (ntfs_valid_posix(gotback)) {
-					if (!same_posix(pxdesc,gotback)) {
-						printf("Non matching got back Posix ACL\n");
-						printf("input ACL\n");
-						showposix(pxdesc);
-						printf("NTFS owner\n");
-						showusid(pxattr,4);
-						printf("NTFS group\n");
-						showgsid(pxattr,4);
-						printf("NTFS DACL\n");
-						showdacl(pxattr,isdir,4);
-						printf("gotback ACL\n");
-						showposix(gotback);
-						errors++;
-					}
-				} else {
-					printf("Got back an invalid Posix ACL\n");
-					errors++;
-				}
-				free(gotback);
-			} else {
-				printf("Could not get Posix ACL back\n");
-				errors++;
-			}
+									gotback = (struct POSIX_SECURITY*)NULL;
+									pxattr = ntfs_build_descr_posix(context.mapping,
+											pxdesc,isdir,owner,group);
+									if (pxattr && ntfs_valid_descr(pxattr, ntfs_attr_size(pxattr))) {
+										phead = (const SECURITY_DESCRIPTOR_RELATIVE*)pxattr;
+										pacl = (const ACL*)&pxattr[le32_to_cpu(phead->dacl)];
+										acecount += le16_to_cpu(pacl->ace_count);
+										globhash += hash((const le32*)pxattr,ntfs_attr_size(pxattr));
+										count++;
+										gotback = linux_permissions_posix(pxattr, isdir);
+										if (gotback) {
+											if (ntfs_valid_posix(gotback)) {
+												if (!same_posix(pxdesc,gotback)) {
+													printf("Non matching got back Posix ACL\n");
+													printf("input ACL\n");
+													showposix(pxdesc);
+													printf("NTFS owner\n");
+													showusid(pxattr,4);
+													printf("NTFS group\n");
+													showgsid(pxattr,4);
+													printf("NTFS DACL\n");
+													showdacl(pxattr,isdir,4);
+													printf("gotback ACL\n");
+													showposix(gotback);
+													errors++;
+												}
+											} else {
+												printf("Got back an invalid Posix ACL\n");
+												errors++;
+											}
+											free(gotback);
+										} else {
+											printf("Could not get Posix ACL back\n");
+											errors++;
+										}
 
-		} else {
-			printf("NTFS ACL incorrect or not build\n");
-			printf("input ACL\n");
-			showposix(pxdesc);
-			printf("NTFS DACL\n");
-			if (pxattr)
-				showdacl(pxattr,isdir,4);
-			else
-				printf("   (none)\n");
-			if (gotback) {
-				printf("gotback ACL\n");
-				showposix(gotback);
-			} else
-				printf("no gotback ACL\n");
-			errors++;
-		}
-		if (pxattr)
-			free(pxattr);
-	}
+									} else {
+										printf("NTFS ACL incorrect or not build\n");
+										printf("input ACL\n");
+										showposix(pxdesc);
+										printf("NTFS DACL\n");
+										if (pxattr)
+											showdacl(pxattr,isdir,4);
+										else
+											printf("   (none)\n");
+										if (gotback) {
+											printf("gotback ACL\n");
+											showposix(gotback);
+										} else
+											printf("no gotback ACL\n");
+										errors++;
+									}
+									if (pxattr)
+										free(pxattr);
+								}
 	printf("%lu ACLs built from Posix ACLs, %lu ACE built, mean count %lu.%02lu\n",
-		(unsigned long)count,(unsigned long)acecount,
-		(unsigned long)acecount/count,acecount*100L/count%100L);
+			(unsigned long)count,(unsigned long)acecount,
+			(unsigned long)acecount/count,acecount*100L/count%100L);
 	if (acecount != expectcnt[kind]) {
 		printf("** Error ! expected ACE count %lu\n",
-			(unsigned long)expectcnt[kind]);
+				(unsigned long)expectcnt[kind]);
 		errors++;
 	}
 	if (globhash != expecthash[kind]) {
 		printf("** Error : wrong global hash 0x%lx instead of 0x%lx\n",
-			(unsigned long)globhash, (unsigned long)expecthash[kind]);
+				(unsigned long)globhash, (unsigned long)expecthash[kind]);
 		errors++;
 	}
 }
@@ -3584,21 +3584,21 @@ static void posixtest(int kind, BOOL isdir,
 static void selftests(void)
 {
 	le32 owner_sid[] = /* S-1-5-21-3141592653-589793238-462843383-1016 */
-		{
+	{
 		cpu_to_le32(0x501), cpu_to_le32(0x05000000), cpu_to_le32(21),
 		cpu_to_le32(DEFSECAUTH1), cpu_to_le32(DEFSECAUTH2),
 		cpu_to_le32(DEFSECAUTH3), cpu_to_le32(1016)
-		} ;
+	} ;
 	le32 group_sid[] = /* S-1-5-21-3141592653-589793238-462843383-513 */
-		{
+	{
 		cpu_to_le32(0x501), cpu_to_le32(0x05000000), cpu_to_le32(21),
 		cpu_to_le32(DEFSECAUTH1), cpu_to_le32(DEFSECAUTH2),
 		cpu_to_le32(DEFSECAUTH3), cpu_to_le32(513)
-		} ;
+	} ;
 #if POSIXACLS
 	unsigned char kindlist[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-			   16, 17, 18, 20, 22, 24, 19, 21, 23, 25,
-			   32, 33, 36, 40 } ;
+		16, 17, 18, 20, 22, 24, 19, 21, 23, 25,
+		32, 33, 36, 40 } ;
 	unsigned int k;
 #endif /* POSIXACLS */
 	int kind;
@@ -3609,18 +3609,18 @@ static void selftests(void)
 #if POSIXACLS
 	local_build_mapping(context.mapping, (const char*)NULL);
 #endif /* POSIXACLS */
-			/* first check samples */
+	/* first check samples */
 	mappingtype = MAPDUMMY;
 	check_samples();
-		/*
-		 * kind is oring of :
-		 *   1 : directory
-		 *   2 : owner is root
-		 *   4 : group is root
-		 *   8 : group is owner
-		 *  16 : root is designated user/group
-		 *  32 : mask present with no designated user/group
-		 */
+	/*
+	 * kind is oring of :
+	 *   1 : directory
+	 *   2 : owner is root
+	 *   4 : group is root
+	 *   8 : group is owner
+	 *  16 : root is designated user/group
+	 *  32 : mask present with no designated user/group
+	 */
 	for (kind=0; (kind<10) && (errors<10); kind++) {
 		isdir = kind & 1;
 		if (kind & 8)
@@ -3681,12 +3681,12 @@ static unsigned int getfull(char *attr, const char *fullname)
 			ownerfl = 0;
 			ownersz = 0;
 		}
-			/*
-			 *  SACL : just feed in or clean
-			 */
+		/*
+		 *  SACL : just feed in or clean
+		 */
 		if (!ntfs_get_file_security(ntfs_context,fullname,
-				SACL_SECURITY_INFORMATION,
-				(char*)attr,MAXATTRSZ,&attrsz)) {
+					SACL_SECURITY_INFORMATION,
+					(char*)attr,MAXATTRSZ,&attrsz)) {
 			attrsz = 20;
 			set4l(attr,0);
 			attr[0] = SECURITY_DESCRIPTOR_REVISION;
@@ -3694,21 +3694,21 @@ static unsigned int getfull(char *attr, const char *fullname)
 			if (opt_v >= 2)
 				printf("   No SACL\n");
 		}
-			/*
-			 *  append DACL and merge its flags
-			 */
+		/*
+		 *  append DACL and merge its flags
+		 */
 		partsz = 0;
 		set4l(&attr[16],0);
 		if (ntfs_get_file_security(ntfs_context,fullname,
-		    DACL_SECURITY_INFORMATION,
-		    (char*)part,MAXATTRSZ,&partsz)) {
+					DACL_SECURITY_INFORMATION,
+					(char*)part,MAXATTRSZ,&partsz)) {
 			if ((attrsz + partsz - 20) <= MAXATTRSZ) {
 				memcpy(&attr[attrsz],&part[20],partsz-20);
 				set4l(&attr[16],(partsz > 20 ? attrsz : 0));
 				set2l(&attr[2],get2l(attr,2) | (get2l(part,2)
-					& const_le16_to_cpu(SE_DACL_PROTECTED
-						   | SE_DACL_AUTO_INHERITED
-						   | SE_DACL_PRESENT)));
+							& const_le16_to_cpu(SE_DACL_PROTECTED
+								| SE_DACL_AUTO_INHERITED
+								| SE_DACL_PRESENT)));
 				attrsz += partsz - 20;
 			} else
 				overflow = TRUE;
@@ -3723,30 +3723,30 @@ static unsigned int getfull(char *attr, const char *fullname)
 				warnings++;
 			}
 
-			/*
-			 *  append owner and merge its flag
-			 */
+		/*
+		 *  append owner and merge its flag
+		 */
 		if (xowner && !overflow) {
 			memcpy(&attr[attrsz],ownsid,ownersz);
 			set4l(&attr[4],attrsz);
 			set2l(&attr[2],get2l(attr,2)
-			   | (ownerfl & const_le16_to_cpu(SE_OWNER_DEFAULTED)));
+					| (ownerfl & const_le16_to_cpu(SE_OWNER_DEFAULTED)));
 			attrsz += ownersz;
 		} else
 			set4l(&attr[4],0);
-			/*
-			 * append group
-			 */
+		/*
+		 * append group
+		 */
 		partsz = 0;
 		set4l(&attr[8],0);
 		if (ntfs_get_file_security(ntfs_context,fullname,
-		    GROUP_SECURITY_INFORMATION,
-		    (char*)part,MAXATTRSZ,&partsz)) {
+					GROUP_SECURITY_INFORMATION,
+					(char*)part,MAXATTRSZ,&partsz)) {
 			if ((attrsz + partsz - 20) <= MAXATTRSZ) {
 				memcpy(&attr[attrsz],&part[20],partsz-20);
 				set4l(&attr[8],(partsz > 20 ? attrsz : 0));
 				set2l(&attr[2],get2l(attr,2) | (get2l(part,2)
-					& const_le16_to_cpu(SE_GROUP_DEFAULTED)));
+							& const_le16_to_cpu(SE_GROUP_DEFAULTED)));
 				attrsz += partsz - 20;
 			} else
 				overflow = TRUE;
@@ -3784,7 +3784,7 @@ static BOOL updatefull(const char *name, u32 flags, char *attr)
 {
 	BOOL err;
 
-// Why was the error not seen before ?
+	// Why was the error not seen before ?
 	err = !ntfs_set_file_security(ntfs_context, name, flags, attr);
 	if (err) {
 		printf("** Could not change attributes of %s\n",name);
@@ -3802,7 +3802,7 @@ static BOOL updatefull(const char *name, u32 flags, char *attr)
  */
 
 static BOOL setfull_posix(const char *fullname, const struct POSIX_SECURITY *pxdesc,
-			BOOL isdir)
+		BOOL isdir)
 {
 	static char attr[MAXATTRSZ];
 	struct POSIX_SECURITY *oldpxdesc;
@@ -3835,8 +3835,8 @@ static BOOL setfull_posix(const char *fullname, const struct POSIX_SECURITY *pxd
 		}
 		if (oldpxdesc) {
 			if (!pxdesc->defcnt
-			   && !(pxdesc->tagsset &
-			     (POSIX_ACL_USER | POSIX_ACL_GROUP | POSIX_ACL_MASK))) {
+					&& !(pxdesc->tagsset &
+						(POSIX_ACL_USER | POSIX_ACL_GROUP | POSIX_ACL_MASK))) {
 				if (!ntfs_merge_mode_posix(oldpxdesc,pxdesc->mode))
 					newpxdesc = oldpxdesc;
 				else {
@@ -3866,12 +3866,12 @@ static BOOL setfull_posix(const char *fullname, const struct POSIX_SECURITY *pxd
 #endif /* OWNERFROMACL */
 			if (mappingtype == MAPEXTERN)
 				newattr = ntfs_build_descr_posix(
-					ntfs_context->security.mapping,
-					newpxdesc,isdir,usid,gsid);
+						ntfs_context->security.mapping,
+						newpxdesc,isdir,usid,gsid);
 			else
 				newattr = ntfs_build_descr_posix(
-					context.mapping,
-					newpxdesc,isdir,usid,gsid);
+						context.mapping,
+						newpxdesc,isdir,usid,gsid);
 			free(newpxdesc);
 		} else
 			newattr = (char*)NULL;
@@ -3883,7 +3883,7 @@ static BOOL setfull_posix(const char *fullname, const struct POSIX_SECURITY *pxd
 			}
 			if (opt_v >= 2) {
 				printf("Expected hash : 0x%08lx\n",
-					(unsigned long)hash((le32*)newattr,ntfs_attr_size(newattr)));
+						(unsigned long)hash((le32*)newattr,ntfs_attr_size(newattr)));
 				showheader(newattr,0);
 				showusid(newattr,0);
 				showgsid(newattr,0);
@@ -3892,20 +3892,20 @@ static BOOL setfull_posix(const char *fullname, const struct POSIX_SECURITY *pxd
 			}
 
 			if (!updatefull(fullname,
-				DACL_SECURITY_INFORMATION
-				| GROUP_SECURITY_INFORMATION
-				| OWNER_SECURITY_INFORMATION,
-					newattr))
+						DACL_SECURITY_INFORMATION
+						| GROUP_SECURITY_INFORMATION
+						| OWNER_SECURITY_INFORMATION,
+						newattr))
 				err = TRUE;
-/*
-{
-struct POSIX_SECURITY *interp;
-printf("Reinterpreted new Posix :\n");
-interp = linux_permissions_posix(newattr,isdir);
-showposix(interp);
-free(interp);
-}
-*/
+			/*
+			   {
+			   struct POSIX_SECURITY *interp;
+			   printf("Reinterpreted new Posix :\n");
+			   interp = linux_permissions_posix(newattr,isdir);
+			   showposix(interp);
+			   free(interp);
+			   }
+			   */
 			free(newattr);
 		} else
 			err = TRUE;
@@ -3955,7 +3955,7 @@ static BOOL setfull(const char *fullname, int mode, BOOL isdir)
 			}
 			if (opt_v >= 2) {
 				printf("Expected hash : 0x%08lx\n",
-					(unsigned long)hash((le32*)newattr,ntfs_attr_size(newattr)));
+						(unsigned long)hash((le32*)newattr,ntfs_attr_size(newattr)));
 				showheader(newattr,0);
 				showusid(newattr,0);
 				showgsid(newattr,0);
@@ -3964,10 +3964,10 @@ static BOOL setfull(const char *fullname, int mode, BOOL isdir)
 			}
 
 			if (!updatefull(fullname,
-				DACL_SECURITY_INFORMATION
-				| GROUP_SECURITY_INFORMATION
-				| OWNER_SECURITY_INFORMATION,
-					newattr))
+						DACL_SECURITY_INFORMATION
+						| GROUP_SECURITY_INFORMATION
+						| OWNER_SECURITY_INFORMATION,
+						newattr))
 				err = TRUE;
 			free(newattr);
 		}
@@ -4010,8 +4010,8 @@ static BOOL proposal(const char *name, const char *attr)
 	gcnt = attr[goff+1] & 255;
 
 	if ((ucnt == 5) && (gcnt == 5)
-	    && (uauth == 5) && (gauth == 5)
-	    && (get4l(attr,uoff+8) == 21) && (get4l(attr,goff+8) == 21)) {
+			&& (uauth == 5) && (gauth == 5)
+			&& (get4l(attr,uoff+8) == 21) && (get4l(attr,goff+8) == 21)) {
 		printf("# User mapping proposal :\n");
 		printf("# -------------------- cut here -------------------\n");
 		if (uid)
@@ -4030,7 +4030,7 @@ static BOOL proposal(const char *name, const char *attr)
 		for (i=0; i<gcnt; i++)
 			printf("-%lu",get4l(attr,goff+8+4*i));
 		printf("\n");
-			/* generic rule, based on group */
+		/* generic rule, based on group */
 		printf("::S-%d-%llu",attr[goff] & 255,(long long)gauth);
 		for (i=0; i<gcnt-1; i++)
 			printf("-%lu",get4l(attr,goff+8+4*i));
@@ -4050,8 +4050,8 @@ static BOOL proposal(const char *name, const char *attr)
 		/* Get the drive letter to the file system */
 		driveletter = 0;
 		if ((((name[0] >= 'a') && (name[0] <= 'z'))
-			|| ((name[0] >= 'A') && (name[0] <= 'Z')))
-		    && (name[1] == ':'))
+					|| ((name[0] >= 'A') && (name[0] <= 'Z')))
+				&& (name[1] == ':'))
 			driveletter = name[0];
 		else {
 			if (getcwd(fullname, MAXFILENAME)
@@ -4060,24 +4060,24 @@ static BOOL proposal(const char *name, const char *attr)
 		}
 		if (driveletter) {
 			printf("# Example : %c:\\.NTFS-3G\\UserMapping\n",
-				driveletter);
+					driveletter);
 		}
 #else /* HAVE_WINDOWS_H */
 		printf("# being a hidden subdirectory of the root of the NTFS file system.\n");
 
 		/* Get the path to the root of the file system */
-/*
-		if (name[0] != '/') {
-			p = getcwd(fullname,MAXFILENAME);
-			if (p) {
-				strcat(fullname,"/");
-				strcat(fullname,name);
-			}
-		} else {
-			strcpy(fullname,name);
-			p = fullname;
-		}
-*/
+		/*
+		   if (name[0] != '/') {
+		   p = getcwd(fullname,MAXFILENAME);
+		   if (p) {
+		   strcat(fullname,"/");
+		   strcat(fullname,name);
+		   }
+		   } else {
+		   strcpy(fullname,name);
+		   p = fullname;
+		   }
+		   */
 		p = ntfs_realpath(name, fullname);
 		if (p) {
 			/* go down the path to inode 5 */
@@ -4131,14 +4131,14 @@ static void showfull(const char *fullname, BOOL isdir)
 		printf("\n");
 	}
 
-       /* get individual parameters, as when trying to get them */
-       /* all, and one (typically SACL) is missing, we get none */
-       /* and concatenate them, to be able to compute the checksum */
+	/* get individual parameters, as when trying to get them */
+	/* all, and one (typically SACL) is missing, we get none */
+	/* and concatenate them, to be able to compute the checksum */
 
 	partsz = 0;
 	securindex = ntfs_get_file_security(ntfs_context,fullname,
-				OWNER_SECURITY_INFORMATION,
-				(char*)part,MAXATTRSZ,&partsz);
+			OWNER_SECURITY_INFORMATION,
+			(char*)part,MAXATTRSZ,&partsz);
 
 	attrib = ntfs_get_file_attributes(ntfs_context, fullname);
 	if (attrib == INVALID_FILE_ATTRIBUTES) {
@@ -4146,12 +4146,12 @@ static void showfull(const char *fullname, BOOL isdir)
 		errors++;
 	}
 	if ((securindex < 0)
-	    || (securindex >= MAXSECURID)
-	    || ((securindex > 0)
-		&& ((!opt_r && (cmd != CMD_BACKUP))
-		   || !securdata[securindex >> SECBLKSZ]
-		   || !securdata[securindex >> SECBLKSZ][securindex & ((1 << SECBLKSZ) - 1)].filecount)))
-		{
+			|| (securindex >= MAXSECURID)
+			|| ((securindex > 0)
+				&& ((!opt_r && (cmd != CMD_BACKUP))
+					|| !securdata[securindex >> SECBLKSZ]
+					|| !securdata[securindex >> SECBLKSZ][securindex & ((1 << SECBLKSZ) - 1)].filecount)))
+	{
 		if (opt_v || (cmd == CMD_BACKUP)) {
 			if ((securindex < -1) || (securindex >= MAXSECURID))
 				printf("Security key : 0x%x out of range\n",securindex);
@@ -4180,29 +4180,29 @@ static void showfull(const char *fullname, BOOL isdir)
 					newblock(securindex);
 				if (securdata[securindex >> SECBLKSZ])
 					psecurdata = &securdata[securindex >> SECBLKSZ]
-					   [securindex & ((1 << SECBLKSZ) - 1)];
+						[securindex & ((1 << SECBLKSZ) - 1)];
 			}
 			if (((cmd == CMD_AUDIT) || (cmd == CMD_BACKUP))
-			    && opt_v && psecurdata) {
+					&& opt_v && psecurdata) {
 				newattr = (char*)malloc(attrsz);
 				printf("# %s ",(isdir ? "Directory" : "File"));
 				printname(stdout, fullname);
 				printf(" hash 0x%lx\n",
-					(unsigned long)hash((le32*)attr,attrsz));
+						(unsigned long)hash((le32*)attr,attrsz));
 				if (newattr) {
 					memcpy(newattr,attr,attrsz);
 					psecurdata->attr = newattr;
 				}
 			}
 			if ((opt_v || (cmd == CMD_BACKUP))
-				&& ((securindex >= MAXSECURID)
-				   || (securindex <= 0)
-				   || !psecurdata
-				   || (!psecurdata->filecount
-					&& !psecurdata->flags))) {
+					&& ((securindex >= MAXSECURID)
+						|| (securindex <= 0)
+						|| !psecurdata
+						|| (!psecurdata->filecount
+							&& !psecurdata->flags))) {
 				hexdump(attr,attrsz,8);
 				printf("Computed hash : 0x%08lx\n",
-					(unsigned long)hash((le32*)attr,attrsz));
+						(unsigned long)hash((le32*)attr,attrsz));
 			}
 			if (ntfs_valid_descr((char*)attr,attrsz)) {
 #if POSIXACLS
@@ -4228,29 +4228,29 @@ static void showfull(const char *fullname, BOOL isdir)
 				uid = linux_owner(attr);
 				gid = linux_group(attr);
 				if (cmd == CMD_BACKUP) {
-				        showownership(attr);
+					showownership(attr);
 					printf("# Interpreted Unix owner %d, group %d, mode 0%03o\n",
-						(int)uid,(int)gid,mode);
+							(int)uid,(int)gid,mode);
 				} else {
-				        showownership(attr);
+					showownership(attr);
 					printf("Interpreted Unix owner %d, group %d, mode 0%03o\n",
-						(int)uid,(int)gid,mode);
+							(int)uid,(int)gid,mode);
 				}
 #if POSIXACLS
 				if (pxdesc) {
 					if ((cmd != CMD_BACKUP)
-					    && (pxdesc->defcnt
-					       || (pxdesc->tagsset
-						   & (POSIX_ACL_USER
-							| POSIX_ACL_GROUP
-							| POSIX_ACL_MASK))))
+							&& (pxdesc->defcnt
+								|| (pxdesc->tagsset
+									& (POSIX_ACL_USER
+										| POSIX_ACL_GROUP
+										| POSIX_ACL_MASK))))
 						showposix(pxdesc);
 					free(pxdesc);
 				}
 #endif /* POSIXACLS */
 				if ((opt_r || (cmd == CMD_BACKUP))
-				    && (securindex < MAXSECURID)
-				    && (securindex > 0) && psecurdata) {
+						&& (securindex < MAXSECURID)
+						&& (securindex > 0) && psecurdata) {
 					psecurdata->filecount++;
 					psecurdata->mode = mode;
 				}
@@ -4272,7 +4272,7 @@ static void showfull(const char *fullname, BOOL isdir)
 						printf("\n");
 					}
 					printf("Security key : 0x%x mode %03o (already displayed)\n",
-						securindex,psecurdata->mode);
+							securindex,psecurdata->mode);
 					if (attrib != INVALID_FILE_ATTRIBUTES)
 						printf("Windows attrib : 0x%x\n",attrib);
 				} else {
@@ -4281,14 +4281,14 @@ static void showfull(const char *fullname, BOOL isdir)
 					printf(" : key 0x%x\n",securindex);
 				}
 				if (((cmd == CMD_AUDIT) || (cmd == CMD_BACKUP))
-				    && opt_v
-				    && psecurdata
-				    && psecurdata->attr) {
+						&& opt_v
+						&& psecurdata
+						&& psecurdata->attr) {
 					printf("# %s ",(isdir ? "Directory" : "File"));
 					printname(stdout,fullname);
 					printf(" hash 0x%lx\n",
-						(unsigned long)hash((le32*)psecurdata->attr,
-							ntfs_attr_size(psecurdata->attr)));
+							(unsigned long)hash((le32*)psecurdata->attr,
+								ntfs_attr_size(psecurdata->attr)));
 				}
 			}
 		} else {
@@ -4376,9 +4376,9 @@ static BOOL singleshow(const char *path)
 static ssize_t ntfs_getxattr(const char *path, const char *name, void *value, size_t size)
 {
 #if defined(__APPLE__) || defined(__DARWIN__)
-    return getxattr(path, name, value, size, 0, 0);
+	return getxattr(path, name, value, size, 0, 0);
 #else /* defined(__APPLE__) || defined(__DARWIN__) */
-    return getxattr(path, name, value, size);
+	return getxattr(path, name, value, size);
 #endif /* defined(__APPLE__) || defined(__DARWIN__) */
 }
 
@@ -4418,7 +4418,7 @@ static BOOL showmounted(const char *fullname)
 			if (opt_v) {
 				hexdump(attr,attrsz,8);
 				printf("Computed hash : 0x%08lx\n",
-					(unsigned long)hash((le32*)attr,attrsz));
+						(unsigned long)hash((le32*)attr,attrsz));
 			}
 			if (ntfs_getxattr(fullname,"system.ntfs_attrib",&attrib,4) != 4) {
 				printf("** Could not get file attrib\n");
@@ -4438,7 +4438,7 @@ static BOOL showmounted(const char *fullname)
 					pxdesc = (struct POSIX_SECURITY*)NULL;
 					mode = linux_permissions(attr,isdir);
 					printf("No user mapping : "
-						"cannot display the Posix ACL\n");
+							"cannot display the Posix ACL\n");
 				}
 #else /* POSIXACLS */
 				mode = linux_permissions(attr,isdir);
@@ -4451,23 +4451,23 @@ static BOOL showmounted(const char *fullname)
 					showdacl(attr,isdir,level);
 					showsacl(attr,isdir,level);
 				}
-			        showownership(attr);
+				showownership(attr);
 				if (mapped) {
 					uid = linux_owner(attr);
 					gid = linux_group(attr);
 					printf("Interpreted Unix owner %d, group %d, mode 0%03o\n",
-						(int)uid,(int)gid,mode);
+							(int)uid,(int)gid,mode);
 				} else {
 					printf("Interpreted Unix mode 0%03o (owner and group are unmapped)\n",
-						mode);
+							mode);
 				}
 #if POSIXACLS
 				if (pxdesc) {
 					if ((pxdesc->defcnt
-						|| (pxdesc->tagsset
-						    & (POSIX_ACL_USER
-							| POSIX_ACL_GROUP
-							| POSIX_ACL_MASK))))
+								|| (pxdesc->tagsset
+									& (POSIX_ACL_USER
+										| POSIX_ACL_GROUP
+										| POSIX_ACL_MASK))))
 						showposix(pxdesc);
 					free(pxdesc);
 				}
@@ -4501,28 +4501,28 @@ static BOOL processmounted(const char *fullname)
 	if (cmd != CMD_USERMAP)
 		err = showmounted(fullname);
 	else
-	if (!stat(fullname,&st)) {
-		attrsz = ntfs_getxattr(fullname,"system.ntfs_acl",attr,MAXATTRSZ);
-		if (attrsz > 0) {
-			if (opt_v) {
-				hexdump(attr,attrsz,8);
-				printf("Computed hash : 0x%08lx\n",
-					(unsigned long)hash((le32*)attr,attrsz));
-			}
-			if (ntfs_valid_descr(attr,attrsz)) {
-				err = proposal(fullname, attr);
+		if (!stat(fullname,&st)) {
+			attrsz = ntfs_getxattr(fullname,"system.ntfs_acl",attr,MAXATTRSZ);
+			if (attrsz > 0) {
+				if (opt_v) {
+					hexdump(attr,attrsz,8);
+					printf("Computed hash : 0x%08lx\n",
+							(unsigned long)hash((le32*)attr,attrsz));
+				}
+				if (ntfs_valid_descr(attr,attrsz)) {
+					err = proposal(fullname, attr);
+				} else {
+					printf("*** Descriptor fails sanity check\n");
+					errors++;
+				}
 			} else {
-				printf("*** Descriptor fails sanity check\n");
+				printf("** Could not get the NTFS ACL, check whether file is on NTFS\n");
 				errors++;
 			}
 		} else {
-			printf("** Could not get the NTFS ACL, check whether file is on NTFS\n");
-			errors++;
+			printf("%s not found\n",fullname);
+			err = TRUE;
 		}
-	} else {
-		printf("%s not found\n",fullname);
-		err = TRUE;
-	}
 	return (err);
 }
 
@@ -4678,10 +4678,10 @@ static BOOL singleset(const char *path, int mode)
 #endif /* POSIXACLS */
 
 static int callback(void *ctx, const ntfschar *ntfsname,
-	const int length, const int type,
-	const s64 pos  __attribute__((unused)),
-	const MFT_REF mft_ref __attribute__((unused)),
-	const unsigned int dt_type __attribute__((unused)))
+		const int length, const int type,
+		const s64 pos  __attribute__((unused)),
+		const MFT_REF mft_ref __attribute__((unused)),
+		const unsigned int dt_type __attribute__((unused)))
 {
 	struct LINK *linkage;
 	struct CALLBACK *dircontext;
@@ -4692,19 +4692,19 @@ static int callback(void *ctx, const ntfschar *ntfsname,
 	dircontext = (struct CALLBACK*)ctx;
 	size = utf8size(ntfsname,length);
 	if (dircontext
-	    && (type != 2)     /* 2 : dos name (8+3) */
-	    && (size > 0)      /* chars convertible to utf8 */
-	    && ((length > 2)
-		|| (ntfsname[0] != const_cpu_to_le16('.'))
-		|| ((length > 1)
-		    && (ntfsname[1] != const_cpu_to_le16('.'))))) {
+			&& (type != 2)     /* 2 : dos name (8+3) */
+			&& (size > 0)      /* chars convertible to utf8 */
+			&& ((length > 2)
+				|| (ntfsname[0] != const_cpu_to_le16('.'))
+				|| ((length > 1)
+					&& (ntfsname[1] != const_cpu_to_le16('.'))))) {
 		linkage = (struct LINK*)malloc(sizeof(struct LINK)
 				+ strlen(dircontext->dir)
 				+ size + 2);
 		if (linkage) {
-		/* may find ".fuse_hidden*" files */
-		/* recommendation is not to hide them, so that */
-		/* the user has a clue to delete them */
+			/* may find ".fuse_hidden*" files */
+			/* recommendation is not to hide them, so that */
+			/* the user has a clue to delete them */
 			strcpy(linkage->name,dircontext->dir);
 			if (linkage->name[strlen(linkage->name) - 1] != '/')
 				strcat(linkage->name,"/");
@@ -4783,8 +4783,8 @@ static BOOL listfiles(const char *volume, const char *root)
 						for (j=0; j<(1 << SECBLKSZ); j++)
 							if (securdata[i][j].filecount) {
 								printf("Key 0x%x : %d files, mode 0%03o\n",
-									i*(1 << SECBLKSZ)+j,securdata[i][j].filecount,
-									securdata[i][j].mode);
+										i*(1 << SECBLKSZ)+j,securdata[i][j].filecount,
+										securdata[i][j].mode);
 								count++;
 							}
 				printf("%d security keys\n",count);
@@ -4821,7 +4821,7 @@ static BOOL mapproposal(const char *volume, const char *name)
 			attrsz = 0;
 			securindex = ntfs_get_file_security(ntfs_context,name,
 					OWNER_SECURITY_INFORMATION
-					    | GROUP_SECURITY_INFORMATION,
+					| GROUP_SECURITY_INFORMATION,
 					(char*)attr,MAXATTRSZ,&attrsz);
 			if (securindex)
 				err = proposal(name,attr);
@@ -4869,13 +4869,13 @@ static BOOL valid_sds(const char *attr, unsigned int offset,
 	} else {
 		if ((ntfs_attr_size(&attr[20]) + 20) > entrysz) {
 			printf("** Entry is truncated (expected size %ld)\n",
-				(long)ntfs_attr_size(&attr[20] + 20));
+					(long)ntfs_attr_size(&attr[20] + 20));
 			unsane = TRUE;
 			errors++;
 		}
 		if ((ntfs_attr_size(&attr[20]) + 20) < entrysz) {
 			printf("** Extra data appended to entry (expected size %ld)\n",
-				(long)ntfs_attr_size(&attr[20]) + 20);
+					(long)ntfs_attr_size(&attr[20]) + 20);
 			warnings++;
 		}
 		if (!unsane && !ntfs_valid_descr((const char*)&attr[20],size)) {
@@ -4888,11 +4888,11 @@ static BOOL valid_sds(const char *attr, unsigned int offset,
 			if ((u32)get4l(attr,0) == comphash) {
 				if (opt_v >= 2)
 					printf("Hash	 0x%08lx (correct)\n",
-						(unsigned long)comphash);
+							(unsigned long)comphash);
 			} else {
 				printf("** hash  0x%08lx (computed : 0x%08lx)\n",
-					(unsigned long)get4l(attr,0),
-					(unsigned long)comphash);
+						(unsigned long)get4l(attr,0),
+						(unsigned long)comphash);
 				unsane = TRUE;
 				errors++;
 			}
@@ -4903,9 +4903,9 @@ static BOOL valid_sds(const char *attr, unsigned int offset,
 					printf("Offset	 0x%lx (correct)\n",(long)offset);
 			} else {
 				printf("** offset  0x%llx (expected : 0x%llx)\n",
-					(long long)get8l(attr,8),
-					(long long)(second ? get8l(attr,8) - 0x40000 : get8l(attr,8)));
-//				unsane = TRUE;
+						(long long)get8l(attr,8),
+						(long long)(second ? get8l(attr,8) - 0x40000 : get8l(attr,8)));
+				//				unsane = TRUE;
 				errors++;
 			}
 		}
@@ -4916,7 +4916,7 @@ static BOOL valid_sds(const char *attr, unsigned int offset,
 			if (key) {
 				if (key <= prevkey) {
 					printf("** Unordered key 0x%lx after 0x%lx\n",
-						(long)key,(long)prevkey);
+							(long)key,(long)prevkey);
 					unsane = TRUE;
 					errors++;
 				}
@@ -4943,7 +4943,7 @@ static int consist_sds(const char *attr, unsigned int offset,
 	key = get4l(attr,4);
 	if ((key > 0) && (key < MAXSECURID)) {
 		printf("Valid entry at 0x%lx for key 0x%lx\n",
-			(long)offset,(long)key);
+				(long)offset,(long)key);
 		if (!securdata[key >> SECBLKSZ])
 			newblock(key);
 		if (securdata[key >> SECBLKSZ]) {
@@ -4952,20 +4952,20 @@ static int consist_sds(const char *attr, unsigned int offset,
 			if (psecurdata->flags & INSDS1) {
 				if (psecurdata->hash != comphash) {
 					printf("** Different hash values : $SDS-1 0x%08lx $SDS-2 0x%08lx\n",
-						(unsigned long)psecurdata->hash,
-						(unsigned long)comphash);
+							(unsigned long)psecurdata->hash,
+							(unsigned long)comphash);
 					errcnt++;
 					errors++;
 				}
 				if (psecurdata->offset != get8l(attr,8)) {
 					printf("** Different offsets : $SDS-1 0x%llx $SDS-2 0x%llx\n",
-						(long long)psecurdata->offset,(long long)get8l(attr,8));
+							(long long)psecurdata->offset,(long long)get8l(attr,8));
 					errcnt++;
 					errors++;
 				}
 				if (psecurdata->length != get4l(attr,16)) {
 					printf("** Different lengths : $SDS-1 0x%lx $SDS-2 0x%lx\n",
-						(long)psecurdata->length,(long)get4l(attr,16));
+							(long)psecurdata->length,(long)get4l(attr,16));
 					errcnt++;
 					errors++;
 				}
@@ -5021,16 +5021,16 @@ static int audit_sds(BOOL second)
 	done = FALSE;
 	prevkey = 0;
 
-	  /* get size of first record */
+	/* get size of first record */
 
 	size = ntfs_read_sds(ntfs_context,(char*)attr,20,offset);
 	if (size != 20) {
 		if ((size < 0) && (errno == ENOTSUP))
 			printf("** There is no $SDS-%d in this volume\n",
-							(second ? 2 : 1));
+					(second ? 2 : 1));
 		else {
 			printf("** Could not open $SDS-%d, size %d\n",
-							(second ? 2 : 1),size);
+					(second ? 2 : 1),size);
 			errors++;
 			errcnt++;
 		}
@@ -5041,12 +5041,12 @@ static int audit_sds(BOOL second)
 			if (entryalsz <= (MAXATTRSZ + 20)) {
 				/* read next header in anticipation, to get its size */
 				size = ntfs_read_sds(ntfs_context,
-					(char*)&attr[20],entryalsz,offset + 20);
+						(char*)&attr[20],entryalsz,offset + 20);
 				if (opt_v)
 					printf("\nAt offset 0x%lx got %lu bytes\n",(long)offset,(long)size);
 			} else {
 				printf("** Security attribute is too long (%ld bytes) - stopping\n",
-					(long)entryalsz);
+						(long)entryalsz);
 				errcnt++;
 			}
 			if ((entryalsz > (MAXATTRSZ + 20)) || (size < (int)(entrysz - 20)))
@@ -5058,14 +5058,14 @@ static int audit_sds(BOOL second)
 				}
 
 				unsane = !valid_sds(attr,offset,entrysz,
-					size,prevkey,second);
+						size,prevkey,second);
 				if (!unsane) {
 					if (!get4l(attr,0) && !get4l(attr,4))
 						deleted++;
 					else
 						count++;
 					errcnt += consist_sds(attr,offset,
-						entrysz, second);
+							entrysz, second);
 					if (opt_v >= 2) {
 						isdir = guess_dir(&attr[20]);
 						printf("Assuming %s descriptor\n",(isdir ? "directory" : "file"));
@@ -5076,7 +5076,7 @@ static int audit_sds(BOOL second)
 						showsacl(&attr[20],isdir,0);
 						showownership(&attr[20]);
 						mode = linux_permissions(
-						    &attr[20],isdir);
+								&attr[20],isdir);
 						printf("Interpreted Unix mode 0%03o\n",mode);
 					}
 					prevkey = get4l(attr,4);
@@ -5085,16 +5085,16 @@ static int audit_sds(BOOL second)
 					memcpy(attr,&attr[entryalsz],20);
 					offset += entryalsz;
 					if (!get4l(attr,16)
-					   || ((((offset - 1) | 0x3ffff) - offset + 1) < 20)) {
+							|| ((((offset - 1) | 0x3ffff) - offset + 1) < 20)) {
 						if (second)
 							offset = ((offset - 1) | 0x7ffff) + 0x40001;
 						else
 							offset = ((offset - 1) | 0x7ffff) + 1;
 						if (opt_v)
 							printf("Trying next SDS-%d block at offset 0x%lx\n",
-								(second ? 2 : 1), (long)offset);
+									(second ? 2 : 1), (long)offset);
 						size = ntfs_read_sds(ntfs_context,
-							(char*)attr,20,offset);
+								(char*)attr,20,offset);
 						if (size != 20) {
 							if (opt_v)
 								printf("Assuming end of $SDS, got %d bytes\n",size);
@@ -5130,7 +5130,7 @@ static BOOL valid_sii(const char *entry, u32 prevkey)
 	key = get4l(entry,16);
 	if (key <= prevkey) {
 		printf("** Unordered key 0x%lx after 0x%lx\n",
-			(long)key,(long)prevkey);
+				(long)key,(long)prevkey);
 		valid = FALSE;
 		errors++;
 	}
@@ -5179,7 +5179,7 @@ static BOOL valid_sii(const char *entry, u32 prevkey)
 	}
 	if (get4l(entry,24) != key) {
 		printf("** key 0x%x (instead of 0x%x)\n",
-						(int)get4l(entry,24),(int)key);
+				(int)get4l(entry,24),(int)key);
 		valid = FALSE;
 		errors++;
 	}
@@ -5208,20 +5208,20 @@ static int consist_sii(const char *entry)
 			if (psecurdata->flags & (INSDS1 | INSDS2)) {
 				if ((u32)get4l(entry,20) != psecurdata->hash) {
 					printf("** hash 0x%x (instead of 0x%x)\n",
-						(unsigned int)get4l(entry,20),
-						(unsigned int)psecurdata->hash);
+							(unsigned int)get4l(entry,20),
+							(unsigned int)psecurdata->hash);
 					errors++;
 				}
 				if (get8l(entry,28) != psecurdata->offset) {
 					printf("** offset 0x%llx (instead of 0x%llx)\n",
-						(long long)get8l(entry,28),
-						(long long)psecurdata->offset);
+							(long long)get8l(entry,28),
+							(long long)psecurdata->offset);
 					errors++;
 				}
 				if (get4l(entry,36) != psecurdata->length) {
 					printf("** length 0x%lx (instead of %ld)\n",
-						(long)get4l(entry,36),
-						(long)psecurdata->length);
+							(long)get4l(entry,36),
+							(long)psecurdata->length);
 					errors++;
 				}
 			} else {
@@ -5300,10 +5300,10 @@ static BOOL valid_sdh(const char *entry, u32 prevkey, u32 prevhash)
 	currhash = get4l(entry,16);
 	key = get4l(entry,20);
 	if ((currhash < prevhash)
-		|| ((currhash == prevhash) && (key <= prevkey))) {
+			|| ((currhash == prevhash) && (key <= prevkey))) {
 		printf("** Unordered hash and key 0x%x 0x%x after 0x%x 0x%x\n",
-			(unsigned int)currhash,(unsigned int)key,
-			(unsigned int)prevhash,(unsigned int)prevkey);
+				(unsigned int)currhash,(unsigned int)key,
+				(unsigned int)prevhash,(unsigned int)prevkey);
 		valid = FALSE;
 		errors++;
 	}
@@ -5354,20 +5354,20 @@ static BOOL valid_sdh(const char *entry, u32 prevkey, u32 prevhash)
 	}
 	if ((u32)get4l(entry,24) != currhash) {
 		printf("** hash 0x%x (instead of 0x%x)\n",
-			(unsigned int)get4l(entry,24),(unsigned int)currhash);
+				(unsigned int)get4l(entry,24),(unsigned int)currhash);
 		valid = FALSE;
 		errors++;
 	}
 	if (get4l(entry,28) != key) {
 		printf("** key 0x%x (instead of 0x%x)\n",
-			(int)get4l(entry,28),(int)key);
+				(int)get4l(entry,28),(int)key);
 		valid = FALSE;
 		errors++;
 	}
 	if (get4l(entry,44)
-		&& (get4l(entry,44) != 0x490049)) {
+			&& (get4l(entry,44) != 0x490049)) {
 		printf("** fill3 0x%lx (instead of 0 or 0x490049)\n",
-			(long)get4l(entry,44));
+				(long)get4l(entry,44));
 		valid = FALSE;
 		errors++;
 	}
@@ -5396,20 +5396,20 @@ static int consist_sdh(const char *entry)
 			if (psecurdata->flags & (INSDS1 | INSDS2 | INSII)) {
 				if ((u32)get4l(entry,24) != psecurdata->hash) {
 					printf("** hash 0x%x (instead of 0x%x)\n",
-						(unsigned int)get4l(entry,24),
-						(unsigned int)psecurdata->hash);
+							(unsigned int)get4l(entry,24),
+							(unsigned int)psecurdata->hash);
 					errors++;
 				}
 				if (get8l(entry,32) != psecurdata->offset) {
 					printf("** offset 0x%llx (instead of 0x%llx)\n",
-						(long long)get8l(entry,32),
-						(long long)psecurdata->offset);
+							(long long)get8l(entry,32),
+							(long long)psecurdata->offset);
 					errors++;
 				}
 				if (get4l(entry,40) != psecurdata->length) {
 					printf("** length %ld (instead of %ld)\n",
-						(long)get4l(entry,40),
-						(long)psecurdata->length);
+							(long)get4l(entry,40),
+							(long)psecurdata->length);
 					errors++;
 				}
 			} else {
@@ -5496,15 +5496,15 @@ static void audit_summary(void)
 				flags = securdata[i][j].flags & (INSDS1 + INSDS2 + INSII + INSDH);
 				if (flags) found++;
 				if (flags
-					&& (flags != (INSDS1 + INSDS2 + INSII + INSDH)))
-					{
+						&& (flags != (INSDS1 + INSDS2 + INSII + INSDH)))
+				{
 					if (!count && !opt_r)
 						printf("\n** Keys not present in all files :\n");
 					cnt = securdata[i][j].filecount;
 					if (opt_r)
 						printf("Key 0x%x used by %d %s, not in",
-							i*(1 << SECBLKSZ)+j,cnt,
-							(cnt > 1 ? "files" : "file"));
+								i*(1 << SECBLKSZ)+j,cnt,
+								(cnt > 1 ? "files" : "file"));
 					else
 						printf("Key 0x%x not in", i*(1 << SECBLKSZ)+j);
 					if (!(flags & INSDS1))
@@ -5521,8 +5521,8 @@ static void audit_summary(void)
 					cnt = securdata[i][j].filecount;
 					if (opt_r && cnt)
 						printf("Key 0x%x used by %d %s\n",
-							i*(1 << SECBLKSZ)+j,cnt,
-							(cnt > 1 ? "files" : "file"));
+								i*(1 << SECBLKSZ)+j,cnt,
+								(cnt > 1 ? "files" : "file"));
 				}
 			}
 	if (found) {
@@ -5599,7 +5599,7 @@ static struct POSIX_SECURITY *encode_posix_acl(const char *str)
 		PXPERM, PXPERM1, PXPERM2, PXOCT, PXNEXT, PXEND, PXERR
 	} state;
 
-				/* raw evaluation of ACE count */
+	/* raw evaluation of ACE count */
 	p = str;
 	amask = FALSE;
 	dmask = FALSE;
@@ -5625,13 +5625,13 @@ static struct POSIX_SECURITY *encode_posix_acl(const char *str)
 					amask = TRUE;
 			}
 		}
-		/* account for an implicit mask if none defined */
+	/* account for an implicit mask if none defined */
 	if (acccnt && !amask)
 		acccnt++;
 	if (defcnt && !dmask)
 		defcnt++;
 	pxdesc = (struct POSIX_SECURITY*)malloc(sizeof(struct POSIX_SECURITY)
-				+ (acccnt + defcnt)*sizeof(struct POSIX_ACE));
+			+ (acccnt + defcnt)*sizeof(struct POSIX_ACE));
 	if (pxdesc) {
 		pxdesc->acccnt = acccnt;
 		pxdesc->firstdef = acccnt;
@@ -5650,162 +5650,162 @@ static struct POSIX_SECURITY *encode_posix_acl(const char *str)
 		c = *p++;
 		while ((state != PXEND) && (state != PXERR)) {
 			switch (state) {
-			case PXBEGIN :
-				if (c == 'd') {
-					defacl = TRUE;
-					state = PXTAG1;
-					break;
-				} else
-					if ((c >= '0') && (c <= '7')) {
-						mode = c - '0';
-						state = PXOCT;
+				case PXBEGIN :
+					if (c == 'd') {
+						defacl = TRUE;
+						state = PXTAG1;
 						break;
+					} else
+						if ((c >= '0') && (c <= '7')) {
+							mode = c - '0';
+							state = PXOCT;
+							break;
+						}
+					defacl = FALSE;
+					/* fall through */
+				case PXTAG :
+					switch (c) {
+						case 'u' :
+							tag = POSIX_ACL_USER;
+							state = PXID;
+							break;
+						case 'g' :
+							tag = POSIX_ACL_GROUP;
+							state = PXID;
+							break;
+						case 'o' :
+							tag = POSIX_ACL_OTHER;
+							state = PXID;
+							break;
+						case 'm' :
+							tag = POSIX_ACL_MASK;
+							state = PXID;
+							break;
+						default :
+							state = PXERR;
+							break;
 					}
-				defacl = FALSE;
-				/* fall through */
-			case PXTAG :
-				switch (c) {
-				case 'u' :
-					tag = POSIX_ACL_USER;
-					state = PXID;
 					break;
-				case 'g' :
-					tag = POSIX_ACL_GROUP;
-					state = PXID;
-					break;
-				case 'o' :
-					tag = POSIX_ACL_OTHER;
-					state = PXID;
-					break;
-				case 'm' :
-					tag = POSIX_ACL_MASK;
-					state = PXID;
-					break;
-				default :
-					state = PXERR;
-					break;
-				}
-				break;
-			case PXTAG1 :
-				if (c == ':')
-					state = PXTAG;
-				else
-					state = PXERR;
-				break;
-			case PXID :
-				if (c == ':') {
-					if ((tag == POSIX_ACL_OTHER)
-					   || (tag == POSIX_ACL_MASK))
-						state = PXPERM;
+				case PXTAG1 :
+					if (c == ':')
+						state = PXTAG;
 					else
-						state = PXID1;
-				} else
-					state = PXERR;
-				break;
-			case PXID1 :
-				if ((c >= '0') && (c <= '9')) {
-					id = c - '0';
-					state = PXID2;
-				} else
+						state = PXERR;
+					break;
+				case PXID :
+					if (c == ':') {
+						if ((tag == POSIX_ACL_OTHER)
+								|| (tag == POSIX_ACL_MASK))
+							state = PXPERM;
+						else
+							state = PXID1;
+					} else
+						state = PXERR;
+					break;
+				case PXID1 :
+					if ((c >= '0') && (c <= '9')) {
+						id = c - '0';
+						state = PXID2;
+					} else
+						if (c == ':') {
+							id = -1;
+							if (tag == POSIX_ACL_USER)
+								tag = POSIX_ACL_USER_OBJ;
+							if (tag == POSIX_ACL_GROUP)
+								tag = POSIX_ACL_GROUP_OBJ;
+							state = PXPERM1;
+						} else
+							state = PXERR;
+					break;
+				case PXID2 :
+					if ((c >= '0') && (c <= '9'))
+						id = 10*id + c - '0';
+					else
+						if (c == ':')
+							state = PXPERM1;
+						else
+							state = PXERR;
+					break;
+				case PXPERM :
 					if (c == ':') {
 						id = -1;
-						if (tag == POSIX_ACL_USER)
-							tag = POSIX_ACL_USER_OBJ;
-						if (tag == POSIX_ACL_GROUP)
-							tag = POSIX_ACL_GROUP_OBJ;
 						state = PXPERM1;
 					} else
 						state = PXERR;
-				break;
-			case PXID2 :
-				if ((c >= '0') && (c <= '9'))
-					id = 10*id + c - '0';
-				else
-					if (c == ':')
-						state = PXPERM1;
-					else
+					break;
+				case PXPERM1 :
+					if ((c >= '0') && (c <= '7')) {
+						perms = c - '0';
+						state = PXNEXT;
+						break;
+					}
+					state = PXPERM2;
+					perms = 0;
+					/* fall through */
+				case PXPERM2 :
+					switch (c) {
+						case 'r' :
+							perms |= POSIX_PERM_R;
+							break;
+						case 'w' :
+							perms |= POSIX_PERM_W;
+							break;
+						case 'x' :
+							perms |= POSIX_PERM_X;
+							break;
+						case ',' :
+						case '\0' :
+							if (defacl) {
+								i = acccnt + l++;
+								dpermsset |= perms;
+							} else {
+								i = k++;
+								apermsset |= perms;
+							}
+							acl->ace[i].tag = tag;
+							acl->ace[i].perms = perms;
+							acl->ace[i].id = id;
+							if (c == '\0')
+								state = PXEND;
+							else
+								state = PXBEGIN;
+							break;
+					}
+					break;
+				case PXNEXT :
+					if (!c || (c == ',')) {
+						if (defacl) {
+							i = acccnt + l++;
+							dpermsset |= perms;
+						} else {
+							i = k++;
+							apermsset |= perms;
+						}
+						acl->ace[i].tag = tag;
+						acl->ace[i].perms = perms;
+						acl->ace[i].id = id;
+						if (c == '\0')
+							state = PXEND;
+						else
+							state = PXBEGIN;
+					} else
 						state = PXERR;
-				break;
-			case PXPERM :
-				if (c == ':') {
-					id = -1;
-					state = PXPERM1;
-				} else
-					state = PXERR;
-				break;
-			case PXPERM1 :
-				if ((c >= '0') && (c <= '7')) {
-					perms = c - '0';
-					state = PXNEXT;
 					break;
-				}
-				state = PXPERM2;
-				perms = 0;
-				/* fall through */
-			case PXPERM2 :
-				switch (c) {
-				case 'r' :
-					perms |= POSIX_PERM_R;
-					break;
-				case 'w' :
-					perms |= POSIX_PERM_W;
-					break;
-				case 'x' :
-					perms |= POSIX_PERM_X;
-					break;
-				case ',' :
-				case '\0' :
-					if (defacl) {
-						i = acccnt + l++;
-						dpermsset |= perms;
-					} else {
-						i = k++;
-						apermsset |= perms;
-					}
-					acl->ace[i].tag = tag;
-					acl->ace[i].perms = perms;
-					acl->ace[i].id = id;
-					if (c == '\0')
-						state = PXEND;
+				case PXOCT :
+					if ((c >= '0') && (c <= '7'))
+						mode = (mode << 3) + c - '0';
 					else
-						state = PXBEGIN;
+						if (c == '\0')
+							state = PXEND;
+						else
+							state = PXBEGIN;
 					break;
-				}
-				break;
-			case PXNEXT :
-				if (!c || (c == ',')) {
-					if (defacl) {
-						i = acccnt + l++;
-						dpermsset |= perms;
-					} else {
-						i = k++;
-						apermsset |= perms;
-					}
-					acl->ace[i].tag = tag;
-					acl->ace[i].perms = perms;
-					acl->ace[i].id = id;
-					if (c == '\0')
-						state = PXEND;
-					else
-						state = PXBEGIN;
-				} else
-					state = PXERR;
-				break;
-			case PXOCT :
-				if ((c >= '0') && (c <= '7'))
-					mode = (mode << 3) + c - '0';
-				else
-					if (c == '\0')
-						state = PXEND;
-					else
-						state = PXBEGIN;
-				break;
-			default :
-				break;
+				default :
+					break;
 			}
 			c = *p++;
 		}
-			/* insert default mask if none defined */
+		/* insert default mask if none defined */
 		if (acccnt && !amask) {
 			i = k++;
 			acl->ace[i].tag = POSIX_ACL_MASK;
@@ -5818,29 +5818,29 @@ static struct POSIX_SECURITY *encode_posix_acl(const char *str)
 			acl->ace[i].perms = dpermsset;
 			acl->ace[i].id = -1;
 		}
-			/* compute the mode and tagsset */
+		/* compute the mode and tagsset */
 		tagsset = 0;
 		for (i=0; i<acccnt; i++) {
 			tagsset |= acl->ace[i].tag;
 			switch (acl->ace[i].tag) {
-			case POSIX_ACL_USER_OBJ :
-				mode |= acl->ace[i].perms << 6;
-				break;
-			case POSIX_ACL_GROUP_OBJ :
+				case POSIX_ACL_USER_OBJ :
+					mode |= acl->ace[i].perms << 6;
+					break;
+				case POSIX_ACL_GROUP_OBJ :
 					/* unless mask seen first */
-				if (!(tagsset & POSIX_ACL_MASK))
-					mode |= acl->ace[i].perms << 3;
-				break;
-			case POSIX_ACL_OTHER :
-				mode |= acl->ace[i].perms;
-				break;
-			case POSIX_ACL_MASK :
+					if (!(tagsset & POSIX_ACL_MASK))
+						mode |= acl->ace[i].perms << 3;
+					break;
+				case POSIX_ACL_OTHER :
+					mode |= acl->ace[i].perms;
+					break;
+				case POSIX_ACL_MASK :
 					/* overrides group */
-				mode = (mode & 07707)
+					mode = (mode & 07707)
 						| (acl->ace[i].perms << 3);
-				break;
-			default :
-				break;
+					break;
+				default :
+					break;
 			}
 		}
 		pxdesc->mode = mode;
@@ -5850,13 +5850,13 @@ static struct POSIX_SECURITY *encode_posix_acl(const char *str)
 		pxdesc->acl.filler = 0;
 		if (state != PXERR)
 			ntfs_sort_posix(pxdesc);
-showposix(pxdesc);
+		showposix(pxdesc);
 		if ((state == PXERR)
-		   || (k != acccnt)
-		   || (l != defcnt)
-                   || !ntfs_valid_posix(pxdesc)) {
+				|| (k != acccnt)
+				|| (l != defcnt)
+				|| !ntfs_valid_posix(pxdesc)) {
 			if (~pxdesc->tagsset
-			    & (POSIX_ACL_USER_OBJ | POSIX_ACL_GROUP_OBJ | POSIX_ACL_OTHER))
+					& (POSIX_ACL_USER_OBJ | POSIX_ACL_GROUP_OBJ | POSIX_ACL_OTHER))
 				fprintf(stderr,"User, group or other permissions missing\n");
 			else
 				fprintf(stderr,"Bad ACL description\n");
@@ -6032,7 +6032,7 @@ static void version(void)
 {
 	static const char *EXEC_NAME = "ntfssecaudit";
 
-// confusing (see banner)
+	// confusing (see banner)
 	printf("\n%s v%s (libntfs-3g) - Audit security data on a NTFS "
 			"Volume.\n\n", EXEC_NAME, VERSION);
 	printf("    Copyright (c) 2007-2016 Jean-Pierre Andre\n");
@@ -6067,12 +6067,12 @@ static BOOL splitarg(char **split, const char *arg)
 			lthd = strlen(curdir);
 	}
 	if (withvol && !withfullpath && arg[2]
-	    && ((arg[0] ^ curdir[0]) & 0x3f)) {
+			&& ((arg[0] ^ curdir[0]) & 0x3f)) {
 		fprintf(stderr,"%c: is not the current drive,\n",arg[0]);
 		fprintf(stderr,"please use the full path\n");
 	} else {
 		if (withvol && !withfullpath && !arg[2]
-		    && ((arg[0] ^ curdir[0]) & 0x3f)) {
+				&& ((arg[0] ^ curdir[0]) & 0x3f)) {
 			curdir[2] = '\\';
 			curdir[3] = 0;
 			lthd = 3;
@@ -6156,62 +6156,62 @@ static int parse_options(int argc, char *argv[])
 
 	while ((c = getopt_long(argc, argv, sopt, lopt, NULL)) != -1) {
 		switch (c) {
-		case 1:
-			if (!xarg)
-				xarg = optind - 1;
-			break;
-		case 'a':
-			prevcmd = cmd;
-			cmd = CMD_AUDIT;
-			break;
-		case 'b':
-			prevcmd = cmd;
-			cmd = CMD_BACKUP;
-			break;
-		case 'e':
-			opt_e = TRUE;
-			break;
-		case 'h':
-			prevcmd = cmd;
-			cmd = CMD_HEX;
-			break;
-		case 'H':
-			help++;
-			break;
-		case 'r':
-			opt_r = TRUE;
-			break;
-		case 's':
-			prevcmd = cmd;
-			cmd = CMD_SET;
-			break;
+			case 1:
+				if (!xarg)
+					xarg = optind - 1;
+				break;
+			case 'a':
+				prevcmd = cmd;
+				cmd = CMD_AUDIT;
+				break;
+			case 'b':
+				prevcmd = cmd;
+				cmd = CMD_BACKUP;
+				break;
+			case 'e':
+				opt_e = TRUE;
+				break;
+			case 'h':
+				prevcmd = cmd;
+				cmd = CMD_HEX;
+				break;
+			case 'H':
+				help++;
+				break;
+			case 'r':
+				opt_r = TRUE;
+				break;
+			case 's':
+				prevcmd = cmd;
+				cmd = CMD_SET;
+				break;
 #ifdef SELFTESTS
-		case 't':
-			prevcmd = cmd;
-			cmd = CMD_TEST;
-			break;
+			case 't':
+				prevcmd = cmd;
+				cmd = CMD_TEST;
+				break;
 #endif
-		case 'u':
-			prevcmd = cmd;
-			cmd = CMD_USERMAP;
-			break;
-		case 'v':
-			opt_v++;
-			break;
-		case 'V':
-			ver++;
-			break;
-		default:
-			if ((c < 'a') || (c > 'z'))
-				fprintf(stderr,"Unhandled option case: %d.\n", c);
-			else
-				fprintf(stderr,"Invalid option -%c\n",c);
-			err++;
-			break;
+			case 'u':
+				prevcmd = cmd;
+				cmd = CMD_USERMAP;
+				break;
+			case 'v':
+				opt_v++;
+				break;
+			case 'V':
+				ver++;
+				break;
+			default:
+				if ((c < 'a') || (c > 'z'))
+					fprintf(stderr,"Unhandled option case: %d.\n", c);
+				else
+					fprintf(stderr,"Invalid option -%c\n",c);
+				err++;
+				break;
 		}
 		if ((cmd != CMD_NONE)
-		    && (prevcmd != CMD_NONE)
-		    && (prevcmd != cmd)) {
+				&& (prevcmd != CMD_NONE)
+				&& (prevcmd != cmd)) {
 			fprintf(stderr,"Incompatible commands\n");
 			err++;
 		}
@@ -6257,171 +6257,171 @@ int main(int argc, char *argv[])
 		mappingtype = MAPNONE;
 
 		switch (cmd) {
-		case CMD_AUDIT :
-			if (xarg == (argc - 1))
-				fail = audit(argv[xarg]);
-			else
-				cmderr = TRUE;
-			break;
-		case CMD_BACKUP :
-			switch (argc - xarg) {
-			case 1 :
-#ifdef HAVE_WINDOWS_H
-				if (!splitarg(split, argv[xarg]))
-					fail = backup(split[0], split[1]);
+			case CMD_AUDIT :
+				if (xarg == (argc - 1))
+					fail = audit(argv[xarg]);
 				else
 					cmderr = TRUE;
+				break;
+			case CMD_BACKUP :
+				switch (argc - xarg) {
+					case 1 :
+#ifdef HAVE_WINDOWS_H
+						if (!splitarg(split, argv[xarg]))
+							fail = backup(split[0], split[1]);
+						else
+							cmderr = TRUE;
 #else
-				fail = backup(argv[xarg],"/");
+						fail = backup(argv[xarg],"/");
 #endif
-				break;
-			case 2 :
-				cmderr = backup(argv[xarg],argv[xarg+1]);
-				break;
-			default :
-				cmderr = TRUE;
-				break;
-			}
-			break;
-		case CMD_HEX :
-			switch (argc - xarg) {
-			case 0 :
-				showhex(stdin);
-				break;
-			case 1 :
-				fd = fopen(argv[xarg],"rb");
-				if (fd) {
-					showhex(fd);
-					fclose(fd);
-				} else {
-					fprintf(stderr,"Could not open %s\n",
-							argv[xarg]);
-					cmderr = TRUE;
-				}
-				break;
-			default :
-				cmderr = TRUE;
-				break;
-			}
-			break;
-		case CMD_NONE :
-			switch (argc - xarg) {
-			case 1 :
-#ifdef HAVE_WINDOWS_H
-				if (!splitarg(split, argv[xarg]))
-					fail = listfiles(split[0], split[1]);
-				else
-					cmderr = TRUE;
-#else
-				if (opt_r)
-					cmderr = listfiles(argv[xarg],"/");
-				else
-					cmderr = processmounted(argv[xarg]);
-#endif
-				break;
-			case 2 :
-#ifdef HAVE_WINDOWS_H
-				if (!splitarg(split, argv[xarg + 1]))
-					fail = setperms(split[0],
-							argv[xarg], split[1]);
-				else
-					cmderr = TRUE;
-#else /* HAVE_WINDOWS_H */
-				fail = listfiles(argv[xarg],argv[xarg+1]);
-#endif /* HAVE_WINDOWS_H */
-				break;
-			case 3 :
-#ifdef HAVE_WINDOWS_H
-				uname = unixname(argv[xarg+2]);
-				if (uname)
-					fail = setperms(argv[xarg],
-							argv[xarg+1], uname);
-				else
-					cmderr = TRUE;
-#else /* HAVE_WINDOWS_H */
-				cmderr = setperms(argv[xarg], argv[xarg+1],
-							argv[xarg+2]);
-#endif
-				break;
-			default :
-				cmderr = TRUE;
-				break;
-			}
-			break;
-		case CMD_SET :
-			switch (argc - xarg) {
-			case 1 :
-				cmderr = dorestore(argv[xarg],stdin);
-				break;
-			case 2 :
-				fd = fopen(argv[xarg+1],"rb");
-				if (fd) {
-					if (dorestore(argv[xarg],fd))
+						break;
+					case 2 :
+						cmderr = backup(argv[xarg],argv[xarg+1]);
+						break;
+					default :
 						cmderr = TRUE;
-					fclose(fd);
-				} else {
-					fprintf(stderr,"Could not open %s\n",
-								argv[xarg]);
-					cmderr = TRUE;
+						break;
 				}
 				break;
-			default :
-				cmderr = TRUE;
-			}
-			break;
-#ifdef SELFTESTS
-		case CMD_TEST :
-			if (xarg != argc)
-				cmderr = TRUE;
-			else
-				selftests();
-			break;
+			case CMD_HEX :
+				switch (argc - xarg) {
+					case 0 :
+						showhex(stdin);
+						break;
+					case 1 :
+						fd = fopen(argv[xarg],"rb");
+						if (fd) {
+							showhex(fd);
+							fclose(fd);
+						} else {
+							fprintf(stderr,"Could not open %s\n",
+									argv[xarg]);
+							cmderr = TRUE;
+						}
+						break;
+					default :
+						cmderr = TRUE;
+						break;
+				}
+				break;
+			case CMD_NONE :
+				switch (argc - xarg) {
+					case 1 :
+#ifdef HAVE_WINDOWS_H
+						if (!splitarg(split, argv[xarg]))
+							fail = listfiles(split[0], split[1]);
+						else
+							cmderr = TRUE;
+#else
+						if (opt_r)
+							cmderr = listfiles(argv[xarg],"/");
+						else
+							cmderr = processmounted(argv[xarg]);
 #endif
-		case CMD_USERMAP :
-			switch (argc - xarg) {
-			case 1 :
+						break;
+					case 2 :
 #ifdef HAVE_WINDOWS_H
-				if (!splitarg(split, argv[xarg]))
-					fail = mapproposal(split[0],
-								split[1]);
-				else
-					cmderr = TRUE;
+						if (!splitarg(split, argv[xarg + 1]))
+							fail = setperms(split[0],
+									argv[xarg], split[1]);
+						else
+							cmderr = TRUE;
 #else /* HAVE_WINDOWS_H */
-				processmounted(argv[xarg]);
+						fail = listfiles(argv[xarg],argv[xarg+1]);
 #endif /* HAVE_WINDOWS_H */
-				break;
-			case 2 :
+						break;
+					case 3 :
 #ifdef HAVE_WINDOWS_H
-				uname = unixname(argv[xarg+1]);
-				if (uname)
-					cmderr = mapproposal(argv[xarg],
-								uname);
-				else
-					cmderr = TRUE;
+						uname = unixname(argv[xarg+2]);
+						if (uname)
+							fail = setperms(argv[xarg],
+									argv[xarg+1], uname);
+						else
+							cmderr = TRUE;
 #else /* HAVE_WINDOWS_H */
-				cmderr = TRUE;
-#endif /* HAVE_WINDOWS_H */
+						cmderr = setperms(argv[xarg], argv[xarg+1],
+								argv[xarg+2]);
+#endif
+						break;
+					default :
+						cmderr = TRUE;
+						break;
+				}
 				break;
+			case CMD_SET :
+				switch (argc - xarg) {
+					case 1 :
+						cmderr = dorestore(argv[xarg],stdin);
+						break;
+					case 2 :
+						fd = fopen(argv[xarg+1],"rb");
+						if (fd) {
+							if (dorestore(argv[xarg],fd))
+								cmderr = TRUE;
+							fclose(fd);
+						} else {
+							fprintf(stderr,"Could not open %s\n",
+									argv[xarg]);
+							cmderr = TRUE;
+						}
+						break;
+					default :
+						cmderr = TRUE;
+				}
+				break;
+#ifdef SELFTESTS
+			case CMD_TEST :
+				if (xarg != argc)
+					cmderr = TRUE;
+				else
+					selftests();
+				break;
+#endif
+			case CMD_USERMAP :
+				switch (argc - xarg) {
+					case 1 :
+#ifdef HAVE_WINDOWS_H
+						if (!splitarg(split, argv[xarg]))
+							fail = mapproposal(split[0],
+									split[1]);
+						else
+							cmderr = TRUE;
+#else /* HAVE_WINDOWS_H */
+						processmounted(argv[xarg]);
+#endif /* HAVE_WINDOWS_H */
+						break;
+					case 2 :
+#ifdef HAVE_WINDOWS_H
+						uname = unixname(argv[xarg+1]);
+						if (uname)
+							cmderr = mapproposal(argv[xarg],
+									uname);
+						else
+							cmderr = TRUE;
+#else /* HAVE_WINDOWS_H */
+						cmderr = TRUE;
+#endif /* HAVE_WINDOWS_H */
+						break;
+					default :
+						cmderr = TRUE;
+				}
+				break;
+			case CMD_HELP :
 			default :
-				cmderr = TRUE;
-			}
-			break;
-		case CMD_HELP :
-		default :
-			usage();
-			break;
-		case CMD_VERSION :
-			version();
-			break;
+				usage();
+				break;
+			case CMD_VERSION :
+				version();
+				break;
 		}
 
 		if (warnings)
 			printf("** %u %s signalled\n",warnings,
-				(warnings > 1 ? "warnings were"
-						: "warning was"));
+					(warnings > 1 ? "warnings were"
+					 : "warning was"));
 		if (errors)
 			printf("** %u %s found\n",errors,
-				(errors > 1 ? "errors were" : "error was"));
+					(errors > 1 ? "errors were" : "error was"));
 		else
 			if (fail)
 				printf("Command failed\n");
@@ -6434,12 +6434,12 @@ int main(int argc, char *argv[])
 			fflush(stdout);
 			if (warnings)
 				fprintf(stderr,"** %u %s signalled\n",warnings,
-					(warnings > 1 ? "warnings were"
-							: "warning was"));
+						(warnings > 1 ? "warnings were"
+						 : "warning was"));
 			if (errors)
 				fprintf(stderr,"** %u %s found\n",errors,
-					(errors > 1 ? "errors were"
-							: "error was"));
+						(errors > 1 ? "errors were"
+						 : "error was"));
 			else
 				fprintf(stderr,"No errors were found\n");
 		}

@@ -101,11 +101,11 @@ static int logfile_close(logfile_file *logfile)
 					"(inode %i)", FILE_LogFile);
 		if (ntfs_umount(logfile->vol, 0))
 			ntfs_log_perror("Warning: Failed to umount %s",
-				logfile->filename);
+					logfile->filename);
 	} else {
 		if (close(logfile->fd))
 			ntfs_log_perror("Warning: Failed to close file %s",
-				logfile->filename);
+					logfile->filename);
 	}
 	return 0;
 }
@@ -130,7 +130,7 @@ static void device_err_exit(ntfs_volume *vol, ntfs_inode *ni,
 		ntfs_attr_close(na);
 	if (ni && ntfs_inode_close(ni))
 		ntfs_log_perror("Warning: Failed to close $LogFile (inode %i)",
-			FILE_LogFile);
+				FILE_LogFile);
 	if (ntfs_umount(vol, 0))
 		ntfs_log_perror("Warning: Failed to umount");
 
@@ -274,7 +274,7 @@ static int logfile_pread(logfile_file *logfile, int ofs, int count, u8 *buf)
 	}
 	if (br != count) {
 		ntfs_log_error("Only %d out of %d bytes read starting at %d\n",
-			br, count, ofs);
+				br, count, ofs);
 	}
 	return br;
 }
@@ -314,7 +314,7 @@ static void restart_header_sanity(RESTART_PAGE_HEADER *rstr, u8 *buf)
 				sle16_to_cpu(rstr->minor_ver));
 	/* Verify the location and size of the update sequence array. */
 	usa_end_ofs = le16_to_cpu(rstr->usa_ofs) +
-			le16_to_cpu(rstr->usa_count) * sizeof(u16);
+		le16_to_cpu(rstr->usa_count) * sizeof(u16);
 	if (page_size / NTFS_BLOCK_SIZE + 1 != le16_to_cpu(rstr->usa_count))
 		log_err_exit(buf, "Restart page header in $LogFile is "
 				"corrupt:  Update sequence array size is "
@@ -443,8 +443,8 @@ static void dump_restart_areas_area(RESTART_PAGE_HEADER *rstr)
 		if (le32_to_cpu(lcr->client_name_length)) {
 			client_name = NULL;
 			if (ntfs_ucstombs(lcr->client_name,
-					le32_to_cpu(lcr->client_name_length) /
-					2, &client_name, 0) < 0) {
+						le32_to_cpu(lcr->client_name_length) /
+						2, &client_name, 0) < 0) {
 				ntfs_log_perror("Failed to convert log client name");
 				client_name = strdup("<conversion error>");
 			}
@@ -499,9 +499,9 @@ rstr_pass_loc:
 				le16_to_cpu(rstr1->restart_area_offset));
 		if (!memcmp(rstr1, rstr, le16_to_cpu(rstr1->usa_ofs)) &&
 				!memcmp((u8*)rstr1 + le16_to_cpu(
-				rstr1->restart_area_offset), (u8*)rstr +
-				le16_to_cpu(rstr->restart_area_offset),
-				le16_to_cpu(ra->restart_area_length))) {
+						rstr1->restart_area_offset), (u8*)rstr +
+					le16_to_cpu(rstr->restart_area_offset),
+					le16_to_cpu(ra->restart_area_length))) {
 			puts("\nSkipping analysis of second restart page "
 					"because it fully matches the first "
 					"one.");
@@ -590,7 +590,7 @@ static void dump_log_record(LOG_RECORD *lr)
 		ntfs_log_info("Array of lcns:\n");
 	for (i = 0; i < le16_to_cpu(lr->lcns_to_follow); i++)
 		ntfs_log_info("lcn_list[%u].lcn = 0x%llx\n", i,
-			(unsigned long long)sle64_to_cpu(lr->lcn_list[i]));
+				(unsigned long long)sle64_to_cpu(lr->lcn_list[i]));
 }
 
 /**
@@ -626,7 +626,7 @@ rcrd_pass_loc:
 	/* Dump log record page */
 	ntfs_log_info("magic = %s\n", ntfs_is_rcrd_record(rcrd->magic) ? "RCRD" :
 			"CHKD");
-// TODO: I am here... (AIA)
+	// TODO: I am here... (AIA)
 	ntfs_log_info("copy.last_lsn/file_offset = 0x%llx\n", (unsigned long long)
 			sle64_to_cpu(rcrd->copy.last_lsn));
 	ntfs_log_info("flags = 0x%x\n", (unsigned int)le32_to_cpu(rcrd->flags));
@@ -648,7 +648,7 @@ rcrd_pass_loc:
 		client++;
 		lr = (LOG_RECORD*)((u8*)lr + 0x70);
 	} while (((u8*)lr + 0x70 <= (u8*)rcrd +
-			le16_to_cpu(rcrd->next_record_offset)));
+				le16_to_cpu(rcrd->next_record_offset)));
 
 	pass++;
 	goto rcrd_pass_loc;
@@ -697,7 +697,7 @@ int main(int argc, char **argv)
 		buf_size = logfile.data_size;
 	else
 		ntfs_log_error("Warning: $LogFile is too big.  "
-			"Only analysing the first 64MiB.\n");
+				"Only analysing the first 64MiB.\n");
 
 	/* For simplicity we read all of $LogFile/$DATA into memory. */
 	buf = malloc(buf_size);
@@ -753,20 +753,20 @@ int main(int argc, char **argv)
 	 */
 	// TODO: Implement this.
 	ntfs_log_error("Warning:  Sanity checking of restart area not implemented "
-		"yet.\n");
+			"yet.\n");
 	/*
 	 * Third and last, verify the array of log client records.
 	 */
 	// TODO: Implement this.
 	ntfs_log_error("Warning:  Sanity checking of array of log client records not "
-		"implemented yet.\n");
+			"implemented yet.\n");
 
 	/*
 	 * Dump the restart headers & areas.
 	 */
 	rcrd = (RECORD_PAGE_HEADER*)dump_restart_areas(rstr, buf, page_size);
 	ntfs_log_info("\n\nFinished with restart pages.  "
-		"Beginning with log pages.\n");
+			"Beginning with log pages.\n");
 
 	/*
 	 * Dump the log areas.

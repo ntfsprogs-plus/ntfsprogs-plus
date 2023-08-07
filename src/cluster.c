@@ -74,7 +74,7 @@ int cluster_find(ntfs_volume *vol, LCN c_begin, LCN c_end, cluster_cb *cb, void 
 
 			if (!rec->non_resident) {
 				ntfs_log_verbose("0x%02x skipped - attr is resident\n",
-					(int)le32_to_cpu(a_ctx->attr->type));
+						(int)le32_to_cpu(a_ctx->attr->type));
 				continue;
 			}
 
@@ -99,7 +99,7 @@ int cluster_find(ntfs_volume *vol, LCN c_begin, LCN c_end, cluster_cb *cb, void 
 						(long long)runs[j].vcn,
 						(long long)runs[j].lcn,
 						(long long)(runs[j].lcn +
-						runs[j].length - 1),
+							runs[j].length - 1),
 						(long long)runs[j].length);
 				//dprint list
 

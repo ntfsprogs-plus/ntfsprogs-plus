@@ -80,17 +80,17 @@ static void version(void)
 static void usage(void)
 {
 	ntfs_log_info("\nUsage: %s [options] device [file]\n\n"
-		"    -a, --attribute TYPE       Display this attribute type\n"
-		"    -n, --attribute-name NAME  Display this attribute name\n"
-		"    -i, --inode NUM            Display this inode\n\n"
-		"    -f, --force                Use less caution\n"
-		"    -h, --help                 Print this help\n"
-		"    -q, --quiet                Less output\n"
-		"    -V, --version              Version information\n"
-		"    -v, --verbose              More output\n\n",
-// Does not work for compressed files at present so leave undocumented...
-//		"    -r  --raw                  Display the raw data (e.g. for compressed or encrypted file)",
-		EXEC_NAME);
+			"    -a, --attribute TYPE       Display this attribute type\n"
+			"    -n, --attribute-name NAME  Display this attribute name\n"
+			"    -i, --inode NUM            Display this inode\n\n"
+			"    -f, --force                Use less caution\n"
+			"    -h, --help                 Print this help\n"
+			"    -q, --quiet                Less output\n"
+			"    -V, --version              Version information\n"
+			"    -v, --verbose              More output\n\n",
+			// Does not work for compressed files at present so leave undocumented...
+			//		"    -r  --raw                  Display the raw data (e.g. for compressed or encrypted file)",
+			EXEC_NAME);
 	ntfs_log_info("%s%s\n", ntfs_bugs, ntfs_home);
 }
 
@@ -133,7 +133,7 @@ static int parse_attribute(const char *value, ATTR_TYPES *attr)
 
 	for (i = 0; attr_name[i]; i++) {
 		if ((strcmp(value, attr_name[i]) == 0) ||
-		    (strcmp(value, attr_name[i] + 1) == 0)) {
+				(strcmp(value, attr_name[i] + 1) == 0)) {
 			*attr = (ATTR_TYPES)cpu_to_le32((i + 1) * 16);
 			return 1;
 		}
@@ -230,7 +230,7 @@ static int parse_options(int argc, char **argv)
 
 		case 'n':
 			opts.attr_name_len = ntfs_mbstoucs(optarg,
-							   &opts.attr_name);
+					&opts.attr_name);
 			if (opts.attr_name_len < 0) {
 				ntfs_log_perror("Invalid attribute name '%s'",
 						optarg);
@@ -282,7 +282,7 @@ static int parse_options(int argc, char **argv)
 
 		} else if (opts.file == NULL && opts.inode == -1) {
 			ntfs_log_error("You must specify a file or inode "
-				 "with the -i option.\n");
+					"with the -i option.\n");
 			err++;
 
 		} else if (opts.file != NULL && opts.inode != -1) {
@@ -302,7 +302,7 @@ static int parse_options(int argc, char **argv)
 	if (help || err)
 		usage();
 
-		/* tri-state 0 : done, 1 : error, -1 : proceed */
+	/* tri-state 0 : done, 1 : error, -1 : proceed */
 	return (err ? 1 : (help || ver ? 0 : -1));
 }
 

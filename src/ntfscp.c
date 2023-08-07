@@ -105,7 +105,7 @@ static volatile sig_atomic_t caught_terminate = 0;
 static void version(void)
 {
 	ntfs_log_info("\n%s v%s (libntfs-3g) - Copy file to an NTFS "
-		"volume.\n\n", EXEC_NAME, VERSION);
+			"volume.\n\n", EXEC_NAME, VERSION);
 	ntfs_log_info("Copyright (c) 2004-2007 Yura Pakhuchiy\n");
 	ntfs_log_info("Copyright (c) 2005 Anton Altaparmakov\n");
 	ntfs_log_info("Copyright (c) 2006 Hil Liao\n");
@@ -123,18 +123,18 @@ static void version(void)
 static void usage(void)
 {
 	ntfs_log_info("\nUsage: %s [options] device src_file dest_file\n\n"
-		"    -a, --attribute NUM   Write to this attribute\n"
-		"    -i, --inode           Treat dest_file as inode number\n"
-		"    -f, --force           Use less caution\n"
-		"    -h, --help            Print this help\n"
-		"    -m, --min_fragments   Do minimal fragmentation\n"
-		"    -N, --attr-name NAME  Write to attribute with this name\n"
-		"    -n, --no-action       Do not write to disk\n"
-		"    -q, --quiet           Less output\n"
-		"    -t, --timestamp       Copy the modification time\n"
-		"    -V, --version         Version information\n"
-		"    -v, --verbose         More output\n\n",
-		EXEC_NAME);
+			"    -a, --attribute NUM   Write to this attribute\n"
+			"    -i, --inode           Treat dest_file as inode number\n"
+			"    -f, --force           Use less caution\n"
+			"    -h, --help            Print this help\n"
+			"    -m, --min_fragments   Do minimal fragmentation\n"
+			"    -N, --attr-name NAME  Write to attribute with this name\n"
+			"    -n, --no-action       Do not write to disk\n"
+			"    -q, --quiet           Less output\n"
+			"    -t, --timestamp       Copy the modification time\n"
+			"    -V, --version         Version information\n"
+			"    -v, --verbose         More output\n\n",
+			EXEC_NAME);
 	ntfs_log_info("%s%s\n", ntfs_bugs, ntfs_home);
 }
 
@@ -292,8 +292,8 @@ static int parse_options(int argc, char **argv)
 					"at the same time.\n");
 			err++;
 		}
-		if (opts.timestamp
-		    && (opts.attr_name || (opts.attribute != AT_DATA))) {
+		if (opts.timestamp &&
+				(opts.attr_name || (opts.attribute != AT_DATA))) {
 			ntfs_log_error("Setting --timestamp is only possible"
 					" with unname data attribute.\n");
 			err++;
@@ -305,7 +305,7 @@ static int parse_options(int argc, char **argv)
 	if (help || err)
 		usage();
 
-		/* tri-state 0 : done, 1 : error, -1 : proceed */
+	/* tri-state 0 : done, 1 : error, -1 : proceed */
 	return (err ? 1 : (help || ver ? 0 : -1));
 }
 
@@ -336,8 +336,7 @@ static int next_zero(struct ALLOC_CONTEXT *alctx, s32 bufpos, s32 count)
 			bufpos = (bufpos | 7) + 1;
 		else {
 			b = bufpos & 7;
-			while ((b < 8)
-			    && ((1 << b) & q))
+			while ((b < 8) && ((1 << b) & q))
 				b++;
 			if (b < 8) {
 				index = (bufpos & -8) | b;
@@ -368,8 +367,7 @@ static int next_one(struct ALLOC_CONTEXT *alctx, s32 bufpos, s32 count)
 			bufpos = (bufpos | 7) + 1;
 		else {
 			b = bufpos & 7;
-			while ((b < 8)
-			    && !((1 << b) & q))
+			while ((b < 8) && !((1 << b) & q))
 				b++;
 			if (b < 8) {
 				index = (bufpos & -8) | b;
@@ -399,7 +397,7 @@ static int run_alloc(struct ALLOC_CONTEXT *alctx, s32 count)
 	err = 0;
 	if (count > alctx->rl_allocated) {
 		prl = (runlist_element*)ntfs_malloc(
-			(alctx->rl_allocated + 4096)*sizeof(runlist_element));
+				(alctx->rl_allocated + 4096)*sizeof(runlist_element));
 		if (prl) {
 			if (alctx->rl) {
 				memcpy(prl, alctx->rl, alctx->rl_allocated
@@ -438,11 +436,11 @@ static int merge_run(struct ALLOC_CONTEXT *alctx, s64 lcn, s32 count)
 	err = 0;
 	if (alctx->rl_count) {
 		excess = alctx->gathered_clusters + count
-				- alctx->wanted_clusters;
+			- alctx->wanted_clusters;
 		if (alctx->rl_count > 1)
 			/* replace if we can reduce the number of runs */
 			replace = excess > (alctx->rl[0].length
-						+ alctx->rl[1].length);
+					+ alctx->rl[1].length);
 		else
 			/* replace if we can shorten a single run */
 			replace = (excess > alctx->rl[0].length)
@@ -450,19 +448,19 @@ static int merge_run(struct ALLOC_CONTEXT *alctx, s64 lcn, s32 count)
 	} else
 		replace = FALSE;
 	if (replace) {
-			/* Using this run, we can now drop smaller runs */
+		/* Using this run, we can now drop smaller runs */
 		drop = 0;
-		excess = alctx->gathered_clusters + count
-					- alctx->wanted_clusters;
-			/* Compute how many clusters we can drop */
+		excess = alctx->gathered_clusters + count -
+			alctx->wanted_clusters;
+		/* Compute how many clusters we can drop */
 		while ((drop < alctx->rl_count)
-		    && (alctx->rl[drop].length <= excess)) {
+				&& (alctx->rl[drop].length <= excess)) {
 			excess -= alctx->rl[drop].length;
 			drop++;
 		}
 		k = 0;
-		while (((k + drop) < alctx->rl_count)
-		   && (alctx->rl[k + drop].length < count)) {
+		while (((k + drop) < alctx->rl_count) &&
+				(alctx->rl[k + drop].length < count)) {
 			alctx->rl[k] = alctx->rl[k + drop];
 			k++;
 		}
@@ -481,8 +479,8 @@ static int merge_run(struct ALLOC_CONTEXT *alctx, s64 lcn, s32 count)
 			/* We had not gathered enough clusters */
 			if (!run_alloc(alctx, alctx->rl_count + 1)) {
 				k = alctx->rl_count - 1;
-				while ((k >= 0)
-				    && (alctx->rl[k].length > count)) {
+				while ((k >= 0) &&
+						(alctx->rl[k].length > count)) {
 					alctx->rl[k+1] = alctx->rl[k];
 					k--;
 				}
@@ -507,7 +505,7 @@ static int merge_run(struct ALLOC_CONTEXT *alctx, s64 lcn, s32 count)
  */
 
 static enum STEP examine_buf(struct ALLOC_CONTEXT *alctx, s64 pos, s64 br,
-			enum STEP step)
+		enum STEP step)
 {
 	s32 count;
 	s64 offbuf; /* first bit available in buf */
@@ -518,7 +516,7 @@ static enum STEP examine_buf(struct ALLOC_CONTEXT *alctx, s64 pos, s64 br,
 	offbuf = pos - bufpos;
 	while (bufpos < (br << 3)) {
 		if (step == STEP_ZERO) {
-				/* find first zero */
+			/* find first zero */
 			index = next_zero(alctx, bufpos, br << 3);
 			if (index >= 0) {
 				alctx->lcn = offbuf + index;
@@ -528,7 +526,7 @@ static enum STEP examine_buf(struct ALLOC_CONTEXT *alctx, s64 pos, s64 br,
 				bufpos = br << 3;
 			}
 		} else {
-				/* find first one */
+			/* find first one */
 			index = next_one(alctx, bufpos, br << 3);
 			if (index >= 0) {
 				count = offbuf + index - alctx->lcn;
@@ -563,7 +561,7 @@ static int sort_runlist(struct ALLOC_CONTEXT *alctx)
 	int k;
 
 	err = 0;
-			/* This sorting can be much improved... */
+	/* This sorting can be much improved... */
 	do {
 		sorted = TRUE;
 		for (k=0; (k+1)<alctx->rl_count; k++) {
@@ -577,19 +575,19 @@ static int sort_runlist(struct ALLOC_CONTEXT *alctx)
 			}
 		}
 	} while (!sorted);
-		/* compute the vcns */
+	/* compute the vcns */
 	vcn = 0;
 	for (k=0; k<alctx->rl_count; k++) {
 		alctx->rl[k].vcn = vcn;
 		vcn += alctx->rl[k].length;
 	}
-		/* Shorten the last run if we got too much */
+	/* Shorten the last run if we got too much */
 	if (vcn > alctx->wanted_clusters) {
 		k = alctx->rl_count - 1;
 		alctx->rl[k].length -= vcn - alctx->wanted_clusters;
 		vcn = alctx->wanted_clusters;
 	}
-		/* Append terminator */
+	/* Append terminator */
 	if (run_alloc(alctx, alctx->rl_count + 1))
 		err = -1;
 	else {
@@ -615,12 +613,12 @@ static int set_sizes(struct ALLOC_CONTEXT *alctx, ntfs_attr_search_ctx *ctx)
 	ATTR_RECORD *attr;
 
 	na = alctx->na;
-				/* Compute the sizes */
+	/* Compute the sizes */
 	na->data_size = alctx->new_size;
 	na->initialized_size = 0;
-	na->allocated_size = alctx->wanted_clusters
-					<< alctx->vol->cluster_size_bits;
-		/* Feed the sizes into the attribute */
+	na->allocated_size = alctx->wanted_clusters <<
+		alctx->vol->cluster_size_bits;
+	/* Feed the sizes into the attribute */
 	attr = ctx->attr;
 	attr->non_resident = 1;
 	attr->data_size = cpu_to_sle64(na->data_size);
@@ -628,7 +626,7 @@ static int set_sizes(struct ALLOC_CONTEXT *alctx, ntfs_attr_search_ctx *ctx)
 	attr->allocated_size = cpu_to_sle64(na->allocated_size);
 	if (na->data_flags & ATTR_IS_SPARSE)
 		attr->compressed_size = cpu_to_sle64(na->compressed_size);
-		/* Copy the unnamed data attribute sizes to inode */
+	/* Copy the unnamed data attribute sizes to inode */
 	if ((opts.attribute == AT_DATA) && !na->name_len) {
 		ni = na->ni;
 		ni->data_size = na->data_size;
@@ -660,15 +658,15 @@ static int assign_runlist(struct ALLOC_CONTEXT *alctx)
 	if (na->rl)
 		free(na->rl);
 	na->rl = alctx->rl;
-			/* Allocate the clusters */
+	/* Allocate the clusters */
 	for (k=0; ((k + 1) < alctx->rl_count) && !err; k++) {
 		if (ntfs_bitmap_set_run(alctx->vol->lcnbmp_na,
-				alctx->rl[k].lcn, alctx->rl[k].length)) {
+					alctx->rl[k].lcn, alctx->rl[k].length)) {
 			err = -1;
 		}
 	}
-	na->allocated_size = alctx->wanted_clusters
-					<< alctx->vol->cluster_size_bits;
+	na->allocated_size = alctx->wanted_clusters <<
+		alctx->vol->cluster_size_bits;
 	NAttrSetNonResident(na);
 	NAttrSetFullyMapped(na);
 	if (err || ntfs_attr_update_mapping_pairs(na, 0)) {
@@ -677,8 +675,8 @@ static int assign_runlist(struct ALLOC_CONTEXT *alctx)
 		ctx = ntfs_attr_get_search_ctx(alctx->na->ni, NULL);
 		if (ctx) {
 			if (ntfs_attr_lookup(opts.attribute, na->name,
-					na->name_len,
-					CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+						na->name_len,
+						CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 				err = -1;
 			} else {
 				if (set_sizes(alctx, ctx))
@@ -711,31 +709,31 @@ static int find_best_runs(struct ALLOC_CONTEXT *alctx)
 
 	err = 0;
 	vol = alctx->vol;
-			/* examine the first data zone */
+	/* examine the first data zone */
 	pos = vol->mft_zone_end;
 	br = vol->cluster_size;
 	step = STEP_ZERO;
-	while ((step != STEP_ERR)
-	    && (br == vol->cluster_size)
-	    && (pos < vol->nr_clusters)) {
+	while ((step != STEP_ERR) &&
+			(br == vol->cluster_size) &&
+			(pos < vol->nr_clusters)) {
 		br = ntfs_attr_pread(vol->lcnbmp_na,
-			(pos >> 3) & -vol->cluster_size,
-			vol->cluster_size, alctx->buf);
+				(pos >> 3) & -vol->cluster_size,
+				vol->cluster_size, alctx->buf);
 		if (br > 0) {
 			step = examine_buf(alctx, pos, br, step);
 			pos = (pos | ((vol->cluster_size << 3) - 1)) + 1;
 		}
 	}
-			/* examine the second data zone */
+	/* examine the second data zone */
 	pos = 0;
 	br = vol->cluster_size;
 	step = STEP_ZERO;
 	while ((step != STEP_ERR)
-	    && (br == vol->cluster_size)
-	    && (pos < vol->mft_zone_start)) {
+			&& (br == vol->cluster_size)
+			&& (pos < vol->mft_zone_start)) {
 		br = ntfs_attr_pread(vol->lcnbmp_na,
-			(pos >> 3) & -vol->cluster_size,
-			vol->cluster_size, alctx->buf);
+				(pos >> 3) & -vol->cluster_size,
+				vol->cluster_size, alctx->buf);
 		if (br > 0) {
 			step = examine_buf(alctx, pos, br, step);
 			pos = (pos | ((vol->cluster_size << 3) - 1)) + 1;
@@ -777,9 +775,9 @@ static int preallocate(ntfs_attr *na, s64 new_size)
 			alctx->rl_allocated = 0;
 			alctx->rl = (runlist_element*)NULL;
 			alctx->new_size = new_size;
-			alctx->wanted_clusters = (new_size
-				+ vol->cluster_size - 1)
-					>> vol->cluster_size_bits;
+			alctx->wanted_clusters =
+				(new_size + vol->cluster_size - 1) >>
+				vol->cluster_size_bits;
 			alctx->gathered_clusters = 0;
 			if (find_best_runs(alctx))
 				err = -1;
@@ -805,7 +803,7 @@ static int preallocate(ntfs_attr *na, s64 new_size)
  * Return:  the created file inode
  */
 static ntfs_inode *ntfs_new_file(ntfs_inode *dir_ni,
-			  const char *filename)
+		const char *filename)
 {
 	ntfschar *ufilename;
 	/* inode to the file that is being created */
@@ -817,7 +815,7 @@ static ntfs_inode *ntfs_new_file(ntfs_inode *dir_ni,
 	ufilename_len = ntfs_mbstoucs(filename, &ufilename);
 	if (ufilename_len == -1) {
 		ntfs_log_perror("ERROR: Failed to convert '%s' to unicode",
-					filename);
+				filename);
 		return NULL;
 	}
 	ni = ntfs_create(dir_ni, const_cpu_to_le32(0), ufilename, ufilename_len, S_IFREG);
@@ -923,7 +921,7 @@ int main(int argc, char *argv[])
 		unix_name = ntfs_utils_unix_path(opts.dest_file);
 		if (unix_name) {
 			out = ntfs_pathname_to_inode(vol, NULL, unix_name);
-  		} else
+		} else
 			out = (ntfs_inode*)NULL;
 #else
 		out = ntfs_pathname_to_inode(vol, NULL, opts.dest_file);
@@ -973,7 +971,7 @@ int main(int argc, char *argv[])
 				goto close_src;
 			}
 			ntfs_log_verbose("Creating a new file '%s' under '%s'"
-					 "\n", filename, parent_dirname);
+					"\n", filename, parent_dirname);
 			ni = ntfs_new_file(dir_ni, filename);
 			ntfs_inode_close(dir_ni);
 			if (!ni) {
@@ -1064,7 +1062,7 @@ int main(int argc, char *argv[])
 		}
 		/* Requested attribute isn't present, add it. */
 		if (ntfs_attr_add(out, opts.attribute, attr_name,
-				attr_name_len, NULL, 0)) {
+					attr_name_len, NULL, 0)) {
 			ntfs_log_perror("ERROR: Couldn't add attribute");
 			goto close_dst;
 		}
@@ -1082,11 +1080,11 @@ int main(int argc, char *argv[])
 		ntfs_log_info("Warning : Cannot avoid fragmentation"
 				" of a compressed attribute\n");
 		opts.minfragments = 0;
-		}
+	}
 	if (na->data_size && opts.minfragments) {
 		if (ntfs_attr_truncate(na, 0)) {
 			ntfs_log_perror(
-				"ERROR: Couldn't truncate existing attribute");
+					"ERROR: Couldn't truncate existing attribute");
 			goto close_attr;
 		}
 	}
@@ -1099,19 +1097,19 @@ int main(int argc, char *argv[])
 			 */
 			if (ntfs_attr_truncate(na, new_size)) {
 				ntfs_log_perror(
-					"ERROR: Couldn't resize attribute");
+						"ERROR: Couldn't resize attribute");
 				goto close_attr;
 			}
-			if (NAttrNonResident(na)
-			   && preallocate(na, new_size)) {
+			if (NAttrNonResident(na) &&
+					preallocate(na, new_size)) {
 				ntfs_log_perror(
-				    "ERROR: Couldn't preallocate attribute");
+						"ERROR: Couldn't preallocate attribute");
 				goto close_attr;
 			}
 		} else {
 			if (ntfs_attr_truncate_solid(na, new_size)) {
 				ntfs_log_perror(
-					"ERROR: Couldn't resize attribute");
+						"ERROR: Couldn't resize attribute");
 				goto close_attr;
 			}
 		}
@@ -1143,8 +1141,7 @@ int main(int argc, char *argv[])
 		}
 		offset += bw;
 	}
-	if ((na->data_flags & ATTR_COMPRESSION_MASK)
-	    && ntfs_attr_pclose(na))
+	if ((na->data_flags & ATTR_COMPRESSION_MASK) && ntfs_attr_pclose(na))
 		ntfs_log_perror("ERROR: ntfs_attr_pclose failed");
 	ntfs_log_verbose("Syncing.\n");
 	result = 0;
@@ -1153,8 +1150,8 @@ close_attr:
 	ntfs_attr_close(na);
 	if (opts.timestamp) {
 		if (!fstat(fileno(in),&st)) {
-			s64 change_time = st.st_mtime*10000000LL
-					+ NTFS_TIME_OFFSET;
+			s64 change_time = st.st_mtime * 10000000LL +
+				NTFS_TIME_OFFSET;
 			out->last_data_change_time = cpu_to_sle64(change_time);
 			ntfs_inode_update_times(out, 0);
 		} else {

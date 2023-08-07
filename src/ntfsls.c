@@ -125,9 +125,9 @@ typedef struct {
 } ntfsls_dirent;
 
 static int list_dir_entry(ntfsls_dirent * dirent, const ntfschar * name,
-			  const int name_len, const int name_type,
-			  const s64 pos, const MFT_REF mref,
-			  const unsigned dt_type);
+		const int name_len, const int name_type,
+		const s64 pos, const MFT_REF mref,
+		const unsigned dt_type);
 
 /**
  * version - Print version information about the program
@@ -158,22 +158,22 @@ static void version(void)
 static void usage(void)
 {
 	printf("\nUsage: %s [options] device\n"
-		"\n"
-		"    -a, --all            Display all files\n"
-		"    -F, --classify       Display classification\n"
-		"    -f, --force          Use less caution\n"
-		"    -h, --help           Display this help\n"
-		"    -i, --inode          Display inode numbers\n"
-		"    -l, --long           Display long info\n"
-		"    -p, --path PATH      Directory whose contents to list\n"
-		"    -q, --quiet          Less output\n"
-		"    -R, --recursive      Recursively list subdirectories\n"
-		"    -s, --system         Display system files\n"
-		"    -V, --version        Display version information\n"
-		"    -v, --verbose        More output\n"
-		"    -x, --dos            Use short (DOS 8.3) names\n"
-		"\n",
-		EXEC_NAME);
+			"\n"
+			"    -a, --all            Display all files\n"
+			"    -F, --classify       Display classification\n"
+			"    -f, --force          Use less caution\n"
+			"    -h, --help           Display this help\n"
+			"    -i, --inode          Display inode numbers\n"
+			"    -l, --long           Display long info\n"
+			"    -p, --path PATH      Directory whose contents to list\n"
+			"    -q, --quiet          Less output\n"
+			"    -R, --recursive      Recursively list subdirectories\n"
+			"    -s, --system         Display system files\n"
+			"    -V, --version        Display version information\n"
+			"    -v, --verbose        More output\n"
+			"    -x, --dos            Use short (DOS 8.3) names\n"
+			"\n",
+			EXEC_NAME);
 
 	printf("NOTE: If neither -a nor -s is specified, the program defaults to -a.\n\n");
 
@@ -429,12 +429,12 @@ static int readdir_recursive(ntfs_inode * ni, s64 * pos, ntfsls_dirent * dirent)
 			dir_list_insert_pos = &dirs.list;
 			if (!subdir->ni) {
 				subdir->ni =
-				    ntfs_pathname_to_inode(ni->vol, ni,
-							    subdir->name);
+					ntfs_pathname_to_inode(ni->vol, ni,
+							subdir->name);
 
 				if (!subdir->ni) {
 					ntfs_log_error
-					    ("ntfsls::readdir_recursive(): cannot get inode from pathname.\n");
+						("ntfsls::readdir_recursive(): cannot get inode from pathname.\n");
 					result = -1;
 					break;
 				}
@@ -446,13 +446,13 @@ static int readdir_recursive(ntfs_inode * ni, s64 * pos, ntfsls_dirent * dirent)
 			/* print relative path header */
 			ntfs_list_for_each(comp_walker, &paths.list) {
 				tempcomp =
-				    ntfs_list_entry(comp_walker,
-					       struct path_component, list);
+					ntfs_list_entry(comp_walker,
+							struct path_component, list);
 				printf("%s", tempcomp->name);
-				if (tempcomp != &comp
-				    && *tempcomp->name != PATH_SEP
-				    && (!opts.classify
-					|| tempcomp == &base_comp))
+				if (tempcomp != &comp &&
+						*tempcomp->name != PATH_SEP &&
+						(!opts.classify ||
+						 tempcomp == &base_comp))
 					putchar(PATH_SEP);
 			}
 			puts(":");
@@ -488,9 +488,9 @@ static int readdir_recursive(ntfs_inode * ni, s64 * pos, ntfsls_dirent * dirent)
  * FIXME: Should we print errors as we go along? (AIA)
  */
 static int list_dir_entry(ntfsls_dirent * dirent, const ntfschar * name,
-			  const int name_len, const int name_type,
-			  const s64 pos __attribute__((unused)),
-			  const MFT_REF mref, const unsigned dt_type)
+		const int name_len, const int name_type,
+		const s64 pos __attribute__((unused)),
+		const MFT_REF mref, const unsigned dt_type)
 {
 	char *filename = NULL;
 	int result = 0;
@@ -520,10 +520,9 @@ static int list_dir_entry(ntfsls_dirent * dirent, const ntfschar * name,
 	if (dt_type == NTFS_DT_DIR && opts.classify)
 		sprintf(filename + strlen(filename), "/");
 
-	if (dt_type == NTFS_DT_DIR && opts.recursive
-	    && strcmp(filename, ".") && strcmp(filename, "./")
-	    && strcmp(filename, "..") && strcmp(filename, "../"))
-	{
+	if (dt_type == NTFS_DT_DIR && opts.recursive &&
+			strcmp(filename, ".") && strcmp(filename, "./") &&
+			strcmp(filename, "..") && strcmp(filename, "../")) {
 		dir = (struct dir *)calloc(1, sizeof(struct dir));
 
 		if (!dir) {
@@ -564,7 +563,7 @@ static int list_dir_entry(ntfsls_dirent * dirent, const ntfschar * name,
 			goto release;
 
 		if (ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, 0, 0, NULL,
-				0, ctx))
+					0, ctx))
 			goto release;
 		attr = ctx->attr;
 
@@ -580,7 +579,7 @@ static int list_dir_entry(ntfsls_dirent * dirent, const ntfschar * name,
 
 		if (dt_type != NTFS_DT_DIR) {
 			if (!ntfs_attr_lookup(AT_DATA, AT_UNNAMED, 0, 0, 0,
-					NULL, 0, ctx))
+						NULL, 0, ctx))
 				filesize = ntfs_get_attribute_value_length(
 						ctx->attr);
 		}
@@ -676,7 +675,7 @@ int main(int argc, char **argv)
 			readdir_recursive(ni, &pos, &dirent);
 		else
 			ntfs_readdir(ni, &pos, &dirent,
-				     (ntfs_filldir_t) list_dir_entry);
+					(ntfs_filldir_t) list_dir_entry);
 		// FIXME: error checking... (AIA)
 	} else {
 		ATTR_RECORD *rec;
@@ -702,7 +701,7 @@ int main(int argc, char **argv)
 		}
 
 		list_dir_entry(&dirent, name, name_len, space, pos, ni->mft_no,
-			       NTFS_DT_REG);
+				NTFS_DT_REG);
 		// FIXME: error checking... (AIA)
 
 		ntfs_attr_put_search_ctx(ctx);

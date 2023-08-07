@@ -96,7 +96,7 @@ struct ACTION_RECORD {
 
 enum {		/* Flag values for ACTION_RECORD */
 	ACTION_TO_REDO = 1	/* Committed, possibly not synced */
-	} ;
+} ;
 
 struct ATTR {
 	u64 inode;

@@ -169,15 +169,15 @@ static void version(void)
 static void usage(void)
 {
 	ntfs_log_info("\nUsage: %s [options] -k name.pfx device [file]\n\n"
-	       "    -i, --inode num         Display this inode\n\n"
-	       "    -k  --keyfile name.pfx  Use file name as the user's private key file.\n"
-	       "    -e  --encrypt           Update an encrypted file\n"
-	       "    -f  --force             Use less caution\n"
-	       "    -h  --help              Print this help\n"
-	       "    -q  --quiet             Less output\n"
-	       "    -V  --version           Version information\n"
-	       "    -v  --verbose           More output\n\n",
-	       EXEC_NAME);
+			"    -i, --inode num         Display this inode\n\n"
+			"    -k  --keyfile name.pfx  Use file name as the user's private key file.\n"
+			"    -e  --encrypt           Update an encrypted file\n"
+			"    -f  --force             Use less caution\n"
+			"    -h  --help              Print this help\n"
+			"    -q  --quiet             Less output\n"
+			"    -V  --version           Version information\n"
+			"    -v  --verbose           More output\n\n",
+			EXEC_NAME);
 	ntfs_log_info("%s%s\n", ntfs_bugs, ntfs_home);
 }
 
@@ -223,7 +223,7 @@ static int parse_options(int argc, char **argv)
 				opts.file = argv[optind - 1];
 			else {
 				ntfs_log_error("You must specify exactly one "
-					"file.\n");
+						"file.\n");
 				err++;
 			}
 			break;
@@ -269,7 +269,7 @@ static int parse_options(int argc, char **argv)
 		case '?':
 		default:
 			ntfs_log_error("Unknown option '%s'.\n",
-				argv[optind - 1]);
+					argv[optind - 1]);
 			err++;
 			break;
 		}
@@ -287,16 +287,16 @@ static int parse_options(int argc, char **argv)
 			err++;
 		} else if (opts.file == NULL && opts.inode == -1) {
 			ntfs_log_error("You must specify a file or inode with "
-				"the -i option.\n");
+					"the -i option.\n");
 			err++;
 		} else if (opts.file != NULL && opts.inode != -1) {
 			ntfs_log_error("You can't specify both a file and "
-				"inode.\n");
+					"inode.\n");
 			err++;
 		}
 		if (opts.quiet && opts.verbose) {
 			ntfs_log_error("You may not use --quiet and --verbose "
-				"at the same time.\n");
+					"at the same time.\n");
 			err++;
 		}
 	}
@@ -306,7 +306,7 @@ static int parse_options(int argc, char **argv)
 	if (help || err)
 		usage();
 
-		/* tri-state 0 : done, 1 : error, -1 : proceed */
+	/* tri-state 0 : done, 1 : error, -1 : proceed */
 	return (err ? 1 : (help || ver ? 0 : -1));
 }
 
@@ -346,7 +346,7 @@ static int ntfs_pkcs12_load_pfxfile(const char *keyfile, u8 **pfx,
 	*pfx = malloc(key_stat.st_size + 1);
 	if (!*pfx) {
 		ntfs_log_perror("Failed to allocate buffer for key file "
-			"contents");
+				"contents");
 		goto file_out;
 	}
 	to_read = key_stat.st_size;
@@ -418,7 +418,7 @@ static ntfs_rsa_private_key ntfs_rsa_private_key_import_from_gnutls(
 
 	/* Extract the RSA parameters from the GNU TLS private key. */
 	if (gnutls_x509_privkey_export_rsa_raw(priv_key, &rd[0], &rd[1],
-			&rd[2], &rd[3], &rd[4], &rd[5])) {
+				&rd[2], &rd[3], &rd[4], &rd[5])) {
 		ntfs_log_error("Failed to export rsa parameters.  (Is the "
 				"key an RSA private key?)\n");
 		return NULL;
@@ -426,7 +426,7 @@ static ntfs_rsa_private_key ntfs_rsa_private_key_import_from_gnutls(
 	/* Convert each RSA parameter to mpi format. */
 	for (i = 0; i < 6; i++) {
 		if (gcry_mpi_scan(&rm[i], GCRYMPI_FMT_USG, rd[i].data,
-				rd[i].size, &tmp_size) != GPG_ERR_NO_ERROR) {
+					rd[i].size, &tmp_size) != GPG_ERR_NO_ERROR) {
 			ntfs_log_error("Failed to convert RSA parameter %i "
 					"to mpi format (size %d)\n", i,
 					rd[i].size);
@@ -444,8 +444,8 @@ static ntfs_rsa_private_key ntfs_rsa_private_key_import_from_gnutls(
 	 * to what gnutls uses.
 	 */
 	if (i == 6 && gcry_sexp_build(&rsa_key, NULL,
-			"(private-key(rsa(n%m)(e%m)(d%m)(p%m)(q%m)(u%m)))",
-			rm[0], rm[1], rm[2], rm[4], rm[3], rm[5]) !=
+				"(private-key(rsa(n%m)(e%m)(d%m)(p%m)(q%m)(u%m)))",
+				rm[0], rm[1], rm[2], rm[4], rm[3], rm[5]) !=
 			GPG_ERR_NO_ERROR) {
 		ntfs_log_error("Failed to build RSA private key s-exp.\n");
 		rsa_key = NULL;
@@ -597,8 +597,8 @@ check_again:
 			char *buf = malloc(8192);
 			size_t bufsize = 8192;
 			err = gnutls_x509_privkey_export_pkcs8(pkey,
-				GNUTLS_X509_FMT_PEM, "", GNUTLS_PKCS_PLAIN, buf,
-				&bufsize);
+					GNUTLS_X509_FMT_PEM, "", GNUTLS_PKCS_PLAIN, buf,
+					&bufsize);
 			if (err) {
 				ntfs_log_error("eek1\n");
 				exit(1);
@@ -642,24 +642,24 @@ check_again:
 				goto err;
 			}
 			oid_index = 0;
-				/*
-				 * Search in the key purposes for an EFS
-				 * encryption purpose or an EFS recovery
-				 * purpose, and use the first one found.
-				 */
+			/*
+			 * Search in the key purposes for an EFS
+			 * encryption purpose or an EFS recovery
+			 * purpose, and use the first one found.
+			 */
 			do {
 				purpose_oid_size = sizeof(purpose_oid);
 				err = gnutls_x509_crt_get_key_purpose_oid(crt,
-					oid_index,
-					purpose_oid, &purpose_oid_size, NULL);
+						oid_index,
+						purpose_oid, &purpose_oid_size, NULL);
 				if (!err) {
 					purpose_oid[purpose_oid_size - 1]
-							= '\0';
+						= '\0';
 					if (!strcmp(purpose_oid,
-						NTFS_EFS_CERT_PURPOSE_OID_DRF))
-					*df_type = DF_TYPE_DRF;
+								NTFS_EFS_CERT_PURPOSE_OID_DRF))
+						*df_type = DF_TYPE_DRF;
 					else if (!strcmp(purpose_oid,
-						NTFS_EFS_CERT_PURPOSE_OID_DDF))
+								NTFS_EFS_CERT_PURPOSE_OID_DDF))
 						*df_type = DF_TYPE_DDF;
 					else
 						oid_index++;
@@ -668,9 +668,9 @@ check_again:
 			if (*df_type == DF_TYPE_UNKNOWN) {
 				/* End of list reached ? */
 				if (err
-				    == GNUTLS_E_REQUESTED_DATA_NOT_AVAILABLE)
+						== GNUTLS_E_REQUESTED_DATA_NOT_AVAILABLE)
 					ntfs_log_error("Key does not have an "
-						"EFS purpose OID\n");
+							"EFS purpose OID\n");
 				else
 					ntfs_log_error("Failed to get a key "
 							"purpose OID : %s ",
@@ -704,7 +704,7 @@ check_again:
 	}
 err:
 	if (rsa_key && (err || *df_type == DF_TYPE_UNKNOWN ||
-			!have_thumbprint)) {
+				!have_thumbprint)) {
 		if (!err)
 			ntfs_log_error("Key type or thumbprint not found, "
 					"aborting.\n");
@@ -888,7 +888,7 @@ out:
  * ntfs_desx_decrypt
  */
 static gcry_error_t ntfs_desx_decrypt(ntfs_fek *fek, u8 *outbuf,
-				const u8 *inbuf)
+		const u8 *inbuf)
 {
 	gcry_error_t err;
 	u64 curr_blk;
@@ -908,7 +908,7 @@ static gcry_error_t ntfs_desx_decrypt(ntfs_fek *fek, u8 *outbuf,
  * ntfs_desx_encrypt
  */
 static gcry_error_t ntfs_desx_encrypt(ntfs_fek *fek, u8 *outbuf,
-				const u8 *inbuf)
+		const u8 *inbuf)
 {
 	gcry_error_t err;
 	ntfs_desx_ctx *ctx = &fek->desx_ctx;
@@ -959,10 +959,10 @@ static BOOL ntfs_desx_key_expand_test(void)
 		res = FALSE;
 	else
 		res = test_des_key.u64 == *(u64*)known_des_key &&
-				test_out_whitening ==
-				*(u64*)known_out_whitening &&
-				test_in_whitening ==
-				*(u64*)known_in_whitening;
+			test_out_whitening ==
+			*(u64*)known_out_whitening &&
+			test_in_whitening ==
+			*(u64*)known_in_whitening;
 	ntfs_log_error("Testing whether ntfs_desx_key_expand() works: %s\n",
 			res ? "SUCCESS" : "FAILED");
 	return res;
@@ -1072,7 +1072,7 @@ static ntfs_fek *ntfs_fek_import_from_raw(u8 *fek_buf, unsigned fek_size)
 	memcpy(fek->key_data, fek_buf + 16, key_size);
 	fek->des_gcry_cipher_hd_ptr = NULL;
 	*(gcry_cipher_hd_t***)(fek->key_data + ((key_size + 7) & ~7)) =
-			&fek->des_gcry_cipher_hd_ptr;
+		&fek->des_gcry_cipher_hd_ptr;
 	switch (fek->alg_id) {
 	case CALG_DESX:
 		wanted_key_size = 16;
@@ -1114,7 +1114,7 @@ static ntfs_fek *ntfs_fek_import_from_raw(u8 *fek_buf, unsigned fek_size)
 		goto out;
 	}
 	err = gcry_cipher_open(&fek->gcry_cipher_hd, gcry_algo,
-				gcry_mode, 0);
+			gcry_mode, 0);
 
 	if (err != GPG_ERR_NO_ERROR) {
 		ntfs_log_error("gcry_cipher_open() failed: %s\n",
@@ -1127,10 +1127,10 @@ static ntfs_fek *ntfs_fek_import_from_raw(u8 *fek_buf, unsigned fek_size)
 				&ctx->out_whitening, &ctx->in_whitening);
 		if (err == GPG_ERR_NO_ERROR)
 			err = gcry_cipher_setkey(fek->gcry_cipher_hd,
-							ctx->des_key, 8);
+					ctx->des_key, 8);
 	} else {
 		err = gcry_cipher_setkey(fek->gcry_cipher_hd, fek->key_data,
-							key_size);
+				key_size);
 	}
 	if (err != GPG_ERR_NO_ERROR) {
 		ntfs_log_error("gcry_cipher_setkey() failed: %s\n",
@@ -1177,7 +1177,7 @@ static ntfs_fek *ntfs_df_array_fek_get(EFS_DF_ARRAY_HEADER *df_array,
 		ntfs_log_error("There are no elements in the DF array.\n");
 	df_header = (EFS_DF_HEADER*)(df_array + 1);
 	for (i = 0; i < df_count; i++, df_header = (EFS_DF_HEADER*)(
-			(u8*)df_header + le32_to_cpu(df_header->df_length))) {
+				(u8*)df_header + le32_to_cpu(df_header->df_length))) {
 		df_cred = (EFS_DF_CREDENTIAL_HEADER*)((u8*)df_header +
 				le32_to_cpu(df_header->cred_header_offset));
 		if (df_cred->type != NTFS_CRED_TYPE_CERT_THUMBPRINT) {
@@ -1187,9 +1187,9 @@ static ntfs_fek *ntfs_df_array_fek_get(EFS_DF_ARRAY_HEADER *df_array,
 		}
 		df_cert = (EFS_DF_CERT_THUMBPRINT_HEADER*)((u8*)df_cred +
 				le32_to_cpu(
-				df_cred->cert_thumbprint_header_offset));
+					df_cred->cert_thumbprint_header_offset));
 		if ((int)le32_to_cpu(df_cert->thumbprint_size)
-						!= thumbprint_size) {
+				!= thumbprint_size) {
 			ntfs_log_error("Thumbprint size %d is not valid "
 					"(should be %d), skipping this DF "
 					"entry.\n",
@@ -1198,8 +1198,8 @@ static ntfs_fek *ntfs_df_array_fek_get(EFS_DF_ARRAY_HEADER *df_array,
 			continue;
 		}
 		if (memcmp((u8*)df_cert +
-				le32_to_cpu(df_cert->thumbprint_offset),
-				thumbprint, thumbprint_size)) {
+					le32_to_cpu(df_cert->thumbprint_offset),
+					thumbprint, thumbprint_size)) {
 			ntfs_log_debug("Thumbprints do not match, skipping "
 					"this DF entry.\n");
 			continue;
@@ -1403,8 +1403,8 @@ static int ntfs_cat_decrypt(ntfs_inode *inode, ntfs_fek *fek)
 				bytes_read) {
 			ntfs_log_perror("ERROR: Couldn't decrypt all data!");
 			ntfs_log_error("%u/%lld/%lld/%lld\n", i,
-				(long long)bytes_read, (long long)offset,
-				(long long)total);
+					(long long)bytes_read, (long long)offset,
+					(long long)total);
 			break;
 		}
 		if (bytes_read > total)
@@ -1472,8 +1472,8 @@ static int ntfs_feed_encrypt(ntfs_inode *inode, ntfs_fek *fek)
 			if (bytes_read < bufsize) {
 				/* Fill with random data */
 				srandom((unsigned int)(sle64_to_cpu(
-					inode->last_data_change_time)
-					/100000000));
+								inode->last_data_change_time)
+							/100000000));
 				count = bufsize - bytes_read;
 				b = &buffer[bytes_read];
 				do {
@@ -1502,17 +1502,17 @@ static int ntfs_feed_encrypt(ntfs_inode *inode, ntfs_fek *fek)
 					< bufsize) {
 				ntfs_log_perror("ERROR: Couldn't encrypt all data!");
 				ntfs_log_error("%u/%lld/%lld/%lld\n", i,
-					(long long)bytes_read, (long long)offset,
-					(long long)total);
+						(long long)bytes_read, (long long)offset,
+						(long long)total);
 				break;
 			}
-		written = ntfs_attr_pwrite(attr, offset, bufsize, buffer);
-		if (written != bufsize) {
-			ntfs_log_perror("ERROR: Couldn't output all data!");
-			break;
-		}
-		offset += bufsize;
-		total += bytes_read;
+			written = ntfs_attr_pwrite(attr, offset, bufsize, buffer);
+			if (written != bufsize) {
+				ntfs_log_perror("ERROR: Couldn't output all data!");
+				break;
+			}
+			offset += bufsize;
+			total += bytes_read;
 		}
 	} while (bytes_read == bufsize);
 	ntfs_attr_truncate(attr, total);

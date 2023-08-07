@@ -79,20 +79,20 @@ static void version(void)
 static void usage(void)
 {
 	ntfs_log_info("\nUsage: %s [options] device file\n"
-		"\n"
-		"    -S      --start        Move to the start of the volume\n"
-		"    -B      --best         Move to the best place on the volume\n"
-		"    -E      --end          Move to the end of the volume\n"
-		"    -C num  --cluster num  Move to this cluster offset\n"
-		"\n"
-		"    -D      --no-dirty     Do not mark volume dirty (require chkdsk)\n"
-		"    -n      --no-action    Do not write to disk\n"
-		"    -f      --force        Use less caution\n"
-		"    -h      --help         Print this help\n"
-		"    -q      --quiet        Less output\n"
-		"    -V      --version      Version information\n"
-		"    -v      --verbose      More output\n\n",
-		EXEC_NAME);
+			"\n"
+			"    -S      --start        Move to the start of the volume\n"
+			"    -B      --best         Move to the best place on the volume\n"
+			"    -E      --end          Move to the end of the volume\n"
+			"    -C num  --cluster num  Move to this cluster offset\n"
+			"\n"
+			"    -D      --no-dirty     Do not mark volume dirty (require chkdsk)\n"
+			"    -n      --no-action    Do not write to disk\n"
+			"    -f      --force        Use less caution\n"
+			"    -h      --help         Print this help\n"
+			"    -q      --quiet        Less output\n"
+			"    -V      --version      Version information\n"
+			"    -v      --verbose      More output\n\n",
+			EXEC_NAME);
 	ntfs_log_info("%s%s\n", ntfs_bugs, ntfs_home);
 }
 
@@ -219,7 +219,7 @@ static int parse_options(int argc, char **argv)
 		opts.quiet = 0;
 	} else {
 		if ((opts.device == NULL) ||
-		    (opts.file   == NULL)) {
+				(opts.file   == NULL)) {
 			if (argc > 1)
 				ntfs_log_error("You must specify one device and one file.\n");
 			err++;
@@ -233,7 +233,7 @@ static int parse_options(int argc, char **argv)
 
 		if (opts.location == -1) {
 			ntfs_log_error("You may only specify one location option: "
-				"--start, --best, --end or --cluster\n");
+					"--start, --best, --end or --cluster\n");
 			err++;
 		} else if (opts.location == 0) {
 			opts.location = NTFS_MOVE_LOC_BEST;
@@ -297,10 +297,10 @@ static int ntfs_debug_runlist_dump2(const runlist *rl, int abbr, char *prefix)
 				res = -1;
 			}
 			ntfs_log_info("%s%8lld %8s %8lld\n", prefix,
-				rl->vcn, lcn_str[j], rl->length);
+					rl->vcn, lcn_str[j], rl->length);
 		} else
 			ntfs_log_info("%s%8lld %8lld %8lld\n", prefix,
-				rl->vcn, rl->lcn, rl->length);
+					rl->vcn, rl->lcn, rl->length);
 	}
 	ntfs_log_info("%s                  --------\n", prefix);
 	ntfs_log_info("%s                  %8lld\n", prefix, total);
@@ -384,8 +384,8 @@ static void dump_runs(u8 *buffer, int len)
 /**
  * find_unused
  */
-static runlist * find_unused(ntfs_volume *vol, s64 size, u64 loc
-	__attribute__((unused)), int flags __attribute__((unused)))
+static runlist * find_unused(ntfs_volume *vol, s64 size,
+		u64 loc __attribute__((unused)), int flags __attribute__((unused)))
 {
 	const int bufsize = 8192;
 	u8 *buffer;
@@ -450,7 +450,7 @@ done:
 		for (i = 0; i < size; i++) {
 			if (utils_cluster_in_use(vol, res->lcn + i)) {
 				ntfs_log_info("ERROR cluster %lld in use\n",
-				(long long)res->lcn + i);
+						(long long)res->lcn + i);
 			}
 		}
 	} else {
@@ -497,7 +497,7 @@ static int dont_move(ntfs_inode *ino)
 
 	name = (FILE_NAME_ATTR*) ((u8*)rec + le16_to_cpu(rec->value_offset));
 	if (ntfs_names_are_equal(ntldr, 5, name->file_name, name->file_name_length,
-		IGNORE_CASE, ino->vol->upcase, ino->vol->upcase_len)) {
+				IGNORE_CASE, ino->vol->upcase, ino->vol->upcase_len)) {
 		ntfs_log_error("ntldr\n");
 		return 1;
 	}
@@ -599,7 +599,7 @@ static int data_copy(ntfs_volume *vol, runlist_element *from, runlist_element *t
  * deallocate old space
  */
 static s64 move_runlist(ntfs_volume *vol, runlist_element *from,
-	runlist_element *to)
+		runlist_element *to)
 {
 	int i;
 
@@ -665,7 +665,7 @@ static s64 move_runlist(ntfs_volume *vol, runlist_element *from,
 // check size of new runlist before allocating / moving
 // replace one datarun with another (by hand)
 static s64 move_datarun(ntfs_volume *vol, ntfs_inode *ino, ATTR_RECORD *rec,
-	runlist_element *run, u64 loc, int flags)
+		runlist_element *run, u64 loc, int flags)
 {
 	runlist *from;
 	runlist *to;
@@ -691,8 +691,8 @@ static s64 move_datarun(ntfs_volume *vol, ntfs_inode *ino, ATTR_RECORD *rec,
 	}
 
 	ntfs_log_info("move %lld,%lld,%lld to %lld,%lld,%lld\n",
-		(long long)run->vcn, (long long)run->lcn, (long long)run->length,
-		(long long)to->vcn, (long long)to->lcn, (long long)to->length);
+			(long long)run->vcn, (long long)run->lcn, (long long)run->length,
+			(long long)to->vcn, (long long)to->lcn, (long long)to->length);
 
 	need_from = ntfs_get_size_for_mapping_pairs(vol, from, 0, INT_MAX);
 	ntfs_log_info("orig data run = %d bytes\n", need_from);
@@ -757,7 +757,7 @@ static s64 move_datarun(ntfs_volume *vol, ntfs_inode *ino, ATTR_RECORD *rec,
  * < 0  Error
  */
 static s64 move_attribute(ntfs_volume *vol, ntfs_inode *ino, ATTR_RECORD *rec,
-	u64 loc, int flags)
+		u64 loc, int flags)
 {
 	int i;
 	s64 res;
@@ -905,9 +905,9 @@ int main(int argc, char *argv[])
 		 * should be set. So we explicitly set it with a call to
 		 * ntfs_volume_write_flags. */
 		if(!(vol->flags & VOLUME_IS_DIRTY) && ntfs_volume_write_flags(
-			vol, vol->flags | VOLUME_IS_DIRTY)) {
+					vol, vol->flags | VOLUME_IS_DIRTY)) {
 			ntfs_log_error("Error: Failed to set volume dirty "
-				"flag (%d (%s))!\n", errno, strerror(errno));
+					"flag (%d (%s))!\n", errno, strerror(errno));
 		}
 
 		ntfs_log_info("Relocated %lld bytes\n", (long long)count);

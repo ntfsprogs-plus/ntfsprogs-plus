@@ -82,20 +82,20 @@ static void version(void)
 static void usage(void)
 {
 	ntfs_log_info("\nUsage: %s [options] device\n"
-		"    -i, --info           Print information about the volume (default)\n"
-		"\n"
-		"    -c, --cluster RANGE  Look for objects in this range of clusters\n"
-		"    -s, --sector RANGE   Look for objects in this range of sectors\n"
-		"    -I, --inode NUM      Show information about this inode\n"
-		"    -F, --filename NAME  Show information about this file\n"
-	/*	"    -l, --last           Find the last file on the volume\n" */
-		"\n"
-		"    -f, --force          Use less caution\n"
-		"    -q, --quiet          Less output\n"
-		"    -v, --verbose        More output\n"
-		"    -V, --version        Version information\n"
-		"    -h, --help           Print this help\n\n",
-		EXEC_NAME);
+			"    -i, --info           Print information about the volume (default)\n"
+			"\n"
+			"    -c, --cluster RANGE  Look for objects in this range of clusters\n"
+			"    -s, --sector RANGE   Look for objects in this range of sectors\n"
+			"    -I, --inode NUM      Show information about this inode\n"
+			"    -F, --filename NAME  Show information about this file\n"
+			/*	"    -l, --last           Find the last file on the volume\n" */
+			"\n"
+			"    -f, --force          Use less caution\n"
+			"    -q, --quiet          Less output\n"
+			"    -v, --verbose        More output\n"
+			"    -V, --version        Version information\n"
+			"    -h, --help           Print this help\n\n",
+			EXEC_NAME);
 	ntfs_log_info("%s%s\n", ntfs_bugs, ntfs_home);
 }
 
@@ -152,7 +152,7 @@ static int parse_options(int argc, char **argv)
 
 		case 'c':
 			if ((opts.action == act_none) &&
-			    (utils_parse_range(optarg, &opts.range_begin, &opts.range_end, FALSE)))
+					(utils_parse_range(optarg, &opts.range_begin, &opts.range_end, FALSE)))
 				opts.action = act_cluster;
 			else
 				opts.action = act_error;
@@ -199,7 +199,7 @@ static int parse_options(int argc, char **argv)
 			break;
 		case 's':
 			if ((opts.action == act_none) &&
-			    (utils_parse_range(optarg, &opts.range_begin, &opts.range_end, FALSE)))
+					(utils_parse_range(optarg, &opts.range_begin, &opts.range_end, FALSE)))
 				opts.action = act_sector;
 			else
 				opts.action = act_error;
@@ -268,7 +268,7 @@ static int parse_options(int argc, char **argv)
 	if (help || err)
 		usage();
 
-		/* tri-state 0 : done, 1 : error, -1 : proceed */
+	/* tri-state 0 : done, 1 : error, -1 : proceed */
 	return (err ? 1 : (help || ver ? 0 : -1));
 }
 
@@ -427,7 +427,7 @@ static int dump_file(ntfs_volume *vol, ntfs_inode *ino)
  * print_match
  */
 static int print_match(ntfs_inode *ino, ATTR_RECORD *attr,
-	runlist_element *run, void *data __attribute__((unused)))
+		runlist_element *run, void *data __attribute__((unused)))
 {
 	char *buffer;
 
@@ -454,7 +454,7 @@ static int print_match(ntfs_inode *ino, ATTR_RECORD *attr,
  * find_last
  */
 static int find_last(ntfs_inode *ino, ATTR_RECORD *attr, runlist_element *run,
-	void *data)
+		void *data)
 {
 	struct match *m;
 
@@ -529,7 +529,7 @@ int main(int argc, char *argv[])
 			ino = 0;
 			if (unix_name) {
 				ino = ntfs_pathname_to_inode(vol, NULL,
-								unix_name);
+						unix_name);
 				free(unix_name);
 			}
 #else

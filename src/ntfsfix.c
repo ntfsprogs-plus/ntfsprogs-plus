@@ -82,8 +82,8 @@
 
 #ifdef NO_NTFS_DEVICE_DEFAULT_IO_OPS
 #	error "No default device io operations!  Cannot build ntfsfix.  \
-You need to run ./configure without the --disable-default-device-io-ops \
-switch if you want to be able to build the NTFS utilities."
+	You need to run ./configure without the --disable-default-device-io-ops \
+	switch if you want to be able to build the NTFS utilities."
 #endif
 
 static const char *EXEC_NAME = "ntfsfix";
@@ -126,19 +126,19 @@ __attribute__((noreturn))
 static void usage(int ret)
 {
 	ntfs_log_info("%s v%s (libntfs-3g)\n"
-		   "\n"
-		   "Usage: %s [options] device\n"
-		   "    Attempt to fix an NTFS partition.\n"
-		   "\n"
-		   "    -b, --clear-bad-sectors Clear the bad sector list\n"
-		   "    -d, --clear-dirty       Clear the volume dirty flag\n"
-		   "    -h, --help              Display this help\n"
-		   "    -n, --no-action         Do not write anything\n"
-		   "    -V, --version           Display version information\n"
-		   "\n"
-		   "For example: %s /dev/hda6\n\n",
-		   EXEC_NAME, VERSION, EXEC_NAME,
-		   EXEC_NAME);
+			"\n"
+			"Usage: %s [options] device\n"
+			"    Attempt to fix an NTFS partition.\n"
+			"\n"
+			"    -b, --clear-bad-sectors Clear the bad sector list\n"
+			"    -d, --clear-dirty       Clear the volume dirty flag\n"
+			"    -h, --help              Display this help\n"
+			"    -n, --no-action         Do not write anything\n"
+			"    -V, --version           Display version information\n"
+			"\n"
+			"For example: %s /dev/hda6\n\n",
+			EXEC_NAME, VERSION, EXEC_NAME,
+			EXEC_NAME);
 	ntfs_log_info("%s%s", ntfs_bugs, ntfs_home);
 	exit(ret);
 }
@@ -150,12 +150,12 @@ __attribute__((noreturn))
 static void version(void)
 {
 	ntfs_log_info("%s v%s\n\n"
-		   "Attempt to fix an NTFS partition.\n\n"
-		   "Copyright (c) 2000-2006 Anton Altaparmakov\n"
-		   "Copyright (c) 2002-2006 Szabolcs Szakacsits\n"
-		   "Copyright (c) 2007      Yura Pakhuchiy\n"
-		   "Copyright (c) 2011-2015 Jean-Pierre Andre\n\n",
-		   EXEC_NAME, VERSION);
+			"Attempt to fix an NTFS partition.\n\n"
+			"Copyright (c) 2000-2006 Anton Altaparmakov\n"
+			"Copyright (c) 2002-2006 Szabolcs Szakacsits\n"
+			"Copyright (c) 2007      Yura Pakhuchiy\n"
+			"Copyright (c) 2011-2015 Jean-Pierre Andre\n\n",
+			EXEC_NAME, VERSION);
 	ntfs_log_info("%s\n%s%s", ntfs_gpl, ntfs_bugs, ntfs_home);
 	exit(0);
 }
@@ -250,7 +250,7 @@ static int OLD_ntfs_volume_set_flags(ntfs_volume *vol, const le16 flags)
 		goto err_exit;
 	}
 	if (ntfs_attr_lookup(AT_VOLUME_INFORMATION, AT_UNNAMED, 0,
-			CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+				CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 		ntfs_log_error("Attribute $VOLUME_INFORMATION was not found in "
 				"$Volume!\n");
 		goto err_out;
@@ -354,11 +354,11 @@ static int clear_sparse(ntfs_attr *na, const char *name)
 	ctx = ntfs_attr_get_search_ctx(na->ni, NULL);
 	if (ctx) {
 		if (!ntfs_attr_lookup(na->type, na->name, na->name_len,
-				CASE_SENSITIVE,	0, NULL, 0, ctx)) {
+					CASE_SENSITIVE,	0, NULL, 0, ctx)) {
 			na->data_flags &= ~ATTR_IS_SPARSE;
 			ctx->attr->data_size = cpu_to_sle64(na->data_size);
 			ctx->attr->initialized_size
-					= cpu_to_sle64(na->initialized_size);
+				= cpu_to_sle64(na->initialized_size);
 			ctx->attr->flags = na->data_flags;
 			ctx->attr->compression_unit = 0;
 			ntfs_inode_mark_dirty(ctx->ntfs_ino);
@@ -366,11 +366,11 @@ static int clear_sparse(ntfs_attr *na, const char *name)
 			res = 0;
 		} else
 			ntfs_log_perror("Could not locate attribute for %s",
-						name);
+					name);
 		ntfs_attr_put_search_ctx(ctx);
 	} else
 		ntfs_log_perror("Could not get a search context for %s",
-					name);
+				name);
 	return (res);
 }
 
@@ -380,8 +380,8 @@ static int clear_sparse(ntfs_attr *na, const char *name)
 static int clear_badclus(ntfs_volume *vol)
 {
 	static ntfschar badstream[] = {
-				const_cpu_to_le16('$'), const_cpu_to_le16('B'),
-				const_cpu_to_le16('a'), const_cpu_to_le16('d')
+		const_cpu_to_le16('$'), const_cpu_to_le16('B'),
+		const_cpu_to_le16('a'), const_cpu_to_le16('d')
 	} ;
 	ntfs_inode *ni;
 	ntfs_attr *na;
@@ -392,26 +392,25 @@ static int clear_badclus(ntfs_volume *vol)
 	ni = ntfs_inode_open(vol, FILE_BadClus);
 	if (ni) {
 		na = ntfs_attr_open(ni, AT_DATA, badstream, 4);
-			/*
-			 * chkdsk does not adjust the data size when
-			 * moving clusters to $BadClus, so we have to
-			 * check the runlist.
-			 */
+		/*
+		 * chkdsk does not adjust the data size when
+		 * moving clusters to $BadClus, so we have to
+		 * check the runlist.
+		 */
 		if (na && !ntfs_attr_map_whole_runlist(na)) {
-			if (na->rl
-			    && na->rl[0].length && na->rl[1].length) {
-			/*
-			 * Truncate the stream to free all its clusters,
-			 * (which requires setting the data size according
-			 * to allocation), then reallocate a sparse stream
-			 * to full size of volume and reset the data size.
-			 * Note : the sparse flags should not be set.
-			 */
+			if (na->rl && na->rl[0].length && na->rl[1].length) {
+				/*
+				 * Truncate the stream to free all its clusters,
+				 * (which requires setting the data size according
+				 * to allocation), then reallocate a sparse stream
+				 * to full size of volume and reset the data size.
+				 * Note : the sparse flags should not be set.
+				 */
 				na->data_size = na->allocated_size;
 				na->initialized_size = na->allocated_size;
-				if (!ntfs_attr_truncate(na,0)
-				    && !ntfs_attr_truncate(na,vol->nr_clusters
-						<< vol->cluster_size_bits)) {
+				if (!ntfs_attr_truncate(na,0) &&
+						!ntfs_attr_truncate(na,vol->nr_clusters <<
+							vol->cluster_size_bits)) {
 					na->initialized_size = 0;
 					NInoFileNameSetDirty(ni);
 					ok = TRUE;
@@ -606,33 +605,32 @@ static int rewrite_upcase(ntfs_volume *vol, ntfs_attr *na)
 	s64 l;
 	int res;
 
-		/* writing the $UpCase may require bitmap updates */
+	/* writing the $UpCase may require bitmap updates */
 	res = -1;
 	vol->lcnbmp_ni = ntfs_inode_open(vol, FILE_Bitmap);
 	if (!vol->lcnbmp_ni) {
 		ntfs_log_perror("Failed to open bitmap inode");
 	} else {
 		vol->lcnbmp_na = ntfs_attr_open(vol->lcnbmp_ni, AT_DATA,
-					AT_UNNAMED, 0);
+				AT_UNNAMED, 0);
 		if (!vol->lcnbmp_na) {
 			ntfs_log_perror("Failed to open bitmap data attribute");
 		} else {
 			/* minimal consistency check on the bitmap */
-			if (((vol->lcnbmp_na->data_size << 3)
-				< vol->nr_clusters)
-			    || ((vol->lcnbmp_na->data_size << 3)
-				>= (vol->nr_clusters << 1))
-			    || (vol->lcnbmp_na->data_size
-					> vol->lcnbmp_na->allocated_size)) {
+			if (((vol->lcnbmp_na->data_size << 3) < vol->nr_clusters) ||
+					((vol->lcnbmp_na->data_size << 3) >=
+					 (vol->nr_clusters << 1)) ||
+					(vol->lcnbmp_na->data_size >
+					 vol->lcnbmp_na->allocated_size)) {
 				ntfs_log_error("Corrupt cluster map size %lld"
-					" (allocated %lld minimum %lld)\n",
-					(long long)vol->lcnbmp_na->data_size,
-					(long long)vol->lcnbmp_na->allocated_size,
-					(long long)(vol->nr_clusters + 7) >> 3);
+						" (allocated %lld minimum %lld)\n",
+						(long long)vol->lcnbmp_na->data_size,
+						(long long)vol->lcnbmp_na->allocated_size,
+						(long long)(vol->nr_clusters + 7) >> 3);
 			} else {
 				ntfs_log_info("Rewriting $UpCase file\n");
 				l = ntfs_attr_pwrite(na, 0, vol->upcase_len*2,
-							vol->upcase);
+						vol->upcase);
 				if (l != vol->upcase_len*2) {
 					ntfs_log_error("Failed to rewrite $UpCase\n");
 				} else {
@@ -701,17 +699,17 @@ static int fix_upcase(ntfs_volume *vol)
 	l = ntfs_attr_pread(na, 0, na->data_size, upcase);
 	if (l != na->data_size) {
 		ntfs_log_error("Failed to read $UpCase, unexpected length "
-			       "(%lld != %lld).\n", (long long)l,
-			       (long long)na->data_size);
+				"(%lld != %lld).\n", (long long)l,
+				(long long)na->data_size);
 		errno = EIO;
 		goto error_exit;
 	}
 	/* Consistency check of $UpCase, restricted to plain ASCII chars */
 	k = 0x20;
 	while ((k < upcase_len)
-	    && (k < 0x7f)
-	    && (le16_to_cpu(upcase[k])
-			== ((k < 'a') || (k > 'z') ? k : k + 'A' - 'a')))
+			&& (k < 0x7f)
+			&& (le16_to_cpu(upcase[k])
+				== ((k < 'a') || (k > 'z') ? k : k + 'A' - 'a')))
 		k++;
 	if (k < 0x7f) {
 		ntfs_log_error("Corrupted file $UpCase\n");
@@ -726,7 +724,7 @@ static int fix_upcase(ntfs_volume *vol)
 			free(upcase);
 		}
 	} else {
-			/* accept the upcase table read from $UpCase */
+		/* accept the upcase table read from $UpCase */
 		free(vol->upcase);
 		vol->upcase = upcase;
 		vol->upcase_len = upcase_len;
@@ -749,7 +747,7 @@ error_exit :
  */
 
 static int rewrite_boot(struct ntfs_device *dev, char *full_bs,
-				s32 sector_size)
+		s32 sector_size)
 {
 	s64 bw;
 	int res;
@@ -782,22 +780,21 @@ static ATTR_RECORD *find_unnamed_attr(MFT_RECORD *mrec, ATTR_TYPES type)
 	u32 offset;
 	s32 space;
 
-			/* fetch the requested attribute */
+	/* fetch the requested attribute */
 	offset = le16_to_cpu(mrec->attrs_offset);
 	space = le32_to_cpu(mrec->bytes_in_use) - offset;
 	a = (ATTR_RECORD*)((char*)mrec + offset);
-	while ((space >= (s32)offsetof(ATTR_RECORD, resident_end))
-	    && (a->type != AT_END)
-	    && (le32_to_cpu(a->length) <= (u32)space)
-	    && !(le32_to_cpu(a->length) & 7)
-	    && ((a->type != type) || a->name_length)) {
+	while ((space >= (s32)offsetof(ATTR_RECORD, resident_end)) &&
+			(a->type != AT_END) &&
+			(le32_to_cpu(a->length) <= (u32)space) &&
+			!(le32_to_cpu(a->length) & 7) &&
+			((a->type != type) || a->name_length)) {
 		offset += le32_to_cpu(a->length);
 		space -= le32_to_cpu(a->length);
 		a = (ATTR_RECORD*)((char*)mrec + offset);
 	}
-	if ((offset >= le32_to_cpu(mrec->bytes_in_use))
-	    || (a->type != type)
-	    || a->name_length)
+	if ((offset >= le32_to_cpu(mrec->bytes_in_use)) ||
+			(a->type != type) || a->name_length)
 		a = (ATTR_RECORD*)NULL;
 	return (a);
 }
@@ -825,31 +822,27 @@ static BOOL short_mft_selfloc_condition(struct MFT_SELF_LOCATED *selfloc)
 	mft0 = selfloc->mft0;
 	if ((ntfs_pread(vol->dev,
 			vol->mft_lcn << vol->cluster_size_bits,
-			vol->mft_record_size, mft0)
-				== vol->mft_record_size)
-	    && !ntfs_mst_post_read_fixup((NTFS_RECORD*)mft0,
-			vol->mft_record_size)
-	    && !ntfs_mft_record_check(vol, 0, mft0)) {
+			vol->mft_record_size, mft0) == vol->mft_record_size) &&
+		!ntfs_mst_post_read_fixup((NTFS_RECORD*)mft0, vol->mft_record_size) &&
+		!ntfs_mft_record_check(vol, 0, mft0)) {
 		a = find_unnamed_attr(mft0,AT_DATA);
-		if (a
-		    && a->non_resident
-		    && (((sle64_to_cpu(a->highest_vcn) + 1)
-					<< vol->cluster_size_bits)
-				== (SELFLOC_LIMIT*vol->mft_record_size))) {
+		if (a && a->non_resident &&
+				(((sle64_to_cpu(a->highest_vcn) + 1) <<
+				  vol->cluster_size_bits) ==
+				 (SELFLOC_LIMIT*vol->mft_record_size))) {
 			rl = ntfs_mapping_pairs_decompress(vol, a, NULL);
 			if (rl) {
 				/*
 				 * The first error condition is having only
 				 * 16 entries mapped in the first MFT record.
 				 */
-				if ((rl[0].lcn >= 0)
-				  && ((rl[0].length << vol->cluster_size_bits)
-					== SELFLOC_LIMIT*vol->mft_record_size)
-				  && (rl[1].vcn == rl[0].length)
-				  && (rl[1].lcn == LCN_RL_NOT_MAPPED)) {
+				if ((rl[0].lcn >= 0) &&
+						((rl[0].length << vol->cluster_size_bits) ==
+						 SELFLOC_LIMIT * vol->mft_record_size) &&
+						(rl[1].vcn == rl[0].length) &&
+						(rl[1].lcn == LCN_RL_NOT_MAPPED)) {
 					ok = TRUE;
-					seqn = le16_to_cpu(
-						mft0->sequence_number);
+					seqn = le16_to_cpu(mft0->sequence_number);
 					selfloc->mft_ref0
 						= ((MFT_REF)seqn) << 48;
 				}
@@ -891,12 +884,11 @@ static BOOL attrlist_selfloc_condition(struct MFT_SELF_LOCATED *selfloc)
 		if (a->non_resident) {
 			attrlist = selfloc->attrlist;
 			rl = ntfs_mapping_pairs_decompress(vol, a, NULL);
-			if (rl
-			    && (rl->lcn >= 0)
-			    && (sle64_to_cpu(a->data_size) < vol->cluster_size)
-			    && (ntfs_pread(vol->dev,
-					rl->lcn << vol->cluster_size_bits,
-					vol->cluster_size, attrlist) == vol->cluster_size)) {
+			if (rl && (rl->lcn >= 0) &&
+					(sle64_to_cpu(a->data_size) < vol->cluster_size) &&
+					(ntfs_pread(vol->dev,
+						    rl->lcn << vol->cluster_size_bits,
+						    vol->cluster_size, attrlist) == vol->cluster_size)) {
 				selfloc->attrlist_lcn = rl->lcn;
 				al = attrlist;
 				length = sle64_to_cpu(a->data_size);
@@ -909,22 +901,19 @@ static BOOL attrlist_selfloc_condition(struct MFT_SELF_LOCATED *selfloc)
 		if (length) {
 			/* search for a data attribute defining entry 16 */
 			vcn = (SELFLOC_LIMIT*vol->mft_record_size)
-					>> vol->cluster_size_bits;
+				>> vol->cluster_size_bits;
 			levcn = cpu_to_sle64(vcn);
-			while ((length > 0)
-			    && al->length
-			    && ((al->type != AT_DATA)
-				|| ((leVCN)al->lowest_vcn != levcn))) {
+			while ((length > 0) && al->length &&
+					((al->type != AT_DATA) ||
+						((leVCN)al->lowest_vcn != levcn))) {
 				length -= le16_to_cpu(al->length);
 				al = (ATTR_LIST_ENTRY*)
 					((char*)al + le16_to_cpu(al->length));
 			}
-			if ((length > 0)
-			    && al->length
-			    && (al->type == AT_DATA)
-			    && !al->name_length
-			    && ((leVCN)al->lowest_vcn == levcn)
-			    && (MREF_LE(al->mft_reference) >= SELFLOC_LIMIT)) {
+			if ((length > 0) && al->length && (al->type == AT_DATA) &&
+					!al->name_length &&
+					((leVCN)al->lowest_vcn == levcn) &&
+					(MREF_LE(al->mft_reference) >= SELFLOC_LIMIT)) {
 				selfloc->mft_ref1
 					= le64_to_cpu(al->mft_reference);
 				selfloc->attrlist_to_ref1 = al;
@@ -963,32 +952,28 @@ static BOOL self_mapped_selfloc_condition(struct MFT_SELF_LOCATED *selfloc)
 	mft1 = selfloc->mft1;
 	inum = MREF(selfloc->mft_ref1);
 	offs = 	(vol->mft_lcn << vol->cluster_size_bits)
-			+ (inum << vol->mft_record_size_bits);
+		+ (inum << vol->mft_record_size_bits);
 	if ((ntfs_pread(vol->dev, offs, vol->mft_record_size,
-			mft1) == vol->mft_record_size)
-	    && !ntfs_mst_post_read_fixup((NTFS_RECORD*)mft1,
-			vol->mft_record_size)
-	    && !ntfs_mft_record_check(vol, inum, mft1)) {
+					mft1) == vol->mft_record_size) &&
+			!ntfs_mst_post_read_fixup((NTFS_RECORD*)mft1,
+				vol->mft_record_size) &&
+			!ntfs_mft_record_check(vol, inum, mft1)) {
 
-		lowest_vcn = (SELFLOC_LIMIT*vol->mft_record_size)
-				>> vol->cluster_size_bits;
+		lowest_vcn = (SELFLOC_LIMIT*vol->mft_record_size) >>
+			vol->cluster_size_bits;
 		a = find_unnamed_attr(mft1,AT_DATA);
-		if (a
-		    && (mft1->flags & MFT_RECORD_IN_USE)
-		    && ((VCN)sle64_to_cpu(a->lowest_vcn) == lowest_vcn)
-		    && (le64_to_cpu(mft1->base_mft_record)
-				== selfloc->mft_ref0)
-		    && ((u16)MSEQNO(selfloc->mft_ref1)
-				== le16_to_cpu(mft1->sequence_number))) {
+		if (a && (mft1->flags & MFT_RECORD_IN_USE) &&
+				((VCN)sle64_to_cpu(a->lowest_vcn) == lowest_vcn) &&
+				(le64_to_cpu(mft1->base_mft_record) == selfloc->mft_ref0) &&
+				((u16)MSEQNO(selfloc->mft_ref1) ==
+				 le16_to_cpu(mft1->sequence_number))) {
 			rl = ntfs_mapping_pairs_decompress(vol, a, NULL);
-			if ((rl[0].lcn == LCN_RL_NOT_MAPPED)
-			   && !rl[0].vcn
-			   && (rl[0].length == lowest_vcn)
-			   && (rl[1].vcn == lowest_vcn)
-			   && ((u64)(rl[1].lcn << vol->cluster_size_bits)
-					<= offs)
-			   && ((u64)((rl[1].lcn + rl[1].length)
-					<< vol->cluster_size_bits) > offs)) {
+			if ((rl[0].lcn == LCN_RL_NOT_MAPPED) && !rl[0].vcn &&
+					(rl[0].length == lowest_vcn) &&
+					(rl[1].vcn == lowest_vcn) &&
+					((u64)(rl[1].lcn << vol->cluster_size_bits) <= offs) &&
+					((u64)((rl[1].lcn + rl[1].length) <<
+						vol->cluster_size_bits) > offs)) {
 				ok = TRUE;
 			}
 		}
@@ -1020,17 +1005,17 @@ static BOOL spare_record_selfloc_condition(struct MFT_SELF_LOCATED *selfloc)
 	vol = selfloc->vol;
 	mft2 = selfloc->mft2;
 	inum = SELFLOC_LIMIT - 1;
-	offs = 	(vol->mft_lcn << vol->cluster_size_bits)
-			+ (inum << vol->mft_record_size_bits);
-	if ((ntfs_pread(vol->dev, offs, vol->mft_record_size,
-			mft2) == vol->mft_record_size)
-	    && !ntfs_mst_post_read_fixup((NTFS_RECORD*)mft2,
-			vol->mft_record_size)
-	    && !ntfs_mft_record_check(vol, inum, mft2)) {
-		if (!mft2->base_mft_record
-		    && (mft2->flags & MFT_RECORD_IN_USE)
-		    && !find_unnamed_attr(mft2,AT_ATTRIBUTE_LIST)
-		    && !find_unnamed_attr(mft2,AT_FILE_NAME)) {
+	offs =	(vol->mft_lcn << vol->cluster_size_bits) +
+		(inum << vol->mft_record_size_bits);
+	if ((ntfs_pread(vol->dev, offs, vol->mft_record_size, mft2) ==
+				vol->mft_record_size) &&
+			!ntfs_mst_post_read_fixup((NTFS_RECORD*)mft2,
+				vol->mft_record_size) &&
+			!ntfs_mft_record_check(vol, inum, mft2)) {
+		if (!mft2->base_mft_record &&
+				(mft2->flags & MFT_RECORD_IN_USE) &&
+				!find_unnamed_attr(mft2,AT_ATTRIBUTE_LIST) &&
+				!find_unnamed_attr(mft2,AT_FILE_NAME)) {
 			ok = TRUE;
 		}
 	}
@@ -1060,12 +1045,12 @@ static int fix_selfloc_conditions(struct MFT_SELF_LOCATED *selfloc)
 	int res;
 
 	res = 0;
-			/*
-			 * In MFT1, we must fix :
-			 * - the self-reference, if present,
-			 * - its own sequence number, must be 15
-			 * - the sizes of the data attribute.
-			 */
+	/*
+	 * In MFT1, we must fix :
+	 * - the self-reference, if present,
+	 * - its own sequence number, must be 15
+	 * - the sizes of the data attribute.
+	 */
 	vol = selfloc->vol;
 	mft1 = selfloc->mft1;
 	mft2 = selfloc->mft2;
@@ -1081,63 +1066,62 @@ static int fix_selfloc_conditions(struct MFT_SELF_LOCATED *selfloc)
 	} else
 		res = -1; /* bug : it has been found earlier */
 
-			/*
-			 * In MFT2, we must fix :
-			 * - the self-reference, if present
-			 */
+	/*
+	 * In MFT2, we must fix :
+	 * - the self-reference, if present
+	 */
 	usa_ofs = le16_to_cpu(mft2->usa_ofs);
 	if (usa_ofs >= 48)
 		mft2->mft_record_number = cpu_to_le32(MREF(selfloc->mft_ref1));
 
-			/*
-			 * In the attribute list, we must fix :
-			 * - the reference to MFT1
-			 */
+	/*
+	 * In the attribute list, we must fix :
+	 * - the reference to MFT1
+	 */
 	al = selfloc->attrlist_to_ref1;
 	al->mft_reference = MK_LE_MREF(SELFLOC_LIMIT - 1, SELFLOC_LIMIT - 1);
 
-			/*
-			 * All fixes done, we can write all if allowed
-			 */
+	/*
+	 * All fixes done, we can write all if allowed
+	 */
 	if (!res && !opt.no_action) {
 		inum = SELFLOC_LIMIT - 1;
-		offs2 = (vol->mft_lcn << vol->cluster_size_bits)
-			+ (inum << vol->mft_record_size_bits);
+		offs2 = (vol->mft_lcn << vol->cluster_size_bits) +
+			(inum << vol->mft_record_size_bits);
 		inum = MREF(selfloc->mft_ref1);
-		offs1 = (vol->mft_lcn << vol->cluster_size_bits)
-			+ (inum << vol->mft_record_size_bits);
+		offs1 = (vol->mft_lcn << vol->cluster_size_bits) +
+			(inum << vol->mft_record_size_bits);
 
-			/* rewrite the attribute list */
+		/* rewrite the attribute list */
 		if (selfloc->attrlist_resident) {
-				/* write mft0 and mftmirr if it is resident */
+			/* write mft0 and mftmirr if it is resident */
 			offs = vol->mft_lcn << vol->cluster_size_bits;
 			offsm = vol->mftmirr_lcn << vol->cluster_size_bits;
 			if (ntfs_mst_pre_write_fixup(
-					(NTFS_RECORD*)selfloc->mft0,
-					vol->mft_record_size)
-			    || (ntfs_pwrite(vol->dev, offs, vol->mft_record_size,
-					selfloc->mft0) != vol->mft_record_size)
-			    || (ntfs_pwrite(vol->dev, offsm, vol->mft_record_size,
-					selfloc->mft0) != vol->mft_record_size))
+						(NTFS_RECORD*)selfloc->mft0,
+						vol->mft_record_size) ||
+					(ntfs_pwrite(vol->dev, offs, vol->mft_record_size,
+						     selfloc->mft0) != vol->mft_record_size) ||
+					(ntfs_pwrite(vol->dev, offsm, vol->mft_record_size,
+						     selfloc->mft0) != vol->mft_record_size))
 				res = -1;
 		} else {
-				/* write a full cluster if non resident */
+			/* write a full cluster if non resident */
 			offs = selfloc->attrlist_lcn << vol->cluster_size_bits;
 			if (ntfs_pwrite(vol->dev, offs, vol->cluster_size,
-					selfloc->attrlist) != vol->cluster_size)
+						selfloc->attrlist) != vol->cluster_size)
 				res = -1;
 		}
-			/* replace MFT2 by MFT1 and replace MFT1 by MFT2 */
-		if (!res
-		    && (ntfs_mst_pre_write_fixup((NTFS_RECORD*)selfloc->mft1,
-					vol->mft_record_size)
-			|| ntfs_mst_pre_write_fixup((NTFS_RECORD*)selfloc->mft2,
-					vol->mft_record_size)
-			|| (ntfs_pwrite(vol->dev, offs2, vol->mft_record_size,
-					mft1) != vol->mft_record_size)
-			|| (ntfs_pwrite(vol->dev, offs1, vol->mft_record_size,
-					mft2) != vol->mft_record_size)))
-				res = -1;
+		/* replace MFT2 by MFT1 and replace MFT1 by MFT2 */
+		if (!res && (ntfs_mst_pre_write_fixup((NTFS_RECORD*)selfloc->mft1,
+						vol->mft_record_size) ||
+					ntfs_mst_pre_write_fixup((NTFS_RECORD*)selfloc->mft2,
+						vol->mft_record_size) ||
+					(ntfs_pwrite(vol->dev, offs2, vol->mft_record_size,
+						     mft1) != vol->mft_record_size) ||
+					(ntfs_pwrite(vol->dev, offs1, vol->mft_record_size,
+						     mft2) != vol->mft_record_size)))
+			res = -1;
 	}
 	return (res);
 }
@@ -1190,12 +1174,12 @@ static int fix_self_located_mft(ntfs_volume *vol)
 	selfloc.mft1 = (MFT_RECORD*)malloc(vol->mft_record_size);
 	selfloc.mft2 = (MFT_RECORD*)malloc(vol->mft_record_size);
 	selfloc.attrlist = (ATTR_LIST_ENTRY*)malloc(vol->cluster_size);
-	if (selfloc.mft0 && selfloc.mft1 && selfloc.mft2
-	    && selfloc.attrlist) {
-		if (short_mft_selfloc_condition(&selfloc)
-		    && attrlist_selfloc_condition(&selfloc)
-		    && self_mapped_selfloc_condition(&selfloc)
-		    && spare_record_selfloc_condition(&selfloc)) {
+	if (selfloc.mft0 && selfloc.mft1 && selfloc.mft2 &&
+			selfloc.attrlist) {
+		if (short_mft_selfloc_condition(&selfloc) &&
+				attrlist_selfloc_condition(&selfloc) &&
+				self_mapped_selfloc_condition(&selfloc) &&
+				spare_record_selfloc_condition(&selfloc)) {
 			ntfs_log_info(FOUND);
 			ntfs_log_info("Fixing the self-located MFT segment... ");
 			res = fix_selfloc_conditions(&selfloc);
@@ -1225,7 +1209,7 @@ static int fix_self_located_mft(ntfs_volume *vol)
  */
 
 static int try_fix_boot(ntfs_volume *vol, char *full_bs,
-			s64 read_sector, s64 fix_sectors, s32 sector_size)
+		s64 read_sector, s64 fix_sectors, s32 sector_size)
 {
 	s64 br;
 	int res;
@@ -1235,7 +1219,7 @@ static int try_fix_boot(ntfs_volume *vol, char *full_bs,
 
 	res = -1;
 	br = ntfs_pread(vol->dev, read_sector*sector_size,
-					sector_size, full_bs);
+			sector_size, full_bs);
 	if (br != sector_size) {
 		if (br != -1)
 			errno = EINVAL;
@@ -1250,8 +1234,8 @@ static int try_fix_boot(ntfs_volume *vol, char *full_bs,
 		/* alignment problem on Sparc, even doing memcpy() */
 		sector_size_le = cpu_to_le16(sector_size);
 		if (!memcmp(&sector_size_le, &bs->bpb.bytes_per_sector,2)
-		    && ntfs_boot_sector_is_ntfs(bs)
-		    && !ntfs_boot_sector_parse(vol, bs)) {
+				&& ntfs_boot_sector_is_ntfs(bs)
+				&& !ntfs_boot_sector_parse(vol, bs)) {
 			ntfs_log_info("The alternate bootsector is usable\n");
 			if (fix_sectors != got_sectors)
 				ntfs_log_info("Set sector count to %lld instead of %lld\n",
@@ -1260,7 +1244,7 @@ static int try_fix_boot(ntfs_volume *vol, char *full_bs,
 			/* fix the normal boot sector */
 			if (!opt.no_action) {
 				res = rewrite_boot(vol->dev, full_bs,
-							sector_size);
+						sector_size);
 			} else
 				res = 0;
 		}
@@ -1286,7 +1270,7 @@ static int try_fix_boot(ntfs_volume *vol, char *full_bs,
  */
 
 static int try_alternate_boot(ntfs_volume *vol, char *full_bs,
-			s32 sector_size, s64 shown_sectors)
+		s32 sector_size, s64 shown_sectors)
 {
 	s64 actual_sectors;
 	int res;
@@ -1294,37 +1278,34 @@ static int try_alternate_boot(ntfs_volume *vol, char *full_bs,
 	res = -1;
 	ntfs_log_info("Trying the alternate boot sector\n");
 
-		/*
-		 * We do not rely on the sector size defined in the
-		 * boot sector, supposed to be corrupt, so we try to get
-		 * the actual sector size and defaulting to 512 if failed
-		 * to get. This value is only used to guess the alternate
-		 * boot sector location and it is checked against the
-		 * value found in the sector itself. It should not damage
-		 * anything if wrong.
-		 *
-		 * Note : the real last sector is not accounted for here.
-		 */
+	/*
+	 * We do not rely on the sector size defined in the
+	 * boot sector, supposed to be corrupt, so we try to get
+	 * the actual sector size and defaulting to 512 if failed
+	 * to get. This value is only used to guess the alternate
+	 * boot sector location and it is checked against the
+	 * value found in the sector itself. It should not damage
+	 * anything if wrong.
+	 *
+	 * Note : the real last sector is not accounted for here.
+	 */
 	actual_sectors = ntfs_device_size_get(vol->dev,sector_size) - 1;
 
-		/* first try the actual last sector */
-	if ((actual_sectors > 0)
-	    && !try_fix_boot(vol, full_bs, actual_sectors,
+	/* first try the actual last sector */
+	if ((actual_sectors > 0) &&
+			!try_fix_boot(vol, full_bs, actual_sectors,
 				actual_sectors, sector_size))
 		res = 0;
 
-		/* then try the shown last sector, if less than actual */
-	if (res
-	    && (shown_sectors > 0)
-	    && (shown_sectors < actual_sectors)
-	    && !try_fix_boot(vol, full_bs, shown_sectors,
+	/* then try the shown last sector, if less than actual */
+	if (res && (shown_sectors > 0) && (shown_sectors < actual_sectors) &&
+			!try_fix_boot(vol, full_bs, shown_sectors,
 				shown_sectors, sector_size))
 		res = 0;
 
-		/* then try reducing the number of sectors to actual value */
-	if (res
-	    && (shown_sectors > actual_sectors)
-	    && !try_fix_boot(vol, full_bs, 0, actual_sectors, sector_size))
+	/* then try reducing the number of sectors to actual value */
+	if (res && (shown_sectors > actual_sectors) &&
+			!try_fix_boot(vol, full_bs, 0, actual_sectors, sector_size))
 		res = 0;
 
 	return (res);
@@ -1383,27 +1364,27 @@ static int check_alternate_boot(ntfs_volume *vol)
 		bs = (NTFS_BOOT_SECTOR*)full_bs;
 		got_sectors = sle64_to_cpu(bs->number_of_sectors);
 		actual_sectors = ntfs_device_size_get(vol->dev,
-						vol->sector_size);
+				vol->sector_size);
 		if (actual_sectors > got_sectors) {
-			last_sector_off = (actual_sectors - 1)
-						<< vol->sector_size_bits;
+			last_sector_off = (actual_sectors - 1) <<
+				vol->sector_size_bits;
 			ntfs_log_info("Checking the alternate boot sector... ");
 			br = ntfs_pread(vol->dev, last_sector_off,
-						vol->sector_size, alt_bs);
+					vol->sector_size, alt_bs);
 		} else {
 			ntfs_log_info("Checking file system overflow... ");
 			br = -1;
 		}
 		/* accept getting no byte, needed for short image files */
 		if (br >= 0) {
-			if ((br != vol->sector_size)
-			    || memcmp(full_bs, alt_bs, vol->sector_size)) {
+			if ((br != vol->sector_size) ||
+					memcmp(full_bs, alt_bs, vol->sector_size)) {
 				if (opt.no_action) {
 					ntfs_log_info("BAD\n");
 				} else {
 					bw = ntfs_pwrite(vol->dev,
-						last_sector_off,
-						vol->sector_size, full_bs);
+							last_sector_off,
+							vol->sector_size, full_bs);
 					if (bw == vol->sector_size) {
 						ntfs_log_info("FIXED\n");
 						res = 0;
@@ -1474,7 +1455,7 @@ static int fix_startup(struct ntfs_device *dev, unsigned long flags)
 	vol->locase = (ntfschar*)NULL;
 	NVolSetCaseSensitive(vol);
 
-		/* by default, all files are shown and not marked hidden */
+	/* by default, all files are shown and not marked hidden */
 	NVolSetShowSysFiles(vol);
 	NVolSetShowHidFiles(vol);
 	NVolClearHideDotFiles(vol);
@@ -1508,13 +1489,13 @@ static int fix_startup(struct ntfs_device *dev, unsigned long flags)
 		goto error_exit;
 	}
 	bs = (NTFS_BOOT_SECTOR*)full_bs;
-	if (!ntfs_boot_sector_is_ntfs(bs)
-		/* get the bootsector data, only fails when inconsistent */
-	    || (ntfs_boot_sector_parse(vol, bs) < 0)) {
+	if (!ntfs_boot_sector_is_ntfs(bs) ||
+			/* get the bootsector data, only fails when inconsistent */
+			(ntfs_boot_sector_parse(vol, bs) < 0)) {
 		shown_sectors = sle64_to_cpu(bs->number_of_sectors);
 		/* boot sector is wrong, try the alternate boot sector */
 		if (try_alternate_boot(vol, full_bs, sector_size,
-						shown_sectors)) {
+					shown_sectors)) {
 			errno = EINVAL;
 			goto error_exit;
 		}
@@ -1589,7 +1570,7 @@ static int fix_mount(void)
 		if (opt.no_action)
 			ret = -1; /* error present and not fixed */
 	}
-		/* if option -n proceed despite errors, to display them all */
+	/* if option -n proceed despite errors, to display them all */
 	if ((!ret || opt.no_action) && (fix_mftmirr(vol) < 0))
 		ret = -1;
 	if ((!ret || opt.no_action) && (fix_upcase(vol) < 0))
@@ -1675,7 +1656,7 @@ int main(int argc, char **argv)
 		vol->flags |= VOLUME_IS_DIRTY;
 	if (!opt.no_action && ntfs_volume_write_flags(vol, vol->flags)) {
 		ntfs_log_error("Error: Failed to set volume dirty flag (%d "
-			"(%s))!\n", errno, strerror(errno));
+				"(%s))!\n", errno, strerror(errno));
 	}
 
 	/* Check NTFS version is ok for us (in $Volume) */

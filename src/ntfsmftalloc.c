@@ -47,7 +47,7 @@
 #ifdef HAVE_GETOPT_H
 #	include <getopt.h>
 #else
-	extern int optind;
+extern int optind;
 #endif
 #ifdef HAVE_LIMITS_H
 #include <limits.h>
@@ -79,14 +79,14 @@ static ntfs_inode *base_ni = NULL;
 static s64 base_mft_no = -1;
 
 static struct {
-				/* -h, print usage and exit. */
+	/* -h, print usage and exit. */
 	int no_action;		/* -n, do not write to device, only display
-				       what would be done. */
+				   what would be done. */
 	int quiet;		/* -q, quiet execution. */
 	int verbose;		/* -v, verbose execution, given twice, really
-				       verbose execution (debug mode). */
+				   verbose execution (debug mode). */
 	int force;		/* -f, force allocation. */
-				/* -V, print version and exit. */
+	/* -V, print version and exit. */
 } opts;
 
 /**
@@ -192,7 +192,7 @@ static void parse_options(int argc, char *argv[])
 
 	if (opts.verbose > 1)
 		ntfs_log_set_levels(NTFS_LOG_LEVEL_DEBUG | NTFS_LOG_LEVEL_TRACE |
-			NTFS_LOG_LEVEL_VERBOSE | NTFS_LOG_LEVEL_QUIET);
+				NTFS_LOG_LEVEL_VERBOSE | NTFS_LOG_LEVEL_QUIET);
 
 	if (optind == argc)
 		usage();
@@ -232,7 +232,7 @@ static void dump_mft_record(MFT_RECORD *m)
 			(unsigned long long)sle64_to_cpu(m->lsn));
 	ntfs_log_info("Sequence number = %u\n", le16_to_cpu(m->sequence_number));
 	ntfs_log_info("Reference (hard link) count = %u\n",
-						le16_to_cpu(m->link_count));
+			le16_to_cpu(m->link_count));
 	u = le16_to_cpu(m->attrs_offset);
 	ntfs_log_info("First attribute offset = %u (0x%x)\n", u, u);
 	ntfs_log_info("Flags = %u: ", le16_to_cpu(m->flags));

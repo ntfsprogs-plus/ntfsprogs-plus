@@ -1011,6 +1011,7 @@ int ntfs_inode_sync_in_dir(ntfs_inode *ni, ntfs_inode *dir_ni)
 
 	/* Update STANDARD_INFORMATION. */
 	if ((ni->mrec->flags & MFT_RECORD_IN_USE) && ni->nr_extents != -1 &&
+			NInoDirty(ni) &&
 			ntfs_inode_sync_standard_information(ni)) {
 		if (!err || errno == EIO) {
 			err = errno;

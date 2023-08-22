@@ -1499,7 +1499,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		ntfs_index_context *ictx)
 {
 	ntfs_volume *vol = ni->vol;
-	char *filename;
+	char *filename = NULL;
 	int ret = STATUS_OK;
 	BOOL need_fix = FALSE;
 	FILE_NAME_ATTR *fn;
@@ -1514,11 +1514,11 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	if (!actx)
 		return STATUS_ERROR;
 
-	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
-
 	fn = ntfsck_find_file_name_attr(ni, ie_fn, actx);
 	if (!fn) {
 		/* NOT FOUND MFT/$FN */
+		filename = ntfs_attr_name_get(ie_fn->file_name,
+					      ie_fn->file_name_length);
 		ntfs_log_error("Filename(%s) in index entry of parent(%"PRIu64") "
 				"was not found in inode(%"PRIu64")\n",
 				filename, ictx->ni->mft_no, ni->mft_no);
@@ -1539,6 +1539,8 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	if (idx_pdir != mft_pdir ||
 		idx_pdir_seq != mft_pdir_seq ||
 		mft_pdir != ictx->ni->mft_no) {
+			filename = ntfs_attr_name_get(ie_fn->file_name,
+						      ie_fn->file_name_length);
 			ntfs_log_error("Parent MFT reference is differnt "
 					"(IDX/$FN:%"PRIu64"-%u MFT/$FN:%"PRIu64"-%u) "
 					"on inode(%"PRIu64", %s), parent(%"PRIu64")\n",
@@ -1562,6 +1564,8 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 
 		if (ntfs_attr_lookup(AT_REPARSE_POINT, AT_UNNAMED, 0,
 					CASE_SENSITIVE, 0, NULL, 0, _ctx)) {
+			filename = ntfs_attr_name_get(ie_fn->file_name,
+						      ie_fn->file_name_length);
 			ntfs_log_error("MFT flag set as reparse file, but there's no "
 					"MFT/$REPARSE_POINT attribute on inode(%"PRIu64":%s)",
 					ni->mft_no, filename);
@@ -1578,6 +1582,8 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 			fn->file_attributes |= FILE_ATTR_REPARSE_POINT;
 
 		if (ie_fn->reparse_point_tag != rpp->reparse_tag) {
+			filename = ntfs_attr_name_get(ie_fn->file_name,
+						      ie_fn->file_name_length);
 			check_failed("Reparse tag is different "
 				"(IDX/$FN:%08lx MFT/$FN:%08lx) on inode(%"PRIu64", %s)",
 				(long)le32_to_cpu(ie_fn->reparse_point_tag),
@@ -1600,6 +1606,8 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	 */
 	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
 		if (!(ie_fn->file_attributes & FILE_ATTR_I30_INDEX_PRESENT)) {
+			filename = ntfs_attr_name_get(ie_fn->file_name,
+						      ie_fn->file_name_length);
 			check_failed("MFT flag set as directory, but MFT/$FN flag "
 					"of inode(%"PRIu64":%s) is not set! Fix it.",
 					ni->mft_no, filename);
@@ -1615,6 +1623,9 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 
 		if (ie_fn->allocated_size != 0 || ie_fn->data_size != 0 ||
 				ni->allocated_size != 0 || ni->data_size != 0) {
+			if (!filename)
+				filename = ntfs_attr_name_get(ie_fn->file_name,
+							      ie_fn->file_name_length);
 			check_failed("Directory(%"PRIu64":%s) has non-zero "
 					"length(ie:%"PRIu64",%"PRIu64", "
 					"ni:%"PRIu64",%"PRIu64"). Fix it.",
@@ -1646,6 +1657,8 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 
 	/* check $FN size fields */
 	if (ni->allocated_size != sle64_to_cpu(ie_fn->allocated_size)) {
+		filename = ntfs_attr_name_get(ie_fn->file_name,
+					      ie_fn->file_name_length);
 		check_failed("Allocated size is different "
 				"(IDX/$FN:%"PRIu64" MFT/$DATA:%"PRIu64") "
 				"on inode(%"PRIu64", %s). Fix it.",
@@ -1659,6 +1672,8 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	 * It looks like that Windows does not check MFT/$FN's data size.
 	 */
 	if (ni->data_size != sle64_to_cpu(ie_fn->data_size)) {
+		filename = ntfs_attr_name_get(ie_fn->file_name,
+					      ie_fn->file_name_length);
 		check_failed("Data size is different "
 				"(IDX/$FN:%"PRIu64" MFT/$DATA:%"PRIu64") "
 				"on inode(%"PRIu64", %s). Fix it.",
@@ -1689,7 +1704,8 @@ fix_index:
 #endif
 
 out:
-	ntfs_attr_name_free(&filename);
+	if (filename)
+		ntfs_attr_name_free(&filename);
 	ntfs_attr_put_search_ctx(actx);
 	return ret;
 

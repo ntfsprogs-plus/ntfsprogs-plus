@@ -2785,10 +2785,13 @@ err_out:
  * not need to call ntfs_index_next(), cause ictx->entry already point
  * next entry.
  */
+
+const le16 UTF16_DOT[2] = {cpu_to_le16(46), 0};
+
 static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			       ntfs_index_context *ictx)
 {
-	char *filename;
+	char *filename = NULL;
 	ntfs_inode *ni;
 	struct dir *dir;
 	MFT_REF mref;
@@ -2802,9 +2805,11 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	if (ntfsck_opened_ni_vol(MREF(mref)) == TRUE)
 		return STATUS_OK;
 
-	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
-	ntfs_log_verbose("ntfsck_check_index %"PRIu64", %s\n",
-			MREF(mref), filename);
+	if (ntfs_log_get_levels() & NTFS_LOG_LEVEL_VERBOSE) {
+		filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
+		ntfs_log_verbose("ntfsck_check_index %"PRIu64", %s\n",
+				 MREF(mref), filename);
+	}
 
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
@@ -2845,7 +2850,8 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		}
 
 		if ((ie_fn->file_attributes & FILE_ATTR_I30_INDEX_PRESENT) &&
-				strcmp(filename, ".")) {
+				strcmp((char *)ie_fn->file_name,
+				       (char *)UTF16_DOT)) {
 			dir = (struct dir *)calloc(1, sizeof(struct dir));
 			if (!dir) {
 				ntfs_log_error("Failed to allocate for subdir.\n");
@@ -2866,6 +2872,9 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			}
 		}
 	} else {
+		if (!filename)
+			filename = ntfs_attr_name_get(ie_fn->file_name,
+						      ie_fn->file_name_length);
 		ntfs_log_error("Failed to open inode(%"PRIu64")\n", MREF(mref));
 
 remove_index:
@@ -2890,7 +2899,8 @@ remove_index:
 	}
 
 err_out:
-	free(filename);
+	if (filename)
+		free(filename);
 	return ret;
 }
 

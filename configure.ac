@@ -24,7 +24,7 @@
 
 # Autoconf
 AC_PREREQ(2.59)
-AC_INIT([ntfsprogs],[0.9.4],[ntfsprogs-devel@lists.sf.net])
+AC_INIT([ntfsprogs],[0.9.5],[ntfsprogs-devel@lists.sf.net])
 LIBNTFS_3G_VERSION="89"
 AC_CONFIG_SRCDIR([src/ntfsck.c])
 

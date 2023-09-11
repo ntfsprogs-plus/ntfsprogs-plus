@@ -1257,13 +1257,6 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 		goto error_exit;
 	}
 
-	if (!NVolFsck(vol)) {
-		for (i = 0; (i < l) && (i < FILE_first_user); ++i)
-			if (ntfs_mft_record_check(vol, FILE_MFT + i,
-					(MFT_RECORD *)(m + i*vol->mft_record_size)))
-				goto error_exit;
-	}
-
 	l = ntfs_attr_mst_pread(vol->mftmirr_na, 0, vol->mftmirr_size,
 			vol->mft_record_size, m2);
 	if (l != vol->mftmirr_size) {
@@ -1274,21 +1267,15 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 		vol->mftmirr_size = l;
 	}
 
-	if (!NVolFsck(vol)) {
-		for (i = 0; (i < l) && (i < FILE_first_user); ++i)
-			if (ntfs_mft_record_check(vol, FILE_MFT + i,
-					(MFT_RECORD *)(m2 + i*vol->mft_record_size)))
-				goto error_exit;
-	}
 	ntfs_log_debug("Comparing $MFTMirr to $MFT...\n");
-		/* Windows 10 does not update the full $MFTMirr any more */
+	/* Windows 10 does not update the full $MFTMirr any more */
 	for (i = 0; (i < vol->mftmirr_size) && (i < FILE_first_user); ++i) {
 		MFT_RECORD *mrec, *mrec2;
 		const char *ESTR[12] = { "$MFT", "$MFTMirr", "$LogFile",
 			"$Volume", "$AttrDef", "root directory", "$Bitmap",
 			"$Boot", "$BadClus", "$Secure", "$UpCase", "$Extend" };
 		const char *s;
-		BOOL use_mft, use_mirr;
+		BOOL use_mirr;
 
 		if (i < 12)
 			s = ESTR[i];
@@ -1297,64 +1284,43 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 		else
 			s = "mft record";
 
-		mrec = (MFT_RECORD*)(m + i * vol->mft_record_size);
-		mrec2 = (MFT_RECORD*)(m2 + i * vol->mft_record_size);
+		mrec = (MFT_RECORD *)(m + i * vol->mft_record_size);
+		mrec2 = (MFT_RECORD *)(m2 + i * vol->mft_record_size);
 
 		use_mirr = FALSE;
-		use_mft = FALSE;
+
+		/* check mft record of $MFT */
+		if (!ntfs_mft_record_check(vol, FILE_MFT + i, mrec)) {
+			/* Do not compare with mftmirror,
+			 * cause mftmirror may be cloned in runtime */
+			continue;
+		}
+
+		/* check mft record of $MFTMirror */
 		if (!ntfs_mft_record_check(vol, FILE_MFT + i, mrec2))
 			use_mirr = TRUE;
 
-		if (!ntfs_mft_record_check(vol, FILE_MFT + i, mrec))
-			use_mft = TRUE;
-
-		if (memcmp(mrec, mrec2, vol->mft_record_size))
-			use_mft = FALSE;
-
-		if (use_mirr == TRUE && use_mft == TRUE)
-			continue;
-
-		if (use_mirr == FALSE && use_mft == FALSE) {
+		if (use_mirr == FALSE) {
 			ntfs_log_error("Both $MFT/$MFTmirr error: Invalid mft record for '%s'\n",
 					s);
 			fsck_err_found();
 			goto io_error_exit;
 		}
 
-		check_failed("$MFTMirr does not match $MFT (record "
-				"%d). Correcting differences in $MFT%s record",
-				i, use_mirr ? "" : "Mirr");
+		check_failed("$MFT is corrupted, repair $MFT using $MFTMirr");
+
 		if (ntfsck_ask_repair(vol)) {
-			s64 mft_pos, mirr_pos;
-			MFT_RECORD *mwrite;
+			s64 mft_pos;
 
 			mft_pos = (vol->mft_lcn << vol->cluster_size_bits) +
 				(i * vol->mft_record_size);
-			mirr_pos = (vol->mftmirr_lcn << vol->cluster_size_bits) +
-				(i * vol->mft_record_size);
-
-			mwrite = ntfs_malloc(vol->mft_record_size);
-			if (!mwrite)
-				goto io_error_exit;
-
-			memcpy(mwrite, use_mirr ? mrec2 : mrec, vol->mft_record_size);
 
 			if (ntfs_mst_pwrite(vol->dev, mft_pos, 1,
-					    vol->mft_record_size, mwrite) != 1) {
+					    vol->mft_record_size, mrec2) != 1) {
 				ntfs_log_perror("Error correcting $MFT record : %d", i);
-				free(mwrite);
 				goto io_error_exit;
 			}
 
-			memcpy(mwrite, use_mirr ? mrec2 : mrec, vol->mft_record_size);
-			if (ntfs_mst_pwrite(vol->dev, mirr_pos, 1,
-					    vol->mft_record_size, mwrite) != 1) {
-				ntfs_log_perror("Error correcting $MFTMirr record : %d", i);
-				free(mwrite);
-				goto io_error_exit;
-			}
-
-			free(mwrite);
 			fsck_err_fixed();
 		} else {
 			goto io_error_exit;

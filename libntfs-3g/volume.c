@@ -712,7 +712,69 @@ out:
 	return 0;
 }
 
-static int ntfs_recover_mft(ntfs_volume *vol, const MFT_REF mref)
+/*
+ * ntfs_recover_mft : recover mft record of 'mftno' in dest_mft lcn from 'src_mrec'
+ *
+ * vol : ntfs_volume structure
+ * src_mrec : source MFT_RECORD structure for recovering
+ * dest_mft : destination mft lcn (for $MFT or $MFTMirr)
+ * mftno : mft record number to recover in $MFT or $MFTMirr,
+ *         it should be less than vol->mftmirr_size.
+ */
+static int ntfs_recover_mft(ntfs_volume *vol, MFT_RECORD *src_mrec, LCN dest_mft, u64 mftno)
+{
+	MFT_RECORD *mwrite;
+	u16 usn;
+	u16 usa_ofs;
+	le16 le_usn;
+	le16 *usa_pos;
+	s64 dest_pos;
+
+	if (mftno >= vol->mftmirr_size)
+		return -EINVAL;
+
+	mwrite = ntfs_malloc(vol->mft_record_size);
+	if (!mwrite)
+		return -EIO;
+
+	memcpy(mwrite, src_mrec, vol->mft_record_size);
+
+	usa_ofs = le16_to_cpu(mwrite->usa_ofs);
+	usa_pos = (le16 *)((u8 *)mwrite + usa_ofs);
+	usn = le16_to_cpup(usa_pos);
+	/*
+	 * ntfs_mst_pwrite will increase usn in function
+	 * so decrease by one to make same usn with source mrec
+	 */
+	le_usn = cpu_to_le16(usn - 1);
+	*usa_pos = le_usn;
+
+	dest_pos = (dest_mft << vol->cluster_size_bits) +
+		(mftno * vol->mft_record_size);
+
+	if (ntfs_mst_pwrite(vol->dev, dest_pos, 1,
+				vol->mft_record_size, mwrite) != 1) {
+		ntfs_log_perror("Error correcting mft record(%"PRIu64") of (%"PRIu64").",
+				mftno, dest_mft);
+		ntfs_free(mwrite);
+		return -EIO;
+	}
+
+#ifdef DEBUG
+	ntfs_mst_pread(vol->dev, dest_pos, 1, vol->mft_record_size, mwrite);
+	if (memcmp(mwrite, src_mrec, vol->mft_record_size)) {
+		ntfs_log_error("After recover $MFT/$MFTMirr, both are differ!!\n");
+		ntfs_free(mwrite);
+		return -EIO;
+	}
+#endif
+
+	ntfs_free(mwrite);
+
+	return 0;
+}
+
+static int ntfs_recover_mft_from_mftmirr(ntfs_volume *vol, const u64 mftno)
 {
 	MFT_RECORD *mrec;
 	int err = 0;
@@ -723,21 +785,18 @@ static int ntfs_recover_mft(ntfs_volume *vol, const MFT_REF mref)
 
 	if (ntfs_mst_pread(vol->dev,
 			   (vol->mftmirr_lcn << vol->cluster_size_bits) +
-				mref * vol->mft_record_size,
+				mftno * vol->mft_record_size,
 			   1, vol->mft_record_size, mrec) != 1) {
 		err = -EIO;
 		goto err_out;
 	}
 
-	if (ntfs_mft_record_check(vol, mref, mrec)) {
+	if (ntfs_mft_record_check(vol, mftno, mrec)) {
 		err = -EIO;
 		goto err_out;
 	}
 
-	if (ntfs_mst_pwrite(vol->dev,
-			(vol->mft_lcn << vol->cluster_size_bits) +
-			mref * vol->mft_record_size, 1,
-			vol->mft_record_size, mrec) != 1) {
+	if (ntfs_recover_mft(vol, mrec, vol->mft_lcn, mftno)) {
 		ntfs_log_perror("Error correcting $MFT record");
 		err = -EIO;
 		goto err_out;
@@ -908,8 +967,8 @@ reload_mft:
 		if (try_recover_mft == FALSE) {
 			check_failed("Failed to load $MFT, Fix");
 			if (ntfsck_ask_repair(vol)) {
-				if (!ntfs_recover_mft(vol, 0)) {
-					ntfs_log_error("Try to reload $MFT after updating it using $MFTMirr\n");
+				if (!ntfs_recover_mft_from_mftmirr(vol, 0)) {
+					ntfs_log_info("Try to reload $MFT after updating it using $MFTMirr\n");
 					try_recover_mft = TRUE;
 					fsck_err_fixed();
 					goto reload_mft;
@@ -927,8 +986,8 @@ reload_mft_mirr:
 		if (try_recover_mft == FALSE) {
 			check_failed("Failed to load $MFTMirr, Fix");
 			if (ntfsck_ask_repair(vol)) {
-				if (!ntfs_recover_mft(vol, 1)) {
-					ntfs_log_error("Try to reload $MFTMirr after updating it using $MFT\n");
+				if (!ntfs_recover_mft_from_mftmirr(vol, 1)) {
+					ntfs_log_info("Try to reload $MFTMirr after updating it using $MFT\n");
 					try_recover_mft = TRUE;
 					fsck_err_fixed();
 					goto reload_mft_mirr;
@@ -1291,8 +1350,18 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 
 		/* check mft record of $MFT */
 		if (!ntfs_mft_record_check(vol, FILE_MFT + i, mrec)) {
-			/* Do not compare with mftmirror,
-			 * cause mftmirror may be cloned in runtime */
+			if (!memcmp(mrec, mrec2, vol->mft_record_size))
+				continue;
+
+			check_failed("$MFT/$MFTMirror records do not matched. "
+					"Repair $MFTMirror.");
+			if (ntfsck_ask_repair(vol)) {
+				if (ntfs_recover_mft(vol, mrec, vol->mftmirr_lcn, FILE_MFT + i)) {
+					ntfs_log_perror("Error correcting $MFTMirror record : %d", i);
+					goto io_error_exit;
+				}
+				fsck_err_fixed();
+			}
 			continue;
 		}
 
@@ -1310,17 +1379,10 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 		check_failed("$MFT is corrupted, repair $MFT using $MFTMirr");
 
 		if (ntfsck_ask_repair(vol)) {
-			s64 mft_pos;
-
-			mft_pos = (vol->mft_lcn << vol->cluster_size_bits) +
-				(i * vol->mft_record_size);
-
-			if (ntfs_mst_pwrite(vol->dev, mft_pos, 1,
-					    vol->mft_record_size, mrec2) != 1) {
+			if (ntfs_recover_mft(vol, mrec2, vol->mft_lcn, FILE_MFT + i)) {
 				ntfs_log_perror("Error correcting $MFT record : %d", i);
 				goto io_error_exit;
 			}
-
 			fsck_err_fixed();
 		} else {
 			goto io_error_exit;

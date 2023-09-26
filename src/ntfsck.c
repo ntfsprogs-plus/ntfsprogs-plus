@@ -2890,8 +2890,9 @@ remove_index:
 						MREF(mref), filename);
 				ret = STATUS_FIXED;
 				fsck_err_fixed();
+				if (ictx->actx)
+					ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
 			}
-			ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
 		}
 	}
 

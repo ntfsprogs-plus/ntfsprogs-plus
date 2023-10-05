@@ -934,6 +934,7 @@ static void ntfsck_delete_orphaned_inode(ntfs_inode **ni)
 	/* Do not delete system file */
 	if (utils_is_metadata(*ni) == 1) {
 		ntfs_inode_close(*ni);
+		*ni = NULL;
 		return;
 	}
 

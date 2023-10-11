@@ -352,25 +352,6 @@ mft_has_no_attr_list:
 
 	/* We now have a fully setup ntfs inode for $MFT in vol->mft_ni. */
 
-	ntfs_attr_reinit_search_ctx(ctx);
-	/* Check if there is $FN attribute in $MFT. */
-	if (ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED,
-				0, CASE_SENSITIVE, 0, NULL, 0, ctx)) {
-		ntfs_log_perror("No FILE_NAME in $MFT record\n");
-		goto error_exit;
-	}
-
-	/* Check if filename is "$MFT" */
-	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
-				le16_to_cpu(ctx->attr->value_offset));
-	filename = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
-	if (!filename || strcmp(filename, "$MFT")) {
-		ntfs_log_error("filename of $MFT record is not '$MFT'(%s)\n",
-				filename);
-		goto error_exit;
-	}
-	ntfs_attr_name_free(&filename);
-
 	/* Get an ntfs attribute for $MFT/$DATA and set it up, too. */
 	vol->mft_na = ntfs_attr_open(vol->mft_ni, AT_DATA, AT_UNNAMED, 0);
 	if (!vol->mft_na) {
@@ -441,6 +422,26 @@ mft_has_no_attr_list:
 			       (long long)highest_vcn, (long long)last_vcn - 1);
 		goto io_error_exit;
 	}
+
+	ntfs_attr_reinit_search_ctx(ctx);
+	/* Check if there is $FN attribute in $MFT. */
+	if (ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED,
+				0, CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+		ntfs_log_perror("No FILE_NAME in $MFT record\n");
+		goto error_exit;
+	}
+
+	/* Check if filename is "$MFT" */
+	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
+				le16_to_cpu(ctx->attr->value_offset));
+	filename = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
+	if (!filename || strcmp(filename, "$MFT")) {
+		ntfs_log_error("filename of $MFT record is not '$MFT'(%s)\n",
+				filename);
+		goto error_exit;
+	}
+	ntfs_attr_name_free(&filename);
+
 	/* Done with the $Mft mft record. */
 	ntfs_attr_put_search_ctx(ctx);
 	ctx = NULL;

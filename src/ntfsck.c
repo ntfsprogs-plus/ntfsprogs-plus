@@ -3958,7 +3958,7 @@ int main(int argc, char **argv)
 
 	option.verbose = 0;
 	opterr = 0;
-	option.flags = NTFS_MNT_FSCK;
+	option.flags = NTFS_MNT_FSCK | NTFS_MNT_IGNORE_HIBERFILE;
 
 	while ((c = getopt_long(argc, argv, "aCnpryhvV", opts, NULL)) != EOF) {
 		switch (c) {

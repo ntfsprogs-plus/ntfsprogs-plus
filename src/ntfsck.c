@@ -1322,17 +1322,11 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	ntfs_log_verbose("MFT record %"PRId64"\n", mft_num);
 
-	ni = ntfs_inode_open(vol, mft_num);
 	is_used = ntfsck_mft_bmp_bit_get(mft_num);
-
-	/*
-	 * If !ni and is_used is true, This mft number is external mft.
-	 * In the base mft entry, this will already be checked, so there
-	 * is no need to check it anymore.
-	 */
-	if (!ni && is_used)
+	if (is_used)
 		return;
 
+	ni = ntfs_inode_open(vol, mft_num);
 	if (!ni) {
 		fsck_err_found();
 		ntfs_log_trace("Clear the bit of mft no(%"PRId64") "
@@ -1349,12 +1343,6 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			clear_mft_cnt++;
 			fsck_err_fixed();
 		}
-		return;
-	}
-
-	if (is_used) {
-		ntfsck_update_lcn_bitmap(ni);
-		ntfs_inode_close(ni);
 		return;
 	}
 
@@ -2865,6 +2853,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			ntfs_inode_close(ni);
 			ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
 		} else {
+			ntfsck_update_lcn_bitmap(ni);
 			ret = ntfs_inode_close_in_dir(ni, ictx->ni);
 			if (ret) {
 				ntfs_log_error("Failed to close inode(%"PRIu64")\n",
@@ -3566,6 +3555,7 @@ err_continue:
 			dir_ni->fsck_ibm = NULL;
 		}
 
+		ntfsck_update_lcn_bitmap(dir_ni);
 		ntfs_inode_close(dir_ni);
 		ntfs_list_del(&dir->list);
 		free(dir);

@@ -721,9 +721,10 @@ int utils_cluster_in_use(ntfs_volume *vol, long long lcn)
  *	    0  MFT Record is unused
  *	   -1  Error occurred
  */
+#define MFTREC_BUF_SIZE 8192
 int check_mftrec_in_use(ntfs_volume *vol, MFT_REF mref, int force)
 {
-	static u8 buffer[512];
+	static u8 buffer[MFTREC_BUF_SIZE];
 	static s64 bmpmref = -(sizeof(buffer) << 3) - 1; /* Which bit of $BITMAP is in the buffer */
 	int byte, bit;
 

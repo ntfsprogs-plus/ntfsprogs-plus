@@ -797,8 +797,7 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	ntfs_inode_mark_dirty(ni);
 
 	ntfsck_mft_bmp_bit_set(ni->mft_no);
-	if (!check_mftrec_in_use(vol, ni->mft_no, 1))
-		ntfs_bitmap_set_bit(vol->mftbmp_na, ni->mft_no);
+	ntfs_bitmap_set_bit(vol->mftbmp_na, ni->mft_no);
 
 	ntfsck_update_lcn_bitmap(ni);
 	/*
@@ -2508,8 +2507,8 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni)
 				ni->mft_no);
 		/* do not return error */
 	}
-	if (!check_mftrec_in_use(vol, ni->mft_no, 1))
-		ntfs_bitmap_set_bit(vol->mftbmp_na, ni->mft_no);
+
+	ntfs_bitmap_set_bit(vol->mftbmp_na, ni->mft_no);
 
 	/* set mft record bitmap */
 	while (ext_idx < ni->nr_extents) {
@@ -2517,10 +2516,10 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni)
 			/* do not return error */
 			break;
 		}
-		if (!check_mftrec_in_use(vol, ni->extent_nis[ext_idx]->mft_no, 1))
-			ntfs_bitmap_set_bit(vol->mftbmp_na, ni->extent_nis[ext_idx]->mft_no);
+		ntfs_bitmap_set_bit(vol->mftbmp_na, ni->extent_nis[ext_idx]->mft_no);
 		ext_idx++;
 	}
+
 	return STATUS_OK;
 }
 
@@ -3593,6 +3592,11 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 			vol->mft_record_size_bits;
 	ntfs_log_verbose("Checking %"PRId64" MFT records.\n", nr_mft_records);
 
+	/*
+	 * Force to read first bitmap block to invalidate static cache
+	 * array buffer.
+	 */
+	check_mftrec_in_use(vol, FILE_first_user, 1);
 	for (mft_num = FILE_first_user; mft_num < nr_mft_records; mft_num++)
 		ntfsck_verify_mft_record(vol, mft_num);
 

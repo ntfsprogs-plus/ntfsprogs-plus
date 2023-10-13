@@ -2755,6 +2755,23 @@ err_out:
 	return STATUS_ERROR;
 }
 
+static inline int ntfsck_is_directory(FILE_NAME_ATTR *ie_fn)
+{
+	if (!(ie_fn->file_attributes & FILE_ATTR_I30_INDEX_PRESENT))
+		return 0;
+
+	if (ie_fn->file_name_length == 1) {
+		char *filename;
+
+		filename = ntfs_attr_name_get(ie_fn->file_name,
+				ie_fn->file_name_length);
+		if (!strcmp(filename, "."))
+			return 0;
+	}
+
+	return 1;
+}
+
 /*
  * Check index and inode which is pointed by index.
  * if pointed inode is directory, then add it to ntfs_dir_list.
@@ -2776,7 +2793,9 @@ err_out:
 static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			       ntfs_index_context *ictx)
 {
+#ifdef DEBUG
 	char *filename;
+#endif
 	ntfs_inode *ni;
 	struct dir *dir;
 	MFT_REF mref;
@@ -2790,9 +2809,11 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	if (ntfsck_opened_ni_vol(MREF(mref)) == TRUE)
 		return STATUS_OK;
 
+#ifdef DEBUG
 	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
 	ntfs_log_verbose("ntfsck_check_index %"PRIu64", %s\n",
 			MREF(mref), filename);
+#endif
 
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
@@ -2837,9 +2858,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			}
 		}
 
-		if ((ie_fn->file_attributes & FILE_ATTR_I30_INDEX_PRESENT) &&
-				strcmp(filename, ".") &&
-				is_mft_checked == FALSE) {
+		if (ntfsck_is_directory(ie_fn) && is_mft_checked == FALSE) {
 			dir = (struct dir *)calloc(1, sizeof(struct dir));
 			if (!dir) {
 				ntfs_log_error("Failed to allocate for subdir.\n");
@@ -2861,32 +2880,35 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			}
 		}
 	} else {
+		char *crtname;
+
 		ntfs_log_error("Failed to open inode(%"PRIu64")\n", MREF(mref));
 
 remove_index:
+		crtname = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
 		check_failed("Index entry(%"PRIu64":%s) "
 				"is corrupted, Removing index entry from parent(%"PRIu64")",
-				MREF(mref), filename,
+				MREF(mref), crtname,
 				MREF_LE(ie_fn->parent_directory));
 		if (ntfsck_ask_repair(vol)) {
 			ictx->entry = ie;
 			ret = ntfs_index_rm(ictx);
 			if (ret) {
 				ntfs_log_error("Failed to remove index entry of inode(%"PRIu64":%s)\n",
-						MREF(mref), filename);
+						MREF(mref), crtname);
 			} else {
 				ntfs_log_verbose("Index entry of inode(%"PRIu64":%s) is deleted\n",
-						MREF(mref), filename);
+						MREF(mref), crtname);
 				ret = STATUS_FIXED;
 				fsck_err_fixed();
 				if (ictx->actx)
 					ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
 			}
 		}
+		free(crtname);
 	}
 
 err_out:
-	free(filename);
 	return ret;
 }
 

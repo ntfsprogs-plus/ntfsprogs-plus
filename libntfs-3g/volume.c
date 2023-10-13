@@ -642,7 +642,7 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 	if (sector_size <= 0)
 		sector_size = 512;
 
-	ntfs_boot = ntfs_malloc(sizeof(NTFS_BOOT_SECTOR));
+	ntfs_boot = ntfs_malloc(sector_size);
 	if (!ntfs_boot)
 		return 1;
 

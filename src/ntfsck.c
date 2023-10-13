@@ -3543,8 +3543,6 @@ err_continue:
 		}
 
 		if (ictx) {
-			if (ictx->actx)
-				ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
 			ntfs_index_ctx_put(ictx);
 			ictx = NULL;
 		}

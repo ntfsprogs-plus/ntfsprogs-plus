@@ -218,7 +218,7 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 static int ntfsck_initialize_index_attr(ntfs_inode *ni);
 static u8 *ntfsck_get_lcnbmp(s64 pos);
 static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num);
-static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni);
+static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set);
 static int ntfsck_check_attr_list(ntfs_inode *ni);
 static inline BOOL ntfsck_opened_ni_vol(s64 mft_num);
 
@@ -780,7 +780,7 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 		}
 	}
 	ntfs_inode_mark_dirty(parent_ni);
-	ntfsck_set_mft_record_bitmap(parent_ni);
+	ntfsck_set_mft_record_bitmap(parent_ni, TRUE);
 
 	/* check again after adding $FN to index */
 	ret = ntfsck_find_and_check_index(parent_ni, ni, tfn, TRUE);
@@ -1312,6 +1312,15 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			check_failed("Record(%"PRId64") unused. Fixing or fail about system files.\n",
 					mft_num);
 			return;
+		}
+
+		if (ntfsck_mft_bmp_bit_get(mft_num)) {
+			ni = ntfs_inode_open(vol, mft_num);
+			if (ni) {
+				ntfsck_set_mft_record_bitmap(ni, TRUE);
+				ntfs_inode_close(ni);
+				return;
+			}
 		}
 
 		ntfsck_check_mft_record_unused(vol, mft_num);
@@ -2492,7 +2501,7 @@ err_out:
 }
 
 /* called after ntfs_inode_attatch_all_extents() is called */
-static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni)
+static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set)
 {
 	int ext_idx = 0;
 	ntfs_volume *vol;
@@ -2508,7 +2517,8 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni)
 		/* do not return error */
 	}
 
-	ntfs_bitmap_set_bit(vol->mftbmp_na, ni->mft_no);
+	if (ondisk_mft_bmp_set == TRUE)
+		ntfs_bitmap_set_bit(vol->mftbmp_na, ni->mft_no);
 
 	/* set mft record bitmap */
 	while (ext_idx < ni->nr_extents) {
@@ -2516,7 +2526,8 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni)
 			/* do not return error */
 			break;
 		}
-		ntfs_bitmap_set_bit(vol->mftbmp_na, ni->extent_nis[ext_idx]->mft_no);
+		if (ondisk_mft_bmp_set == TRUE)
+			ntfs_bitmap_set_bit(vol->mftbmp_na, ni->extent_nis[ext_idx]->mft_no);
 		ext_idx++;
 	}
 
@@ -2715,7 +2726,7 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	if (ret < 0)
 		goto err_out;
 
-	ntfsck_set_mft_record_bitmap(ni);
+	ntfsck_set_mft_record_bitmap(ni, FALSE);
 	return STATUS_OK;
 
 err_out:
@@ -2748,7 +2759,7 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 
 	/* TODO: check system file more detail respectively. */
 
-	ntfsck_set_mft_record_bitmap(ni);
+	ntfsck_set_mft_record_bitmap(ni, FALSE);
 	return STATUS_OK;
 
 err_out:
@@ -3352,7 +3363,7 @@ static ntfs_inode *ntfsck_check_root_inode(ntfs_volume *vol)
 		exit(STATUS_ERROR);
 	}
 
-	ntfsck_set_mft_record_bitmap(ni);
+	ntfsck_set_mft_record_bitmap(ni, FALSE);
 	return ni;
 
 err_out:
@@ -3890,7 +3901,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 		}
 
 		ntfs_inode_attach_all_extents(sys_ni);
-		ntfsck_set_mft_record_bitmap(sys_ni);
+		ntfsck_set_mft_record_bitmap(sys_ni, FALSE);
 		ntfsck_update_lcn_bitmap(sys_ni);
 
 		if (mft_num > FILE_Extend) {

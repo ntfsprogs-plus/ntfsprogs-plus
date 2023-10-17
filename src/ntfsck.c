@@ -1264,8 +1264,14 @@ static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 {
 	u16 seq_no;
 	s64 pos = mft_num * vol->mft_record_size;
-	s64 count = 512;
+	s64 count;
 
+	if (!vol) {
+		ntfs_log_error("Volume is null\n");
+		return;
+	}
+
+	count = vol->sector_size;
 	if (ntfs_attr_pread(vol->mft_na, pos, count, mrec_unused_chk) != count) {
 		ntfs_log_perror("Couldn't read $MFT record %lld",
 				(long long)mft_num);
@@ -2776,8 +2782,11 @@ static inline int ntfsck_is_directory(FILE_NAME_ATTR *ie_fn)
 
 		filename = ntfs_attr_name_get(ie_fn->file_name,
 				ie_fn->file_name_length);
-		if (!strcmp(filename, "."))
+		if (!strcmp(filename, ".")) {
+			free(filename);
 			return 0;
+		}
+		free(filename);
 	}
 
 	return 1;
@@ -3610,7 +3619,12 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
 
-	mrec_unused_chk = ntfs_malloc(512);
+	if (!vol) {
+		ntfs_log_error("vol is null\n");
+		return;
+	}
+
+	mrec_unused_chk = ntfs_malloc(vol->sector_size);
 	if (!mrec_unused_chk) {
 		ntfs_log_perror("Couldn't allocate mrec_unused_chk buffer");
 		return;

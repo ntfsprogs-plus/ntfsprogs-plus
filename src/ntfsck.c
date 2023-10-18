@@ -1264,14 +1264,8 @@ static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 {
 	u16 seq_no;
 	s64 pos = mft_num * vol->mft_record_size;
-	s64 count;
+	s64 count = vol->sector_size;
 
-	if (!vol) {
-		ntfs_log_error("Volume is null\n");
-		return;
-	}
-
-	count = vol->sector_size;
 	if (ntfs_attr_pread(vol->mft_na, pos, count, mrec_unused_chk) != count) {
 		ntfs_log_perror("Couldn't read $MFT record %lld",
 				(long long)mft_num);
@@ -3618,11 +3612,6 @@ static int ntfsck_scan_index_entries(ntfs_volume *vol)
 static void ntfsck_check_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
-
-	if (!vol) {
-		ntfs_log_error("vol is null\n");
-		return;
-	}
 
 	mrec_unused_chk = ntfs_malloc(vol->sector_size);
 	if (!mrec_unused_chk) {

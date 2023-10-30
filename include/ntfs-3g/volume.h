@@ -347,7 +347,16 @@ struct _ntfs_volume {
 				   efs-encrypted files */
 	ntfs_volume_special_files special_files; /* Implementation of special files */
 	const char *abs_mnt_point; /* Mount point */
+
+// #ifdef NTFSCK
+#if 1
 	u64 lost_found;		/* mft record number for lost_found directory */
+	u8 **fsck_lcn_bitmap;
+	u64 max_flb_cnt;
+	u8 **fsck_mft_bitmap;
+	u64 max_fmb_cnt;
+#endif
+
 #ifdef XATTR_MAPPINGS
 	struct XATTRMAPPING *xattr_mapping;
 #endif /* XATTR_MAPPINGS */

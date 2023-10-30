@@ -51,6 +51,7 @@
 #include "list.h"
 #include "dir.h"
 #include "lcnalloc.h"
+#include "fsck.h"
 
 #define RETURN_FS_NO_ERRORS (0)
 #define RETURN_FS_ERRORS_CORRECTED (1)
@@ -194,18 +195,6 @@ static const struct option opts[] = {
 	{NULL,			0,			NULL,	 0  }
 };
 
-static u8 **fsck_mft_bmp;
-static u32 max_mft_bmp_cnt;
-
-u8 **fsck_lcn_bitmap;
-u32 max_flb_cnt;
-u8 zero_bm[NTFS_BUF_SIZE];
-#define NTFS_BUF_SIZE_BITS		(13)
-#define NTFSCK_BYTE_TO_BITS		(3)
-#define NTFSCK_BM_BITS_SIZE	(NTFS_BUF_SIZE << 3)
-#define FB_ROUND_UP(x)		(((x) + ((NTFS_BUF_SIZE << 3) - 1)) & ~((NTFS_BUF_SIZE << 3) - 1))
-#define FB_ROUND_DOWN(x)	(((x) & ~(NTFS_BUF_SIZE - 1)) >> NTFS_BUF_SIZE_BITS)
-
 static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
 		FILE_NAME_ATTR *ie_fn, ntfs_attr_search_ctx *actx);
 static int ntfsck_check_directory(ntfs_inode *ni);
@@ -215,54 +204,10 @@ static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx);
 static int ntfsck_initialize_index_attr(ntfs_inode *ni);
-static u8 *ntfsck_get_lcnbmp(s64 pos);
 static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num);
 static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set);
 static int ntfsck_check_attr_list(ntfs_inode *ni);
 static inline BOOL ntfsck_opened_ni_vol(s64 mft_num);
-
-char ntfsck_mft_bmp_bit_get(const u64 bit)
-{
-	u32 bm_i = FB_ROUND_DOWN(bit >> NTFSCK_BYTE_TO_BITS);
-	s64 bm_pos = (s64)bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
-
-	if (bm_i >= max_mft_bmp_cnt || !fsck_mft_bmp[bm_i])
-		return 0;
-
-	return ntfs_bit_get(fsck_mft_bmp[bm_i], bit - bm_pos);
-}
-
-static int _ntfsck_mft_record_bitmap_set(u64 mft_no, int value)
-{
-	u32 bm_i = FB_ROUND_DOWN(mft_no >> NTFSCK_BYTE_TO_BITS);
-	s64 bm_pos = (s64)bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
-	s64 mft_diff = mft_no - bm_pos;
-
-	if (bm_i >= max_mft_bmp_cnt) {
-		ntfs_log_error("bm_i(%u) exceeded max_mft_bmp_cnt(%u)\n",
-				bm_i, max_mft_bmp_cnt);
-		return -EINVAL;
-	}
-
-	if (!fsck_mft_bmp[bm_i]) {
-		fsck_mft_bmp[bm_i] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
-		if (!fsck_mft_bmp[bm_i])
-			return -ENOMEM;
-	}
-
-	ntfs_bit_set(fsck_mft_bmp[bm_i], mft_diff, value);
-	return 0;
-}
-
-int ntfsck_mft_bmp_bit_clear(u64 mft_no)
-{
-	return _ntfsck_mft_record_bitmap_set(mft_no, 0);
-}
-
-int ntfsck_mft_bmp_bit_set(u64 mft_no)
-{
-	return _ntfsck_mft_record_bitmap_set(mft_no, 1);
-}
 
 static int ntfsck_check_backup_boot_sector(ntfs_volume *vol, s64 cl_pos)
 {
@@ -317,7 +262,7 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 			break;
 		}
 
-		flb = ntfsck_get_lcnbmp(pos);
+		flb = ntfs_fsck_get_lcnbmp_block(vol, pos);
 
 		for (i = 0; i < count; i++, pos++) {
 			s64 cl;  /* current cluster */
@@ -380,23 +325,7 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 	fsck_end_step();
 }
 
-static void ntfsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit)
-{
-	while (length--)
-		ntfs_bit_set(bm, pos++, bit);
-}
-
-static u8 *ntfsck_get_lcnbmp(s64 pos)
-{
-	u32 bm_i = FB_ROUND_DOWN(pos);
-
-	if (bm_i >= max_flb_cnt || !fsck_lcn_bitmap[bm_i])
-		return zero_bm;
-
-	return fsck_lcn_bitmap[bm_i];
-}
-
-static int ntfsck_set_lcnbmp_range(s64 lcn, s64 length, u8 bit)
+int ntfsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
 {
 	s64 end = lcn + length - 1;
 	u32 bm_i = FB_ROUND_DOWN(lcn >> NTFSCK_BYTE_TO_BITS);
@@ -407,17 +336,17 @@ static int ntfsck_set_lcnbmp_range(s64 lcn, s64 length, u8 bit)
 	if (length <= 0)
 		return -EINVAL;
 
-	if (!fsck_lcn_bitmap[bm_i]) {
-		fsck_lcn_bitmap[bm_i] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
-		if (!fsck_lcn_bitmap[bm_i])
+	if (!vol->fsck_lcn_bitmap[bm_i]) {
+		vol->fsck_lcn_bitmap[bm_i] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
+		if (!vol->fsck_lcn_bitmap[bm_i])
 			return -ENOMEM;
 	}
 
 	if (bm_end == bm_i) {
-		ntfsck_set_bitmap_range(fsck_lcn_bitmap[bm_i],
+		ntfs_fsck_set_bitmap_range(vol->fsck_lcn_bitmap[bm_i],
 				lcn_diff, length, bit);
 	} else {
-		ntfsck_set_bitmap_range(fsck_lcn_bitmap[bm_i], lcn_diff,
+		ntfs_fsck_set_bitmap_range(vol->fsck_lcn_bitmap[bm_i], lcn_diff,
 					NTFSCK_BM_BITS_SIZE - lcn_diff,
 					bit);
 		length -= NTFSCK_BM_BITS_SIZE - lcn_diff;
@@ -430,10 +359,10 @@ static int ntfsck_set_lcnbmp_range(s64 lcn, s64 length, u8 bit)
 				exit(1);
 			}
 
-			if (!fsck_lcn_bitmap[bm_i]) {
-				fsck_lcn_bitmap[bm_i] =
+			if (!vol->fsck_lcn_bitmap[bm_i]) {
+				vol->fsck_lcn_bitmap[bm_i] =
 					(u8 *)ntfs_calloc(NTFS_BUF_SIZE);
-				if (!fsck_lcn_bitmap[bm_i])
+				if (!vol->fsck_lcn_bitmap[bm_i])
 					return -ENOMEM;
 			}
 
@@ -443,31 +372,25 @@ static int ntfsck_set_lcnbmp_range(s64 lcn, s64 length, u8 bit)
 							length);
 					exit(1);
 				}
-				ntfsck_set_bitmap_range(fsck_lcn_bitmap[bm_i],
+				ntfs_fsck_set_bitmap_range(vol->fsck_lcn_bitmap[bm_i],
 						0, length, bit);
 			} else {
 				/*
 				 * It is useful to use memset rather than setting
-				 * each bit using ntfsck_set_bitmap_range().
+				 * each bit using ntfs_fsck_set_bitmap_range().
 				 * because this bitmap buffer should be filled as
 				 * the same value.
 				 */
 				if (bit == 0)
-					memset(fsck_lcn_bitmap[bm_i], 0, NTFS_BUF_SIZE);
+					memset(vol->fsck_lcn_bitmap[bm_i], 0, NTFS_BUF_SIZE);
 				else
-					memset(fsck_lcn_bitmap[bm_i], 0xFF, NTFS_BUF_SIZE);
+					memset(vol->fsck_lcn_bitmap[bm_i], 0xFF, NTFS_BUF_SIZE);
 				length -= NTFSCK_BM_BITS_SIZE;
 			}
 		}
 	}
 
 	return 0;
-}
-
-static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
-{
-	ntfs_attr_map_whole_runlist(na);
-	ntfsck_setbit_runlist(na->ni, na->rl, 0, NULL, TRUE);
 }
 
 static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
@@ -495,7 +418,7 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 
 		while (rl[i].length) {
 			if (rl[i].lcn > (LCN)LCN_HOLE) {
-				ntfsck_set_lcnbmp_range(rl[i].lcn, rl[i].length, 1);
+				ntfsck_set_lcnbmp_range(ni->vol, rl[i].lcn, rl[i].length, 1);
 				ntfs_log_verbose("Cluster run of mft entry(%"PRIu64") "
 						": lcn:%"PRId64", length:%"PRId64"\n",
 						ni->mft_no, rl[i].lcn, rl[i].length);
@@ -509,6 +432,12 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 	ntfs_attr_put_search_ctx(actx);
 
 	return 0;
+}
+
+static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
+{
+	ntfs_attr_map_whole_runlist(na);
+	ntfsck_setbit_runlist(na->ni, na->rl, 0, NULL, TRUE);
 }
 
 /*
@@ -544,7 +473,7 @@ static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
 			if (lcnbmp_set)
-				ntfsck_set_lcnbmp_range(rl[i].lcn, rl[i].length, set_bit);
+				ntfsck_set_lcnbmp_range(vol, rl[i].lcn, rl[i].length, set_bit);
 
 			if (set_bit == 0)
 				ntfs_cluster_free_basic(vol, rl[i].lcn, rl[i].length);
@@ -631,7 +560,7 @@ static void ntfsck_free_mft_records(ntfs_volume *vol, ntfs_inode *ni)
 					"Leaving inconsistent metadata.\n",
 					free_mftno, ni->mft_no);
 		else
-			ntfsck_mft_bmp_bit_clear(free_mftno);
+			ntfs_fsck_mftbmp_clear(vol, free_mftno);
 	}
 
 	free_mftno = ni->mft_no;
@@ -640,7 +569,7 @@ static void ntfsck_free_mft_records(ntfs_volume *vol, ntfs_inode *ni)
 				"Leaving inconsistent metadata. Run chkdsk.\n",
 				ni->mft_no);
 	else
-		ntfsck_mft_bmp_bit_clear(free_mftno);
+		ntfs_fsck_mftbmp_clear(vol, free_mftno);
 }
 
 /* only called from repairing orphaned file in auto fsck mode */
@@ -790,7 +719,7 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	ntfs_inode_mark_dirty(ctx->ntfs_ino);
 	ntfs_inode_mark_dirty(ni);
 
-	ntfsck_mft_bmp_bit_set(ni->mft_no);
+	ntfs_fsck_mftbmp_set(vol, ni->mft_no);
 	ntfs_bitmap_set_bit(vol->mftbmp_na, ni->mft_no);
 
 	ntfsck_update_lcn_bitmap(ni);
@@ -910,7 +839,7 @@ static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no)
 
 	ntfsck_check_mft_record_unused(vol, mft_no);
 	ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_no);
-	ntfsck_mft_bmp_bit_clear(mft_no);
+	ntfs_fsck_mftbmp_clear(vol, mft_no);
 }
 
 static void ntfsck_delete_orphaned_inode(ntfs_inode **ni)
@@ -1122,7 +1051,7 @@ stack_of:
 			 * Consider that the parent could be orphaned.
 			 */
 
-			if (!ntfsck_mft_bmp_bit_get(MREF(parent_no))) {
+			if (!ntfs_fsck_mftbmp_get(vol, MREF(parent_no))) {
 				if (check_mftrec_in_use(vol, MREF(parent_no), 1)) {
 					struct ntfs_list_head *pos;
 					struct orphan_mft *tof;
@@ -1308,7 +1237,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			return;
 		}
 
-		if (ntfsck_mft_bmp_bit_get(mft_num)) {
+		if (ntfs_fsck_mftbmp_get(vol, mft_num)) {
 			ni = ntfs_inode_open(vol, mft_num);
 			if (ni) {
 				ntfsck_set_mft_record_bitmap(ni, TRUE);
@@ -1318,13 +1247,13 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		}
 
 		ntfsck_check_mft_record_unused(vol, mft_num);
-		ntfsck_mft_bmp_bit_clear(mft_num);
+		ntfs_fsck_mftbmp_clear(vol, mft_num);
 		return;
 	}
 
 	ntfs_log_verbose("MFT record %"PRId64"\n", mft_num);
 
-	is_used = ntfsck_mft_bmp_bit_get(mft_num);
+	is_used = ntfs_fsck_mftbmp_get(vol, mft_num);
 	if (is_used)
 		return;
 
@@ -1341,7 +1270,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 				return;
 			}
 			ntfsck_check_mft_record_unused(vol, mft_num);
-			ntfsck_mft_bmp_bit_clear(mft_num);
+			ntfs_fsck_mftbmp_clear(vol, mft_num);
 			clear_mft_cnt++;
 			fsck_err_fixed();
 		}
@@ -2509,7 +2438,7 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set)
 
 	vol = ni->vol;
 
-	if (ntfsck_mft_bmp_bit_set(ni->mft_no)) {
+	if (ntfs_fsck_mftbmp_set(vol, ni->mft_no)) {
 		ntfs_log_error("Failed to set MFT bitmap for (%"PRIu64")\n",
 				ni->mft_no);
 		/* do not return error */
@@ -2520,7 +2449,7 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set)
 
 	/* set mft record bitmap */
 	while (ext_idx < ni->nr_extents) {
-		if (ntfsck_mft_bmp_bit_set(ni->extent_nis[ext_idx]->mft_no)) {
+		if (ntfs_fsck_mftbmp_set(vol, ni->extent_nis[ext_idx]->mft_no)) {
 			/* do not return error */
 			break;
 		}
@@ -2854,7 +2783,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			 */
 			ret = ntfsck_check_system_inode(ni, ie, ictx);
 		} else {
-			if (ntfsck_mft_bmp_bit_get(ni->mft_no))
+			if (ntfs_fsck_mftbmp_get(vol, ni->mft_no))
 				is_mft_checked = TRUE;
 
 			ret = ntfsck_check_inode(ni, ie, ictx);
@@ -3742,60 +3671,6 @@ static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 	return STATUS_OK;
 }
 
-static ntfs_volume *ntfsck_mount(const char *path __attribute__((unused)),
-		ntfs_mount_flags flags __attribute__((unused)))
-{
-	ntfs_volume *vol;
-	int bm_i;
-
-	vol = ntfs_mount(path, flags);
-	if (!vol)
-		return NULL;
-
-	/* Initialize fsck lcn bitmap buffer array */
-	max_flb_cnt = FB_ROUND_DOWN((vol->nr_clusters + 7)) + 1;
-	fsck_lcn_bitmap = (u8 **)ntfs_calloc(sizeof(u8 *) * max_flb_cnt);
-	if (!fsck_lcn_bitmap) {
-		ntfs_umount(vol, FALSE);
-		return NULL;
-	}
-
-	for (bm_i = 0; bm_i < max_flb_cnt; bm_i++)
-		fsck_lcn_bitmap[bm_i] = NULL;
-
-	/* Initialize fsck mft bitmap buffer array */
-	max_mft_bmp_cnt = FB_ROUND_DOWN(vol->mft_na->initialized_size >>
-				      vol->mft_record_size_bits) + 1;
-	fsck_mft_bmp = (u8 **)ntfs_calloc(sizeof(u8 *) * max_mft_bmp_cnt);
-	if (!fsck_mft_bmp) {
-		free(fsck_lcn_bitmap);
-		ntfs_umount(vol, FALSE);
-		return NULL;
-	}
-
-	for (bm_i = 0; bm_i < max_mft_bmp_cnt; bm_i++)
-		fsck_mft_bmp[bm_i] = NULL;
-
-	return vol;
-}
-
-static void ntfsck_umount(ntfs_volume *vol)
-{
-	int bm_i;
-
-	for (bm_i = 0; bm_i < max_flb_cnt; bm_i++)
-		if (fsck_lcn_bitmap[bm_i])
-			free(fsck_lcn_bitmap[bm_i]);
-	free(fsck_lcn_bitmap);
-
-	for (bm_i = 0; bm_i < max_mft_bmp_cnt; bm_i++)
-		if (fsck_mft_bmp[bm_i])
-			free(fsck_mft_bmp[bm_i]);
-	free(fsck_mft_bmp);
-
-	ntfs_umount(vol, FALSE);
-}
-
 static inline BOOL ntfsck_opened_ni_vol(s64 mft_num)
 {
 	BOOL is_opened = FALSE;
@@ -4165,7 +4040,7 @@ conflict_option:
 		ntfs_log_perror("Failed to determine whether %s is mounted",
 				path);
 
-	vol = ntfsck_mount(path, option.flags);
+	vol = ntfs_fsck_mount(path, option.flags);
 	if (!vol) {
 		/*
 		 * Defined the error code RETURN_FS_NOT_SUPPORT(64),
@@ -4233,7 +4108,7 @@ err_out:
 		ntfsck_reset_dirty(vol);
 
 	if (vol)
-		ntfsck_umount(vol);
+		ntfs_fsck_umount(vol);
 
 	return ret;
 }

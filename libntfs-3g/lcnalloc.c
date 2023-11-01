@@ -45,6 +45,7 @@
 #include "lcnalloc.h"
 #include "logging.h"
 #include "misc.h"
+#include "fsck.h"
 
 /*
  * Plenty possibilities for big optimizations all over in the cluster
@@ -370,11 +371,14 @@ runlist *ntfs_cluster_alloc(ntfs_volume *vol, VCN start_vcn, s64 count,
 			*byte |= bit;
 			writeback = 1;
 
-			/*
-			 * real lcn value = last_read_pos << 3 + lcn
-			 * set bm_i using real lcn
-			 * ntfs_bit_set(fsck_lcn_bitmap[bm_i], 0)
-			 */
+			/* set fsck lcn bitmap on fsck */
+			if (NVolFsck(vol)) {
+				LCN lcn_no = lcn + bmp_pos;
+
+				ntfs_fsck_set_lcnbmp_range(vol, lcn_no, 1, 1);
+				ntfs_log_trace("last_read_pos %"PRIu64", lcn %"PRIu64"\n",
+						last_read_pos, lcn_no);
+			}
 
 			if (NVolFreeSpaceKnown(vol)) {
 				if (vol->free_clusters <= 0)
@@ -606,6 +610,9 @@ int ntfs_cluster_free_from_rl(ntfs_volume *vol, runlist *rl)
 				goto out;
 			}
 			nr_freed += rl->length;
+
+			if (NVolFsck(vol))
+				ntfs_fsck_set_lcnbmp_range(vol, rl->lcn, rl->length, 0);
 		}
 	}
 
@@ -645,6 +652,9 @@ int ntfs_cluster_free_basic(ntfs_volume *vol, s64 lcn, s64 count)
 				goto out;
 		}
 		nr_freed += count;
+
+		if (NVolFsck(vol))
+			ntfs_fsck_set_lcnbmp_range(vol, lcn, count, 0);
 	}
 	ret = 0;
 out:
@@ -718,6 +728,9 @@ int ntfs_cluster_free(ntfs_volume *vol, ntfs_attr *na, VCN start_vcn, s64 count)
 					  to_free))
 			goto leave;
 		nr_freed = to_free;
+
+		if (NVolFsck(vol))
+			ntfs_fsck_set_lcnbmp_range(vol, rl->lcn + delta, to_free, 0);
 	}
 
 	/* Go to the next run and adjust the number of clusters left to free. */
@@ -759,6 +772,8 @@ int ntfs_cluster_free(ntfs_volume *vol, ntfs_attr *na, VCN start_vcn, s64 count)
 				goto out;
 			}
 			nr_freed += to_free;
+			if (NVolFsck(vol))
+				ntfs_fsck_set_lcnbmp_range(vol, rl->lcn, to_free, 0);
 		}
 
 		if (count >= 0)

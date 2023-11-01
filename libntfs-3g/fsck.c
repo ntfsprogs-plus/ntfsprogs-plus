@@ -108,6 +108,74 @@ u8 *ntfs_fsck_get_lcnbmp_block(ntfs_volume *vol, s64 pos)
 	return vol->fsck_lcn_bitmap[bm_i];
 }
 
+int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
+{
+	s64 end = lcn + length - 1;
+	u32 bm_i = FB_ROUND_DOWN(lcn >> NTFSCK_BYTE_TO_BITS);
+	u32 bm_end = FB_ROUND_DOWN(end >> NTFSCK_BYTE_TO_BITS);
+	s64 bm_pos = (s64)bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
+	s64 lcn_diff = lcn - bm_pos;
+
+	if (length <= 0)
+		return -EINVAL;
+
+	if (!vol->fsck_lcn_bitmap[bm_i]) {
+		vol->fsck_lcn_bitmap[bm_i] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
+		if (!vol->fsck_lcn_bitmap[bm_i])
+			return -ENOMEM;
+	}
+
+	if (bm_end == bm_i) {
+		ntfs_fsck_set_bitmap_range(vol->fsck_lcn_bitmap[bm_i],
+				lcn_diff, length, bit);
+	} else {
+		ntfs_fsck_set_bitmap_range(vol->fsck_lcn_bitmap[bm_i], lcn_diff,
+					NTFSCK_BM_BITS_SIZE - lcn_diff,
+					bit);
+		length -= NTFSCK_BM_BITS_SIZE - lcn_diff;
+		bm_i++;
+
+		for (; bm_i <= bm_end; bm_i++) {
+			if (length < 0) {
+				ntfs_log_error("length should not be negative here! : %"PRId64"\n",
+						length);
+				exit(1);
+			}
+
+			if (!vol->fsck_lcn_bitmap[bm_i]) {
+				vol->fsck_lcn_bitmap[bm_i] =
+					(u8 *)ntfs_calloc(NTFS_BUF_SIZE);
+				if (!vol->fsck_lcn_bitmap[bm_i])
+					return -ENOMEM;
+			}
+
+			if (bm_i == bm_end) {
+				if (length > NTFSCK_BM_BITS_SIZE) {
+					ntfs_log_error("remain length could not be bigger than bm size:"
+							"%"PRId64"\n", length);
+					exit(1);
+				}
+				ntfs_fsck_set_bitmap_range(vol->fsck_lcn_bitmap[bm_i],
+						0, length, bit);
+			} else {
+				/*
+				 * It is useful to use memset rather than setting
+				 * each bit using ntfs_fsck_set_bitmap_range().
+				 * because this bitmap buffer should be filled as
+				 * the same value.
+				 */
+				if (bit == 0)
+					memset(vol->fsck_lcn_bitmap[bm_i], 0, NTFS_BUF_SIZE);
+				else
+					memset(vol->fsck_lcn_bitmap[bm_i], 0xFF, NTFS_BUF_SIZE);
+				length -= NTFSCK_BM_BITS_SIZE;
+			}
+		}
+	}
+
+	return 0;
+}
+
 ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 		ntfs_mount_flags flags __attribute__((unused)))
 {

@@ -199,7 +199,7 @@ static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
 		FILE_NAME_ATTR *ie_fn, ntfs_attr_search_ctx *actx);
 static int ntfsck_check_directory(ntfs_inode *ni);
 static int ntfsck_check_file(ntfs_inode *ni);
-static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
+static int ntfsck_check_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 		struct rl_size *rls, BOOL lcnbmp_set);
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx);
@@ -437,7 +437,7 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
 {
 	ntfs_attr_map_whole_runlist(na);
-	ntfsck_setbit_runlist(na->ni, na->rl, 0, NULL, TRUE);
+	ntfsck_check_runlist(na->ni, na->rl, 0, NULL, TRUE);
 }
 
 /*
@@ -452,7 +452,7 @@ static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
  * @rls : structure for runlist length, it contains allocated size and
  *	  real allocated size. it may be NULL, don't return calculated size.
  */
-static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
+static int ntfsck_check_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 		struct rl_size *rls, BOOL lcnbmp_set)
 {
 	ntfs_volume *vol;
@@ -524,7 +524,7 @@ static void ntfsck_check_non_resident_cluster(ntfs_inode *ni, u8 set_bit)
 			continue;
 		}
 
-		if (ntfsck_setbit_runlist(ni, rl, set_bit, NULL, TRUE)) {
+		if (ntfsck_check_runlist(ni, rl, set_bit, NULL, TRUE)) {
 			ntfs_log_error("Failed to check and setbit runlist. "
 					"Leaving inconsistent metadata.\n");
 			/* continue */
@@ -2096,8 +2096,8 @@ out:
  * (TODO) more documentation.
  *
  */
-static int ntfsck_decompose_setbit_runlist(ntfs_attr *na, struct rl_size *rls,
-		BOOL *need_fix)
+static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
+		BOOL *need_fix, int set_bit)
 {
 	runlist *rl = NULL;
 	int ret = STATUS_OK;
@@ -2118,7 +2118,7 @@ static int ntfsck_decompose_setbit_runlist(ntfs_attr *na, struct rl_size *rls,
 	ntfs_dump_runlist(rl);
 #endif
 
-	ret = ntfsck_setbit_runlist(na->ni, na->rl, 1, rls, FALSE);
+	ret = ntfsck_check_runlist(na->ni, na->rl, set_bit, rls, FALSE);
 	if (ret)
 		return STATUS_ERROR;
 
@@ -2159,7 +2159,7 @@ static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size)
 }
 
 static int ntfsck_check_non_resident_attr(ntfs_attr *na,
-		ntfs_attr_search_ctx *actx, struct rl_size *out_rls)
+		ntfs_attr_search_ctx *actx, struct rl_size *out_rls, int set_bit)
 {
 	BOOL need_fix = FALSE;
 	ntfs_volume *vol;
@@ -2185,7 +2185,7 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 	a =  actx->attr;
 
 	/* check cluster runlist and set bitmap */
-	if (ntfsck_decompose_setbit_runlist(na, &rls, &need_fix)) {
+	if (ntfsck_check_attr_runlist(na, &rls, &need_fix, set_bit)) {
 		ntfs_log_error("Failed to get non-resident attribute(%d) "
 				"in directory(%"PRId64")", na->type, ni->mft_no);
 		return STATUS_ERROR;
@@ -2464,7 +2464,7 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set)
 /*
  * check all cluster runlist of non-resident attributes of a inode
  */
-static int ntfsck_check_inode_non_resident(ntfs_inode *ni)
+static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit)
 {
 	ntfs_attr_search_ctx *ctx;
 	ntfs_attr *na;
@@ -2490,7 +2490,7 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni)
 			return STATUS_ERROR;
 		}
 
-		ret = ntfsck_check_non_resident_attr(na, ctx, NULL);
+		ret = ntfsck_check_non_resident_attr(na, ctx, NULL, set_bit);
 		ntfs_attr_close(na);
 		if (ret)
 			continue;
@@ -2629,7 +2629,7 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
 		goto err_out;
 
-	ret = ntfsck_check_inode_non_resident(ni);
+	ret = ntfsck_check_inode_non_resident(ni, 1);
 	if (ret)
 		goto err_out;
 
@@ -2673,7 +2673,7 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_inode_attach_all_extents(ni);
 	}
 
-	ret = ntfsck_check_inode_non_resident(ni);
+	ret = ntfsck_check_inode_non_resident(ni, 1);
 	if (ret)
 		goto err_out;
 
@@ -3407,7 +3407,7 @@ static ntfs_inode *ntfsck_check_root_inode(ntfs_volume *vol)
 			goto err_out;
 	}
 
-	if (ntfsck_check_inode_non_resident(ni)) {
+	if (ntfsck_check_inode_non_resident(ni, 1)) {
 		ntfs_log_error("Failed to check non resident attribute of root directory.\n");
 		exit(STATUS_ERROR);
 	}
@@ -3791,7 +3791,7 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 		}
 
 		/* Check cluster run of $DATA attribute */
-		if (ntfsck_setbit_runlist(ni, vol->lcnbmp_na->rl, 1, NULL, FALSE)) {
+		if (ntfsck_check_runlist(ni, vol->lcnbmp_na->rl, 1, NULL, FALSE)) {
 			ntfs_log_error("Failed to check and setbit runlist. "
 				       "Leaving inconsistent metadata.\n");
 			return -EIO;

@@ -52,8 +52,9 @@
  * the update of the mapping pairs which converges to the cubic Faulhaber's
  * formula as the function of the number of extents (fragments, runs).
  */
-#define NTFS_LCNALLOC_BSIZE 4096
-#define NTFS_LCNALLOC_SKIP  NTFS_LCNALLOC_BSIZE
+
+#define NTFS_LCNALLOC_BSIZE LCNBMP_ALLOC_SIZE
+#define NTFS_LCNALLOC_SKIP  LCNBMP_ALLOC_SIZE
 
 enum {
 	ZONE_MFT = 1,
@@ -222,7 +223,7 @@ static int bitmap_writeback(ntfs_volume *vol, s64 pos, s64 size, void *b,
  *
  * The complexity stems from the need of implementing the mft vs data zoned
  * approach and from the fact that we have access to the lcn bitmap via up to
- * NTFS_LCNALLOC_BSIZE bytes at a time, so we need to cope with crossing over
+ * LCNBMP_ALLOC_SIZE bytes at a time, so we need to cope with crossing over
  * boundaries of two buffers. Further, the fact that the allocator allows for
  * caller supplied hints as to the location of where allocation should begin
  * and the fact that the allocator keeps track of where in the data zones the
@@ -272,7 +273,7 @@ runlist *ntfs_cluster_alloc(ntfs_volume *vol, VCN start_vcn, s64 count,
 		goto out;
 	}
 
-	buf = ntfs_malloc(NTFS_LCNALLOC_BSIZE);
+	buf = ntfs_malloc(LCNBMP_ALLOC_SIZE);
 	if (!buf)
 		goto out;
 	/*
@@ -318,7 +319,7 @@ runlist *ntfs_cluster_alloc(ntfs_volume *vol, VCN start_vcn, s64 count,
 			goto zone_pass_done;
 		last_read_pos = bmp_pos >> 3;
 		br = ntfs_attr_pread(vol->lcnbmp_na, last_read_pos,
-				     NTFS_LCNALLOC_BSIZE, buf);
+				     LCNBMP_ALLOC_SIZE, buf);
 		if (br <= 0) {
 			if (!br)
 				goto zone_pass_done;
@@ -327,7 +328,7 @@ runlist *ntfs_cluster_alloc(ntfs_volume *vol, VCN start_vcn, s64 count,
 			goto err_ret;
 		}
 		/*
-		 * We might have read less than NTFS_LCNALLOC_BSIZE bytes
+		 * We might have read less than LCNBMP_ALLOC_SIZE bytes
 		 * if we are close to the end of the attribute.
 		 */
 		buf_size = (int)br << 3;
@@ -368,6 +369,13 @@ runlist *ntfs_cluster_alloc(ntfs_volume *vol, VCN start_vcn, s64 count,
 			/* Allocate the bitmap bit. */
 			*byte |= bit;
 			writeback = 1;
+
+			/*
+			 * real lcn value = last_read_pos << 3 + lcn
+			 * set bm_i using real lcn
+			 * ntfs_bit_set(fsck_lcn_bitmap[bm_i], 0)
+			 */
+
 			if (NVolFreeSpaceKnown(vol)) {
 				if (vol->free_clusters <= 0)
 					ntfs_log_error("Non-positive free"
@@ -597,7 +605,7 @@ int ntfs_cluster_free_from_rl(ntfs_volume *vol, runlist *rl)
 						(long long)rl->length);
 				goto out;
 			}
-			nr_freed += rl->length ;
+			nr_freed += rl->length;
 		}
 	}
 

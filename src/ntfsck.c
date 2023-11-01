@@ -325,74 +325,6 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 	fsck_end_step();
 }
 
-int ntfsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
-{
-	s64 end = lcn + length - 1;
-	u32 bm_i = FB_ROUND_DOWN(lcn >> NTFSCK_BYTE_TO_BITS);
-	u32 bm_end = FB_ROUND_DOWN(end >> NTFSCK_BYTE_TO_BITS);
-	s64 bm_pos = (s64)bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
-	s64 lcn_diff = lcn - bm_pos;
-
-	if (length <= 0)
-		return -EINVAL;
-
-	if (!vol->fsck_lcn_bitmap[bm_i]) {
-		vol->fsck_lcn_bitmap[bm_i] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
-		if (!vol->fsck_lcn_bitmap[bm_i])
-			return -ENOMEM;
-	}
-
-	if (bm_end == bm_i) {
-		ntfs_fsck_set_bitmap_range(vol->fsck_lcn_bitmap[bm_i],
-				lcn_diff, length, bit);
-	} else {
-		ntfs_fsck_set_bitmap_range(vol->fsck_lcn_bitmap[bm_i], lcn_diff,
-					NTFSCK_BM_BITS_SIZE - lcn_diff,
-					bit);
-		length -= NTFSCK_BM_BITS_SIZE - lcn_diff;
-		bm_i++;
-
-		for (; bm_i <= bm_end; bm_i++) {
-			if (length < 0) {
-				ntfs_log_error("length should not be negative here! : %"PRId64"\n",
-						length);
-				exit(1);
-			}
-
-			if (!vol->fsck_lcn_bitmap[bm_i]) {
-				vol->fsck_lcn_bitmap[bm_i] =
-					(u8 *)ntfs_calloc(NTFS_BUF_SIZE);
-				if (!vol->fsck_lcn_bitmap[bm_i])
-					return -ENOMEM;
-			}
-
-			if (bm_i == bm_end) {
-				if (length > NTFSCK_BM_BITS_SIZE) {
-					ntfs_log_error("the last rest of length could not be bigger than bm size:%"PRId64"\n",
-							length);
-					exit(1);
-				}
-				ntfs_fsck_set_bitmap_range(vol->fsck_lcn_bitmap[bm_i],
-						0, length, bit);
-			} else {
-				/*
-				 * It is useful to use memset rather than setting
-				 * each bit using ntfs_fsck_set_bitmap_range().
-				 * because this bitmap buffer should be filled as
-				 * the same value.
-				 */
-				if (bit == 0)
-					memset(vol->fsck_lcn_bitmap[bm_i], 0, NTFS_BUF_SIZE);
-				else
-					memset(vol->fsck_lcn_bitmap[bm_i], 0xFF, NTFS_BUF_SIZE);
-				length -= NTFSCK_BM_BITS_SIZE;
-			}
-		}
-	}
-
-	return 0;
-}
-
 static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 {
 	ntfs_attr_search_ctx *actx;
@@ -418,7 +350,7 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 
 		while (rl[i].length) {
 			if (rl[i].lcn > (LCN)LCN_HOLE) {
-				ntfsck_set_lcnbmp_range(ni->vol, rl[i].lcn, rl[i].length, 1);
+				ntfs_fsck_set_lcnbmp_range(ni->vol, rl[i].lcn, rl[i].length, 1);
 				ntfs_log_verbose("Cluster run of mft entry(%"PRIu64") "
 						": lcn:%"PRId64", length:%"PRId64"\n",
 						ni->mft_no, rl[i].lcn, rl[i].length);
@@ -473,7 +405,7 @@ static int ntfsck_check_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
 			if (lcnbmp_set)
-				ntfsck_set_lcnbmp_range(vol, rl[i].lcn, rl[i].length, set_bit);
+				ntfs_fsck_set_lcnbmp_range(vol, rl[i].lcn, rl[i].length, set_bit);
 
 			if (set_bit == 0)
 				ntfs_cluster_free_basic(vol, rl[i].lcn, rl[i].length);

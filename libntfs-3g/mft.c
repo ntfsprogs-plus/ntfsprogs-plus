@@ -613,10 +613,6 @@ static int ntfs_is_mft(ntfs_inode *ni)
 	return 0;
 }
 
-#ifndef PAGE_SIZE
-#define PAGE_SIZE 4096
-#endif
-
 #define RESERVED_MFT_RECORDS   64
 
 /**
@@ -652,7 +648,7 @@ static int ntfs_mft_bitmap_find_free_rec(ntfs_volume *vol, ntfs_inode *base_ni)
 	 * Set the end of the pass making sure we do not overflow the mft
 	 * bitmap.
 	 */
-	size = PAGE_SIZE;
+	size = MFTBMP_ALLOC_SIZE;
 	pass_end = vol->mft_na->allocated_size >> vol->mft_record_size_bits;
 	ll = mftbmp_na->initialized_size << 3;
 	if (pass_end > ll)
@@ -678,7 +674,7 @@ static int ntfs_mft_bitmap_find_free_rec(ntfs_volume *vol, ntfs_inode *base_ni)
 		pass = 2;
 	}
 	pass_start = data_pos;
-	buf = ntfs_malloc(PAGE_SIZE);
+	buf = ntfs_malloc(MFTBMP_ALLOC_SIZE);
 	if (!buf)
 		goto leave;
 
@@ -691,7 +687,7 @@ static int ntfs_mft_bitmap_find_free_rec(ntfs_volume *vol, ntfs_inode *base_ni)
 	b = 0;
 #endif
 	/* Loop until a free mft record is found. */
-	for (; pass <= 2; size = PAGE_SIZE) {
+	for (; pass <= 2; size = MFTBMP_ALLOC_SIZE) {
 		/* Cap size to pass_end. */
 		ofs = data_pos >> 3;
 		ll = ((pass_end + 7) >> 3) - ofs;

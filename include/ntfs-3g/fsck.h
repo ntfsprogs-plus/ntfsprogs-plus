@@ -31,6 +31,7 @@ int ntfs_fsck_mftbmp_clear(ntfs_volume *vol, u64 mft_no);
 int ntfs_fsck_mftbmp_set(ntfs_volume *vol, u64 mft_no);
 void ntfs_fsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit);
 u8 *ntfs_fsck_get_lcnbmp_block(ntfs_volume *vol, s64 pos);
+int ntfsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit);
 
 ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 		ntfs_mount_flags flags __attribute__((unused)));

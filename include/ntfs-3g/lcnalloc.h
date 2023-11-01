@@ -28,6 +28,9 @@
 #include "runlist.h"
 #include "volume.h"
 
+#define LCNBMP_ALLOC_SIZE      4096
+#define MFTBMP_ALLOC_SIZE      4096
+
 /**
  * enum NTFS_CLUSTER_ALLOCATION_ZONES -
  */

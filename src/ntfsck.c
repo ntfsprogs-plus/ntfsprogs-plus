@@ -208,6 +208,7 @@ static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num);
 static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set);
 static int ntfsck_check_attr_list(ntfs_inode *ni);
 static inline BOOL ntfsck_opened_ni_vol(s64 mft_num);
+static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit);
 
 static int ntfsck_check_backup_boot_sector(ntfs_volume *vol, s64 cl_pos)
 {
@@ -234,6 +235,27 @@ static int ntfsck_check_backup_boot_sector(ntfs_volume *vol, s64 cl_pos)
 			 cl_pos);
 	free(backup_boot);
 	return 0;
+}
+
+static int fsck_get_lcnbmp_bit(ntfs_volume *vol, LCN lcn)
+{
+	u8 *flb;
+	u64 bm_pos = lcn >> 3;
+	u32 bm_off;
+
+	flb = ntfs_fsck_get_lcnbmp_block(vol, bm_pos);
+	bm_off = bm_pos & (NTFS_BUF_SIZE - 1);
+
+	return ntfs_bit_get(flb, bm_off);
+}
+
+static int ntfs_get_lcnbmp_bit(ntfs_volume *vol, LCN lcn)
+{
+	u8 flb;
+	s64 bm_pos = lcn >> NTFSCK_BYTE_TO_BITS;
+
+	ntfs_attr_pread(vol->lcnbmp_na, bm_pos, 1, &flb);
+	return ntfs_bit_get(&flb, lcn & 7);
 }
 
 static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
@@ -404,11 +426,12 @@ static int ntfsck_check_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 					"vcn(%"PRId64"), lcn(%"PRId64"), length(%"PRId64")\n",
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
-			if (lcnbmp_set)
-				ntfs_fsck_set_lcnbmp_range(vol, rl[i].lcn, rl[i].length, set_bit);
+			ntfs_fsck_set_lcnbmp_range(vol, rl[i].lcn, rl[i].length, set_bit);
 
 			if (set_bit == 0)
-				ntfs_cluster_free_basic(vol, rl[i].lcn, rl[i].length);
+				ntfs_bitmap_clear_run(vol->lcnbmp_na, rl[i].lcn, rl[i].length);
+			else
+				ntfs_bitmap_set_run(vol->lcnbmp_na, rl[i].lcn, rl[i].length);
 
 			rsize = rl[i].length << vol->cluster_size_bits;
 			rl_data_size += rsize;
@@ -634,6 +657,7 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 			return STATUS_ERROR;
 		}
 	}
+	ntfsck_check_inode_non_resident(parent_ni, 1);
 	ntfs_inode_mark_dirty(parent_ni);
 	ntfsck_set_mft_record_bitmap(parent_ni, TRUE);
 
@@ -653,13 +677,6 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 
 	ntfs_fsck_mftbmp_set(vol, ni->mft_no);
 	ntfs_bitmap_set_bit(vol->mftbmp_na, ni->mft_no);
-
-	ntfsck_update_lcn_bitmap(ni);
-	/*
-	 * Recall ntfsck_update_lcn_bitmap() about parent_ni.
-	 * Because cluster can be allocated by adding index entry.
-	 */
-	ntfsck_update_lcn_bitmap(parent_ni);
 
 	return STATUS_OK;
 }
@@ -929,6 +946,7 @@ static int ntfsck_remove_filename(ntfs_inode *ni, FILE_NAME_ATTR *fn)
 	return STATUS_OK;
 }
 
+
 static int ntfsck_add_index_entry_orphaned_file(ntfs_volume *vol, s64 mft_no)
 {
 	ntfs_attr_search_ctx *ctx = NULL;
@@ -1040,7 +1058,9 @@ stack_of:
 							parent_ni->mft_no, ni->mft_no);
 					goto add_to_lostfound;
 				}
+			}
 
+			if (parent_ni) {
 				/* Check parent inode */
 				if (ntfsck_check_directory(parent_ni)) {
 					ntfs_log_error("Failed to check parent directory(%"PRIu64":%"PRIu64") "
@@ -1049,9 +1069,7 @@ stack_of:
 					/* parent is not normal, add to lost+found */
 					goto add_to_lostfound;
 				}
-			}
 
-			if (parent_ni) {
 				ret = ntfsck_add_inode_to_parent(vol, parent_ni, ni, fn, ctx);
 				if (!ret) {
 					nlink++;
@@ -1234,11 +1252,6 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		}
 		fsck_err_fixed();
 	} else {
-		/*
-		 * Update number of clusters that is used for each
-		 * non-resident mft entries to bitmap.
-		 */
-		ntfsck_update_lcn_bitmap(ni);
 		ntfs_inode_close(ni);
 	}
 }
@@ -2744,7 +2757,6 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			ntfs_inode_close(ni);
 			ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
 		} else {
-			ntfsck_update_lcn_bitmap(ni);
 			ret = ntfs_inode_close_in_dir(ni, ictx->ni);
 			if (ret) {
 				ntfs_log_error("Failed to close inode(%"PRIu64")\n",
@@ -3573,7 +3585,6 @@ err_continue:
 			dir_ni->fsck_ibm_size = 0;
 		}
 
-		ntfsck_update_lcn_bitmap(dir_ni);
 		ntfs_inode_close(dir_ni);
 		ntfs_list_del(&dir->list);
 		free(dir);
@@ -3597,6 +3608,7 @@ static int ntfsck_scan_index_entries(ntfs_volume *vol)
 static void ntfsck_check_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
+	ntfs_inode *lost_found = NULL;
 
 	mrec_unused_chk = ntfs_malloc(vol->sector_size);
 	if (!mrec_unused_chk) {
@@ -3627,6 +3639,15 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	 * We need to update lcn bitmap for $MFT at last again.
 	 */
 	ntfsck_update_lcn_bitmap(vol->mft_ni);
+
+	lost_found = ntfs_inode_open(vol, vol->lost_found);
+	if (!lost_found) {
+		ntfs_log_error("Can't open lost+found directory\n");
+		return;
+	}
+
+	ntfsck_update_lcn_bitmap(lost_found);
+	ntfs_inode_close(lost_found);
 
 	fsck_end_step();
 
@@ -3836,7 +3857,6 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 
 		ntfs_inode_attach_all_extents(sys_ni);
 		ntfsck_set_mft_record_bitmap(sys_ni, FALSE);
-		ntfsck_update_lcn_bitmap(sys_ni);
 
 		if (mft_num > FILE_Extend) {
 			ntfs_inode_close(sys_ni);

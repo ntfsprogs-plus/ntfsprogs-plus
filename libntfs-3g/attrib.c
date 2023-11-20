@@ -2272,6 +2272,7 @@ retry:
 		ntfs_log_trace("Writing %lld bytes to vcn %lld, lcn %lld, ofs "
 			       "%lld.\n", (long long)to_write, (long long)rl->vcn,
 			       (long long)rl->lcn, (long long)ofs);
+
 		if (!NVolReadOnly(vol)) {
 
 			s64 wpos = (rl->lcn << vol->cluster_size_bits) + ofs;

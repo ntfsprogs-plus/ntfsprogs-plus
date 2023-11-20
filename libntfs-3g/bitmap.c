@@ -115,9 +115,9 @@ char ntfs_bit_get_and_set(u8 *bitmap, const u64 bit, const u8 new_value)
 static int ntfs_bitmap_set_bits_in_run(ntfs_attr *na, s64 start_bit,
 				       s64 count, int value)
 {
-	s64 bufsize, br;
+	s64 bufsize, br, tmp;
 	u8 *buf, *lastbyte_buf;
-	int bit, firstbyte, lastbyte, lastbyte_pos, tmp, ret = -1;
+	int bit, firstbyte, lastbyte, lastbyte_pos, ret = -1;
 
 	if (!na || start_bit < 0 || count < 0) {
 		errno = EINVAL;
@@ -153,6 +153,7 @@ static int ntfs_bitmap_set_bits_in_run(ntfs_attr *na, s64 start_bit,
 				errno = EIO;
 			goto free_err_out;
 		}
+
 		/* and set or clear the appropriate bits in it. */
 		while ((bit & 7) && count--) {
 			if (value)

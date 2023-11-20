@@ -200,7 +200,7 @@ static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
 static int ntfsck_check_directory(ntfs_inode *ni);
 static int ntfsck_check_file(ntfs_inode *ni);
 static int ntfsck_check_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
-		struct rl_size *rls, BOOL lcnbmp_set);
+		struct rl_size *rls);
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx);
 static int ntfsck_initialize_index_attr(ntfs_inode *ni);
@@ -209,6 +209,7 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set)
 static int ntfsck_check_attr_list(ntfs_inode *ni);
 static inline BOOL ntfsck_opened_ni_vol(s64 mft_num);
 static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit);
+static void ntfsck_check_mft_records(ntfs_volume *vol);
 
 static int ntfsck_check_backup_boot_sector(ntfs_volume *vol, s64 cl_pos)
 {
@@ -240,11 +241,12 @@ static int ntfsck_check_backup_boot_sector(ntfs_volume *vol, s64 cl_pos)
 static int fsck_get_lcnbmp_bit(ntfs_volume *vol, LCN lcn)
 {
 	u8 *flb;
-	u64 bm_pos = lcn >> 3;
-	u32 bm_off;
+	s64 bm_pos = lcn >> NTFSCK_BYTE_TO_BITS;
+	s64 bm_off;
+	s64 bm_i = FB_ROUND_DOWN(bm_pos);
 
 	flb = ntfs_fsck_get_lcnbmp_block(vol, bm_pos);
-	bm_off = bm_pos & (NTFS_BUF_SIZE - 1);
+	bm_off = lcn - (bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS));
 
 	return ntfs_bit_get(flb, bm_off);
 }
@@ -373,6 +375,8 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 		while (rl[i].length) {
 			if (rl[i].lcn > (LCN)LCN_HOLE) {
 				ntfs_fsck_set_lcnbmp_range(ni->vol, rl[i].lcn, rl[i].length, 1);
+				if (_ntfsck_ask_repair(ni->vol, FALSE))
+					ntfs_bitmap_set_run(ni->vol->lcnbmp_na, rl[i].lcn, rl[i].length);
 				ntfs_log_verbose("Cluster run of mft entry(%"PRIu64") "
 						": lcn:%"PRId64", length:%"PRId64"\n",
 						ni->mft_no, rl[i].lcn, rl[i].length);
@@ -391,7 +395,7 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
 {
 	ntfs_attr_map_whole_runlist(na);
-	ntfsck_check_runlist(na->ni, na->rl, 0, NULL, TRUE);
+	ntfsck_check_runlist(na->ni, na->rl, 0, NULL);
 }
 
 /*
@@ -407,7 +411,7 @@ static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
  *	  real allocated size. it may be NULL, don't return calculated size.
  */
 static int ntfsck_check_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
-		struct rl_size *rls, BOOL lcnbmp_set)
+		struct rl_size *rls)
 {
 	ntfs_volume *vol;
 	s64 rl_alloc_size = 0;	/* rl allocated size (including HOLE length) */
@@ -426,17 +430,36 @@ static int ntfsck_check_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 					"vcn(%"PRId64"), lcn(%"PRId64"), length(%"PRId64")\n",
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
+
+			/* TODO: should optimize logic */
+			if (set_bit == 1) {
+				int j = 0;
+				s64 bit = 0;
+				for (j = 0; j < rl[i].length; j++) {
+					bit = rl[i].lcn + j;
+					if (fsck_get_lcnbmp_bit(vol, bit)) {
+						check_failed("Cluster Duplication Detected! "
+								" %"PRIu64" ino %"PRIu64"\n",
+								bit, ni->mft_no);
+					}
+				}
+			}
 			ntfs_fsck_set_lcnbmp_range(vol, rl[i].lcn, rl[i].length, set_bit);
 
-			if (set_bit == 0)
-				ntfs_bitmap_clear_run(vol->lcnbmp_na, rl[i].lcn, rl[i].length);
-			else
-				ntfs_bitmap_set_run(vol->lcnbmp_na, rl[i].lcn, rl[i].length);
+			if (_ntfsck_ask_repair(vol, FALSE)) {
+				int ret = 0;
+
+				if (set_bit == 0)
+					ret = ntfs_bitmap_clear_run(vol->lcnbmp_na, rl[i].lcn, rl[i].length);
+				else
+					ret = ntfs_bitmap_set_run(vol->lcnbmp_na, rl[i].lcn, rl[i].length);
+				if (ret)
+					ntfs_log_error("Error: set/clear ntfs lcn bitmap\n");
+			}
 
 			rsize = rl[i].length << vol->cluster_size_bits;
 			rl_data_size += rsize;
 			rl_alloc_size += rsize;
-
 		} else if (rl[i].lcn == LCN_HOLE) {
 			rsize = rl[i].length << vol->cluster_size_bits;
 			rl_alloc_size += rsize;
@@ -455,39 +478,6 @@ static int ntfsck_check_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 	}
 
 	return STATUS_OK;
-}
-
-/*
- * set/clear bit all non-resident attributes of inode.
- */
-static void ntfsck_check_non_resident_cluster(ntfs_inode *ni, u8 set_bit)
-{
-	ntfs_attr_search_ctx *ctx;
-
-	ctx = ntfs_attr_get_search_ctx(ni, NULL);
-	while (!ntfs_attrs_walk(ctx)) {
-		if (!ctx->attr->non_resident)
-			continue;
-
-		runlist *rl;
-
-		/* TODO: how to handle if attribute's runlist has corrupted? */
-		rl = ntfs_mapping_pairs_decompress(ni->vol, ctx->attr, NULL);
-		if (!rl) {
-			ntfs_log_error("Failed to decompress runlist. "
-					"Leaving inconsistent metadata.\n");
-			continue;
-		}
-
-		if (ntfsck_check_runlist(ni, rl, set_bit, NULL, TRUE)) {
-			ntfs_log_error("Failed to check and setbit runlist. "
-					"Leaving inconsistent metadata.\n");
-			/* continue */
-		}
-		free(rl);
-	}
-
-	ntfs_attr_put_search_ctx(ctx);
 }
 
 /*
@@ -629,7 +619,6 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 			le16_to_cpu(parent_ni->mrec->sequence_number));
 
 	/* Add index for orphaned inode */
-
 	err = ntfs_index_add_filename(parent_ni, tfn, MK_MREF(ni->mft_no,
 				le16_to_cpu(ni->mrec->sequence_number)));
 	if (err) {
@@ -657,9 +646,14 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 			return STATUS_ERROR;
 		}
 	}
-	ntfsck_check_inode_non_resident(parent_ni, 1);
+
+	if (!ntfs_fsck_mftbmp_get(vol, parent_ni->mft_no)) {
+		ntfsck_check_inode_non_resident(parent_ni, 1);
+	}
+
+//	ntfsck_set_mft_record_bitmap(parent_ni, TRUE);
+	ntfsck_set_mft_record_bitmap(parent_ni, FALSE);
 	ntfs_inode_mark_dirty(parent_ni);
-	ntfsck_set_mft_record_bitmap(parent_ni, TRUE);
 
 	/* check again after adding $FN to index */
 	ret = ntfsck_find_and_check_index(parent_ni, ni, tfn, TRUE);
@@ -675,8 +669,8 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	ntfs_inode_mark_dirty(ctx->ntfs_ino);
 	ntfs_inode_mark_dirty(ni);
 
-	ntfs_fsck_mftbmp_set(vol, ni->mft_no);
-	ntfs_bitmap_set_bit(vol->mftbmp_na, ni->mft_no);
+//	ntfsck_set_mft_record_bitmap(ni, TRUE);
+	ntfsck_set_mft_record_bitmap(ni, FALSE);
 
 	return STATUS_OK;
 }
@@ -809,7 +803,7 @@ static void ntfsck_delete_orphaned_inode(ntfs_inode **ni)
 		return;
 	}
 
-	ntfsck_check_non_resident_cluster(*ni, 0);
+	ntfsck_check_inode_non_resident(*ni, 0);
 	ntfsck_free_mft_records(vol, *ni);
 
 	*ni = NULL;
@@ -1058,9 +1052,7 @@ stack_of:
 							parent_ni->mft_no, ni->mft_no);
 					goto add_to_lostfound;
 				}
-			}
 
-			if (parent_ni) {
 				/* Check parent inode */
 				if (ntfsck_check_directory(parent_ni)) {
 					ntfs_log_error("Failed to check parent directory(%"PRIu64":%"PRIu64") "
@@ -1069,7 +1061,9 @@ stack_of:
 					/* parent is not normal, add to lost+found */
 					goto add_to_lostfound;
 				}
+			}
 
+			if (parent_ni) {
 				ret = ntfsck_add_inode_to_parent(vol, parent_ni, ni, fn, ctx);
 				if (!ret) {
 					nlink++;
@@ -1197,6 +1191,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		}
 
 		ntfsck_check_mft_record_unused(vol, mft_num);
+		/* TODO: below function should use mft bitmap cache */
 		ntfs_fsck_mftbmp_clear(vol, mft_num);
 		return;
 	}
@@ -1220,6 +1215,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 				return;
 			}
 			ntfsck_check_mft_record_unused(vol, mft_num);
+			/* TODO: below function should use mft bitmap cache */
 			ntfs_fsck_mftbmp_clear(vol, mft_num);
 			clear_mft_cnt++;
 			fsck_err_fixed();
@@ -2063,7 +2059,7 @@ static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
 	ntfs_dump_runlist(rl);
 #endif
 
-	ret = ntfsck_check_runlist(na->ni, na->rl, set_bit, rls, FALSE);
+	ret = ntfsck_check_runlist(na->ni, na->rl, set_bit, rls);
 	if (ret)
 		return STATUS_ERROR;
 
@@ -2406,6 +2402,8 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set)
 	return STATUS_OK;
 }
 
+#define CONV_TYPE_TO_BIT(type) (1 << ((type) >> 4))
+
 /*
  * check all cluster runlist of non-resident attributes of a inode
  */
@@ -2414,6 +2412,7 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit)
 	ntfs_attr_search_ctx *ctx;
 	ntfs_attr *na;
 	ATTR_RECORD *a;
+	ATTR_TYPES type_bitmap = AT_UNUSED;
 	int ret = STATUS_OK;
 
 	ctx = ntfs_attr_get_search_ctx(ni, NULL);
@@ -2424,6 +2423,11 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit)
 		a = ctx->attr;
 		if (!a->non_resident)
 			continue;
+
+		if (CONV_TYPE_TO_BIT(a->type) & type_bitmap) {
+			ntfs_log_trace("inode %"PRIu64", type_bitmap %08x\n", ni->mft_no, type_bitmap);
+			continue;
+		}
 
 		na = ntfs_attr_open(ni, a->type,
 				(ntfschar *)((u8 *)a + le16_to_cpu(a->name_offset)),
@@ -2436,6 +2440,7 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit)
 		}
 
 		ret = ntfsck_check_non_resident_attr(na, ctx, NULL, set_bit);
+		type_bitmap |= CONV_TYPE_TO_BIT(a->type);
 		ntfs_attr_close(na);
 		if (ret)
 			continue;
@@ -2598,10 +2603,12 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	if (ret < 0)
 		goto err_out;
 
+	/* FALSE or TRUE? */
 	ntfsck_set_mft_record_bitmap(ni, FALSE);
 	return STATUS_OK;
 
 err_out:
+	ntfsck_check_inode_non_resident(ni, 0);
 	return STATUS_ERROR;
 }
 
@@ -2635,6 +2642,7 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	return STATUS_OK;
 
 err_out:
+	ntfsck_check_inode_non_resident(ni, 0);
 	return STATUS_ERROR;
 }
 
@@ -3248,7 +3256,7 @@ create_lf:
 					FILENAME_LOST_FOUND, lf_ni->mft_no);
 			ret = _ntfsck_remove_index(ni, lf_ni);
 			if (!ret) {
-				ntfsck_check_non_resident_cluster(lf_ni, 0);
+				ntfsck_check_inode_non_resident(lf_ni, 0);
 				ntfsck_free_mft_records(vol, lf_ni);
 				goto create_lf;
 			}
@@ -3680,7 +3688,7 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 		}
 
 		/* Check cluster run of $DATA attribute */
-		if (ntfsck_check_runlist(ni, vol->lcnbmp_na->rl, 1, NULL, FALSE)) {
+		if (ntfsck_check_runlist(ni, vol->lcnbmp_na->rl, 1, NULL)) {
 			ntfs_log_error("Failed to check and setbit runlist. "
 				       "Leaving inconsistent metadata.\n");
 			return -EIO;

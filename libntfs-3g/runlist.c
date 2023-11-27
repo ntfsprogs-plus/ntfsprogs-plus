@@ -910,6 +910,12 @@ runlist_element *ntfs_mapping_pairs_decompress_i(const ntfs_volume *vol,
 				goto io_error;
 			for (deltaxcn = (s8)buf[b--]; b > b2; b--)
 				deltaxcn = (deltaxcn << 8) + buf[b];
+
+			if (deltaxcn == 0) {
+				rl[rlpos].length = 0;
+				ntfs_debug_runlist_dump(rl);
+			}
+
 			/* Change the current lcn to it's new value. */
 			lcn += deltaxcn;
 #ifdef DEBUG
@@ -1057,7 +1063,7 @@ err_out:
 	if (NVolIsOnFsck(vol)) {
 		/* Setup terminating runlist element */
 		rl[rlpos].lcn = (LCN)LCN_ENOENT;
-		rl[rlpos].vcn = vcn;
+		rl[rlpos].vcn = rlpos ? rl[rlpos - 1].vcn + rl[rlpos -1].length : 0;
 		rl[rlpos].length = (s64)0;
 
 		if (old_rl && old_rl[0].length && rl[0].length) {

@@ -374,7 +374,7 @@ runlist *ntfs_cluster_alloc(ntfs_volume *vol, VCN start_vcn, s64 count,
 			/* set fsck lcn bitmap on fsck */
 			if (NVolFsck(vol)) {
 				LCN lcn_no = lcn + bmp_pos;
-				ntfs_fsck_set_lcnbmp_range(vol, lcn_no, 1, 1);
+				ntfs_fsck_set_lcnbmp_range(vol, lcn_no, 1, 1, FALSE);
 				ntfs_log_trace("last_read_pos %"PRIu64", lcn %"PRIu64"\n",
 						last_read_pos, lcn_no);
 			}
@@ -611,7 +611,7 @@ int ntfs_cluster_free_from_rl(ntfs_volume *vol, runlist *rl)
 			nr_freed += rl->length;
 
 			if (NVolFsck(vol))
-				ntfs_fsck_set_lcnbmp_range(vol, rl->lcn, rl->length, 0);
+				ntfs_fsck_set_lcnbmp_range(vol, rl->lcn, rl->length, 0, FALSE);
 		}
 	}
 
@@ -653,7 +653,7 @@ int ntfs_cluster_free_basic(ntfs_volume *vol, s64 lcn, s64 count)
 		nr_freed += count;
 
 		if (NVolFsck(vol))
-			ntfs_fsck_set_lcnbmp_range(vol, lcn, count, 0);
+			ntfs_fsck_set_lcnbmp_range(vol, lcn, count, 0, FALSE);
 	}
 	ret = 0;
 out:
@@ -729,7 +729,7 @@ int ntfs_cluster_free(ntfs_volume *vol, ntfs_attr *na, VCN start_vcn, s64 count)
 		nr_freed = to_free;
 
 		if (NVolFsck(vol))
-			ntfs_fsck_set_lcnbmp_range(vol, rl->lcn + delta, to_free, 0);
+			ntfs_fsck_set_lcnbmp_range(vol, rl->lcn + delta, to_free, 0, FALSE);
 	}
 
 	/* Go to the next run and adjust the number of clusters left to free. */
@@ -772,7 +772,7 @@ int ntfs_cluster_free(ntfs_volume *vol, ntfs_attr *na, VCN start_vcn, s64 count)
 			}
 			nr_freed += to_free;
 			if (NVolFsck(vol))
-				ntfs_fsck_set_lcnbmp_range(vol, rl->lcn, to_free, 0);
+				ntfs_fsck_set_lcnbmp_range(vol, rl->lcn, to_free, 0, FALSE);
 		}
 
 		if (count >= 0)

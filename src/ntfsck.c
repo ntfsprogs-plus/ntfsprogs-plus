@@ -246,7 +246,7 @@ static int fsck_get_lcnbmp_bit(ntfs_volume *vol, LCN lcn)
 	s64 bm_off;
 	s64 bm_i = FB_ROUND_DOWN(bm_pos);
 
-	flb = ntfs_fsck_get_lcnbmp_block(vol, bm_pos);
+	flb = ntfs_fsck_find_lcnbmp_block(vol, bm_pos);
 	bm_off = lcn - (bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS));
 
 	return ntfs_bit_get(flb, bm_off);
@@ -287,7 +287,7 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 			break;
 		}
 
-		flb = ntfs_fsck_get_lcnbmp_block(vol, pos);
+		flb = ntfs_fsck_find_lcnbmp_block(vol, pos);
 
 		for (i = 0; i < count; i++, pos++) {
 			s64 cl;  /* current cluster */
@@ -375,7 +375,7 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 
 		while (rl[i].length) {
 			if (rl[i].lcn > (LCN)LCN_HOLE) {
-				ntfs_fsck_set_lcnbmp_range(ni->vol, rl[i].lcn, rl[i].length, 1);
+				ntfs_fsck_set_lcnbmp_range(ni->vol, rl[i].lcn, rl[i].length, 1, FALSE);
 				if (_ntfsck_ask_repair(ni->vol, FALSE))
 					ntfs_bitmap_set_run(ni->vol->lcnbmp_na, rl[i].lcn, rl[i].length);
 				ntfs_log_verbose("Cluster run of mft entry(%"PRIu64") "
@@ -427,20 +427,7 @@ static int ntfsck_check_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
 
-			/* TODO: should optimize logic */
-			if (set_bit == 1) {
-				int j = 0;
-				s64 bit = 0;
-				for (j = 0; j < rl[i].length; j++) {
-					bit = rl[i].lcn + j;
-					if (fsck_get_lcnbmp_bit(vol, bit)) {
-						check_failed("Cluster Duplication Detected! "
-								" %"PRIu64" ino %"PRIu64"\n",
-								bit, ni->mft_no);
-					}
-				}
-			}
-			ntfs_fsck_set_lcnbmp_range(vol, rl[i].lcn, rl[i].length, set_bit);
+			ntfs_fsck_set_lcnbmp_range(vol, rl[i].lcn, rl[i].length, set_bit, TRUE);
 
 			if (_ntfsck_ask_repair(vol, FALSE)) {
 				int ret = 0;
@@ -2427,7 +2414,8 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit)
 			continue;
 
 		if (CONV_TYPE_TO_BIT(a->type) & type_bitmap) {
-			ntfs_log_trace("inode %"PRIu64", type_bitmap %08x\n", ni->mft_no, type_bitmap);
+			ntfs_log_trace("SKIP: inode %"PRIu64", type %02x type_bitmap %08x\n",
+					ni->mft_no, a->type, type_bitmap);
 			continue;
 		}
 

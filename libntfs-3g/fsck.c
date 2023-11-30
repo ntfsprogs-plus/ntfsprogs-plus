@@ -45,6 +45,10 @@ u8 zero_bm[NTFS_BUF_SIZE];
 
 /*
  * function to set fsck mft bitmap value
+ *
+ * vol : ntfs_volume structure
+ * mft_no : mft number to set on mft bitmap
+ * value : 1 if set, 0 if clear
  */
 int ntfs_fsck_set_mftbmp_value(ntfs_volume *vol, u64 mft_no, int value)
 {
@@ -68,7 +72,7 @@ int ntfs_fsck_set_mftbmp_value(ntfs_volume *vol, u64 mft_no, int value)
 	return 0;
 }
 
-/* fsck mft bitmap get */
+/* get fsck mft bitmap */
 char ntfs_fsck_mftbmp_get(ntfs_volume *vol, const u64 bit)
 {
 	u32 bm_i = FB_ROUND_DOWN(bit >> NTFSCK_BYTE_TO_BITS);
@@ -80,13 +84,13 @@ char ntfs_fsck_mftbmp_get(ntfs_volume *vol, const u64 bit)
 	return ntfs_bit_get(vol->fsck_mft_bitmap[bm_i], bit - bm_pos);
 }
 
-/* fsck mft bitmap clear */
+/* clear fsck mft bitmap */
 int ntfs_fsck_mftbmp_clear(ntfs_volume *vol, u64 mft_no)
 {
 	return ntfs_fsck_set_mftbmp_value(vol, mft_no, 0);
 }
 
-/* fsck mft bitmap set */
+/* set fsck mft bitmap */
 int ntfs_fsck_mftbmp_set(ntfs_volume *vol, u64 mft_no)
 {
 	return ntfs_fsck_set_mftbmp_value(vol, mft_no, 1);
@@ -98,7 +102,7 @@ void ntfs_fsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit)
 		ntfs_bit_set(bm, pos++, bit);
 }
 
-u8 *ntfs_fsck_get_lcnbmp_block(ntfs_volume *vol, s64 pos)
+u8 *ntfs_fsck_find_lcnbmp_block(ntfs_volume *vol, s64 pos)
 {
 	u32 bm_i = FB_ROUND_DOWN(pos);
 
@@ -108,13 +112,28 @@ u8 *ntfs_fsck_get_lcnbmp_block(ntfs_volume *vol, s64 pos)
 	return vol->fsck_lcn_bitmap[bm_i];
 }
 
-int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
+#define FSCK_CHECK_AND_SET(buf, start_lcn, pos, length, bit, check) \
+do { \
+	int i = 0; \
+	while ((length)--) { \
+		if (ntfs_bit_get_and_set((buf), (pos) + i, (bit))) { \
+			if ((check) && (bit)) \
+				ntfs_log_info("Cluster Duplication #1 " \
+						" %"PRIu64"\n", (start_lcn) + i); \
+		} \
+		i++; \
+	} \
+} while (0)
+
+int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit,
+		BOOL check)
 {
 	s64 end = lcn + length - 1;
-	u32 bm_i = FB_ROUND_DOWN(lcn >> NTFSCK_BYTE_TO_BITS);
-	u32 bm_end = FB_ROUND_DOWN(end >> NTFSCK_BYTE_TO_BITS);
-	s64 bm_pos = (s64)bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
-	s64 lcn_diff = lcn - bm_pos;
+	s64 bm_i = FB_ROUND_DOWN(lcn >> NTFSCK_BYTE_TO_BITS);
+	s64 bm_end = FB_ROUND_DOWN(end >> NTFSCK_BYTE_TO_BITS);
+	s64 bm_bit = (s64)bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
+	s64 lcn_diff = lcn - bm_bit;
+	u8 *buf;
 
 	if (length <= 0)
 		return -EINVAL;
@@ -125,17 +144,19 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
 			return -ENOMEM;
 	}
 
+	buf = vol->fsck_lcn_bitmap[bm_i];
 	if (bm_end == bm_i) {
-		ntfs_fsck_set_bitmap_range(vol->fsck_lcn_bitmap[bm_i],
-				lcn_diff, length, bit);
+		FSCK_CHECK_AND_SET(buf, lcn, lcn_diff, length, bit, check);
 	} else {
-		ntfs_fsck_set_bitmap_range(vol->fsck_lcn_bitmap[bm_i], lcn_diff,
-					NTFSCK_BM_BITS_SIZE - lcn_diff,
-					bit);
+		s64 loop = NTFSCK_BM_BITS_SIZE - lcn_diff;
+
+		FSCK_CHECK_AND_SET(buf, lcn, lcn_diff, loop, bit, check);
+
 		length -= NTFSCK_BM_BITS_SIZE - lcn_diff;
 		bm_i++;
 
 		for (; bm_i <= bm_end; bm_i++) {
+			bm_bit = (s64)bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
 			if (length < 0) {
 				ntfs_log_error("length should not be negative here! : %"PRId64"\n",
 						length);
@@ -155,8 +176,8 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
 							"%"PRId64"\n", length);
 					exit(1);
 				}
-				ntfs_fsck_set_bitmap_range(vol->fsck_lcn_bitmap[bm_i],
-						0, length, bit);
+				buf = vol->fsck_lcn_bitmap[bm_i];
+				FSCK_CHECK_AND_SET(buf, bm_bit, 0, length, bit, check);
 			} else {
 				/*
 				 * It is useful to use memset rather than setting
@@ -166,8 +187,22 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
 				 */
 				if (bit == 0)
 					memset(vol->fsck_lcn_bitmap[bm_i], 0, NTFS_BUF_SIZE);
-				else
+				else {
+					u64 *p_bmp;
+					int i;
+
+					for (i = 0; i < (NTFS_BUF_SIZE >> 3); i++, p_bmp++) {
+						p_bmp = (u64 *)vol->fsck_lcn_bitmap[bm_i];
+						if (*p_bmp == 0) {
+							continue;
+						}
+
+						ntfs_log_info("Cluster Duplication #4 from %"PRIu64" to xxx\n",
+								bm_bit + ((i * 8) << 3));
+
+					}
 					memset(vol->fsck_lcn_bitmap[bm_i], 0xFF, NTFS_BUF_SIZE);
+				}
 				length -= NTFSCK_BM_BITS_SIZE;
 			}
 		}

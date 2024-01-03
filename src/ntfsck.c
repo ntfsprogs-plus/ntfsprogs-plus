@@ -2796,7 +2796,7 @@ err_out:
 }
 
 /*
- * set bitmap of current index context's all parent vcn.
+ * set bitmap of current index allocation's all parent vcn.
  */
 static int ntfsck_set_index_bitmap(ntfs_inode *ni, ntfs_index_context *ictx,
 		ntfs_attr *bm_na)
@@ -2810,16 +2810,29 @@ static int ntfsck_set_index_bitmap(ntfs_inode *ni, ntfs_index_context *ictx,
 	if (!ictx->ib)
 		return STATUS_ERROR;
 
+	if (ni != ictx->ni)
+		ntfs_log_error("inode(%p) and ictx->ni(%p) are different\n",
+				ni, ictx->ni);
+
 	ih = &ictx->ib->index;
 	if ((ih->ih_flags & NODE_MASK) != LEAF_NODE)
 		return STATUS_OK;
 
+	vcn = ictx->parent_vcn[ictx->pindex];
 	pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
 	bpos = pos / 8;
 
-	if (bm_na->data_size < bpos + 1)
+	if (ictx->ni->fsck_ibm_size < bpos + 1) {
 		ictx->ni->fsck_ibm = ntfs_realloc(ictx->ni->fsck_ibm,
 				(bm_na->data_size + 8) & ~7);
+		if (!ictx->ni->fsck_ibm) {
+			ntfs_log_perror("Failed to realloc fsck_ibm(%"PRId64")",
+					bm_na->data_size);
+			return STATUS_ERROR;
+		}
+
+		ictx->ni->fsck_ibm_size = (bm_na->data_size + 8) & ~7;
+	}
 
 	for (i = ictx->pindex; i > 0; i--) {
 		vcn = ictx->parent_vcn[i];
@@ -2849,8 +2862,22 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 		return STATUS_ERROR;
 	}
 
-	if (ibm_size != bm_na->data_size)
-		ntfs_log_info("\nbitmap changed during check_inodes\n\n");
+	if (ibm_size != ni->fsck_ibm_size) {
+		/* FIXME: if ni->fsck_ibm_size is larget than ibm_size,
+		 * it could allocate cluster in ntfs_attr_pwrite() */
+		ntfs_log_info("\n\nBitmap changed during check_inodes\n");
+		check_failed("Inode(%"PRIu64") $IA bitmap size are different. Fix it", ni->mft_no);
+		if (ntfsck_ask_repair(vol)) {
+			/* TODO: should modify while loop for insufficient write() */
+			wcnt = ntfs_attr_pwrite(bm_na, 0, ni->fsck_ibm_size, ni->fsck_ibm);
+			if (wcnt == ni->fsck_ibm_size)
+				fsck_err_fixed();
+			else
+				ntfs_log_error("Can't write $BITMAP(%"PRId64") "
+						"of inode(%"PRIu64")\n", wcnt, ni->mft_no);
+		}
+		goto out;
+	}
 
 	if (memcmp(ni->fsck_ibm, ni_ibm, ibm_size)) {
 #ifdef DEBUG
@@ -2870,6 +2897,7 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 #endif
 		check_failed("Inode(%"PRIu64") $IA bitmap different. Fix it", ni->mft_no);
 		if (ntfsck_ask_repair(vol)) {
+			/* TODO: should reimpelemt with loop for insufficient write */
 			wcnt = ntfs_attr_pwrite(bm_na, 0, ibm_size, ni->fsck_ibm);
 			if (wcnt == ibm_size)
 				fsck_err_fixed();
@@ -2879,6 +2907,7 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 		}
 	}
 
+out:
 	free(ni_ibm);
 
 	return STATUS_OK;
@@ -3376,6 +3405,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 					ntfs_log_perror("Failed to allocate fsck_ibm memory\n");
 					goto err_continue;
 				}
+				dir_ni->fsck_ibm_size = bm_na->allocated_size;
 			}
 		}
 
@@ -3455,6 +3485,7 @@ err_continue:
 		if (dir_ni && dir_ni->fsck_ibm) {
 			free(dir_ni->fsck_ibm);
 			dir_ni->fsck_ibm = NULL;
+			dir_ni->fsck_ibm_size = 0;
 		}
 
 		ntfs_inode_close(dir_ni);

@@ -42,6 +42,9 @@ extern char ntfs_bit_get_and_set(u8 *bitmap, const u64 bit, const u8 new_value);
 extern int  ntfs_bitmap_set_run(ntfs_attr *na, s64 start_bit, s64 count);
 extern int  ntfs_bitmap_clear_run(ntfs_attr *na, s64 start_bit, s64 count);
 
+#define BITS_PER_BYTE	8
+#define BITS_PER_LONG	(sizeof(unsigned long) * BITS_PER_BYTE)
+
 /**
  * ntfs_bitmap_set_bit - set a bit in a bitmap
  * @na:		attribute containing the bitmap

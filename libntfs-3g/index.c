@@ -1093,6 +1093,7 @@ static int ntfs_ibm_add(ntfs_index_context *icx)
 					icx->ni->mft_no);
 			return STATUS_ERROR;
 		}
+		icx->ni->fsck_ibm_size = sizeof(bmp);
 	}
 
 	return STATUS_OK;
@@ -1130,6 +1131,7 @@ int ntfs_ibm_modify(ntfs_index_context *icx, VCN vcn, int set)
 					ntfs_log_perror("Failed to realloc fsck_ibm");
 					goto err_na;
 				}
+				icx->ni->fsck_ibm_size = (na->data_size + 8) & ~7;
 			}
 		}
 	}

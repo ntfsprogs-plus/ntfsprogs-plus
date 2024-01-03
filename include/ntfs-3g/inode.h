@@ -165,6 +165,7 @@ struct _ntfs_inode {
 	le64 quota_charged;
 	le64 usn;
 	void *fsck_ibm;		/* for bitmap tracking in fsck */
+	u32 fsck_ibm_size;	/* fsck bitmap size */
 };
 
 typedef enum {

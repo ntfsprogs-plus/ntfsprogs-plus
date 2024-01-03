@@ -95,6 +95,16 @@ int ntfs_fsck_mftbmp_set(ntfs_volume *vol, u64 mft_no)
 	return ntfs_fsck_set_mftbmp_value(vol, mft_no, 1);
 }
 
+u8 *ntfs_fsck_find_mftbmp_block(ntfs_volume *vol, s64 mft_no)
+{
+	u32 bm_i = FB_ROUND_DOWN(mft_no);
+
+	if (bm_i >= vol->max_fmb_cnt || !vol->fsck_mft_bitmap[bm_i])
+		return zero_bm;
+
+	return vol->fsck_mft_bitmap[bm_i];
+}
+
 void ntfs_fsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit)
 {
 	while (length--)

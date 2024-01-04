@@ -218,33 +218,6 @@ static inline BOOL ntfsck_opened_ni_vol(s64 mft_num);
 static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit);
 static void ntfsck_check_mft_records(ntfs_volume *vol);
 
-static int ntfsck_check_backup_boot_sector(ntfs_volume *vol, s64 cl_pos)
-{
-	NTFS_BOOT_SECTOR *backup_boot;
-	s64 backup_boot_pos = cl_pos << vol->cluster_size_bits;
-
-	backup_boot = ntfs_malloc(vol->sector_size);
-	if (!backup_boot)
-		return -ENOMEM;
-
-	if (ntfs_pread(vol->dev, backup_boot_pos, vol->sector_size, backup_boot) !=
-			vol->sector_size) {
-		ntfs_log_error("Failed to read boot sector.\n");
-		free(backup_boot);
-		return -EIO;
-	}
-
-	if (!ntfs_boot_sector_is_ntfs(backup_boot)) {
-		free(backup_boot);
-		return -ENOENT;
-	}
-
-	ntfs_log_verbose("Found backup boot sector in the middle of the volume(cl_pos:%"PRId64").\n",
-			 cl_pos);
-	free(backup_boot);
-	return 0;
-}
-
 static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 {
 	ntfs_attr_search_ctx *actx;
@@ -3802,6 +3775,59 @@ next:
 	return STATUS_OK;
 }
 
+static int _ntfsck_check_backup_boot(ntfs_volume *vol, s64 sector, u8 *buf)
+{
+	s64 backup_boot_pos;
+	u8 spc_bits;	/* sector per cluster bits */
+
+	spc_bits = vol->cluster_size_bits - vol->sector_size_bits;
+	backup_boot_pos = sector << vol->sector_size_bits;
+	if (ntfs_pread(vol->dev, backup_boot_pos, vol->sector_size, buf) !=
+			vol->sector_size) {
+		ntfs_log_error("Failed to read boot sector.\n");
+		return STATUS_ERROR;
+	}
+
+	if (ntfs_boot_sector_is_ntfs((NTFS_BOOT_SECTOR *)buf) == FALSE)
+		return STATUS_ERROR;
+
+	ntfs_fsck_set_lcnbmp_range(vol, sector >> spc_bits, 1, 1, FALSE);
+	return STATUS_OK;
+}
+
+/* check boot sector backup cluster bitmap */
+static int ntfsck_check_backup_boot(ntfs_volume *vol)
+{
+	s64 bb_sector;	/* number of backup boot sector */
+	u8 spc_bits;	/* sector per cluster bits */
+	u8 *bb_buf;
+
+	spc_bits = vol->cluster_size_bits - vol->sector_size_bits;
+	bb_buf = ntfs_malloc(vol->sector_size);
+	if (!bb_buf)
+		return -ENOMEM;
+
+	/* check backup boot sector located in last sector (normal) */
+	bb_sector = vol->nr_sectors;
+	if (!_ntfsck_check_backup_boot(vol, bb_sector, bb_buf)) {
+		free(bb_buf);
+		return STATUS_OK;
+	}
+	/* check backup boot at last sector failed */
+
+	/* check backup boot sector located in the middle of cluster (some cases) */
+	bb_sector = (vol->nr_clusters / 2) << spc_bits;
+	if (!_ntfsck_check_backup_boot(vol, bb_sector, bb_buf)) {
+		ntfs_log_verbose("Found backup boot sector in the middle of the volume"
+				"(cl_pos:%"PRId64").\n", bb_sector >> spc_bits);
+		free(bb_buf);
+		return STATUS_OK;
+	}
+
+	free(bb_buf);
+	return STATUS_ERROR;
+}
+
 /**
  * main - Does just what C99 claim it does.
  *
@@ -3963,6 +3989,8 @@ conflict_option:
 			exit(RETURN_FS_NO_ERRORS);
 		}
 	}
+
+	ntfsck_check_backup_boot(vol);
 
 	if (ntfsck_check_system_files(vol))
 		goto err_out;

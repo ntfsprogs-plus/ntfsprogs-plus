@@ -235,6 +235,7 @@ int ntfs_boot_sector_parse(ntfs_volume *vol, const NTFS_BOOT_SECTOR *bs)
 	}
 
 	vol->nr_clusters =  sectors >> (ffs(sectors_per_cluster) - 1);
+	vol->nr_sectors = sectors;
 
 	vol->mft_lcn = sle64_to_cpu(bs->mft_lcn);
 	vol->mftmirr_lcn = sle64_to_cpu(bs->mftmirr_lcn);

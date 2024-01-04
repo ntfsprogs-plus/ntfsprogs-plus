@@ -3679,6 +3679,18 @@ next:
 	return STATUS_OK;
 }
 
+/* check boot sector backup cluster bitmap */
+static void ntfsck_check_backup_boot(ntfs_volume *vol)
+{
+	s64 lcn_bb;	/* lcn cluster number of backup boot sector */
+
+	lcn_bb = vol->nr_clusters / 2;
+	if (!ntfsck_check_backup_boot_sector(vol, lcn_bb)) {
+		/* in case that backup boot sector is located on vol->nr_clusters/2 */
+		ntfs_fsck_set_lcnbmp_range(vol, lcn_bb, 1, 1, TRUE);
+	}
+}
+
 /**
  * main - Does just what C99 claim it does.
  *
@@ -3840,6 +3852,8 @@ conflict_option:
 			exit(RETURN_FS_NO_ERRORS);
 		}
 	}
+
+	ntfsck_check_backup_boot(vol);
 
 	if (ntfsck_check_system_files(vol))
 		goto err_out;

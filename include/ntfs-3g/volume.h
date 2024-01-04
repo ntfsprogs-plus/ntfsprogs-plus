@@ -252,7 +252,8 @@ typedef enum {
 #define NTFS_V3_0(major, minor) ((major) == 3 && (minor) == 0)
 #define NTFS_V3_1(major, minor) ((major) == 3 && (minor) == 1)
 
-#define NTFS_BUF_SIZE 8192
+#define NTFS_BUF_SIZE			(8192)
+#define MFTBMP_CACHE_SIZE		(NTFS_BUF_SIZE)
 
 /**
  * struct _ntfs_volume - structure describing an open volume in memory.
@@ -351,9 +352,9 @@ struct _ntfs_volume {
 // #ifdef NTFSCK
 #if 1
 	u64 lost_found;		/* mft record number for lost_found directory */
-	u8 **fsck_lcn_bitmap;
+	u8 **fsck_lcn_bitmap;	/* lcn bitmap of fsck */
 	u64 max_flb_cnt;
-	u8 **fsck_mft_bitmap;
+	u8 **fsck_mft_bitmap;	/* mft bitmap of fsck */
 	u64 max_fmb_cnt;
 #endif
 

@@ -146,6 +146,13 @@ struct rl_size {
 };
 
 NTFS_LIST_HEAD(ntfs_dirs_list);
+NTFS_LIST_HEAD(oc_list_head); /* Orphaned mft records Candidate list */
+
+struct orphan_mft {
+	u64 mft_no;
+	struct ntfs_list_head oc_list;	/* Orphan Candidate list */
+	struct ntfs_list_head ot_list;	/* Orphan Tree list */
+} orphan_mft_t;
 
 int parse_count = 1;
 
@@ -238,117 +245,6 @@ static int ntfsck_check_backup_boot_sector(ntfs_volume *vol, s64 cl_pos)
 	return 0;
 }
 
-static int fsck_get_lcnbmp_bit(ntfs_volume *vol, LCN lcn)
-{
-	u8 *flb;
-	s64 bm_pos = lcn >> NTFSCK_BYTE_TO_BITS;
-	s64 bm_off;
-	s64 bm_i = FB_ROUND_DOWN(bm_pos);
-
-	flb = ntfs_fsck_find_lcnbmp_block(vol, bm_pos);
-	bm_off = lcn - (bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS));
-
-	return ntfs_bit_get(flb, bm_off);
-}
-
-static int ntfs_get_lcnbmp_bit(ntfs_volume *vol, LCN lcn)
-{
-	u8 flb;
-	s64 bm_pos = lcn >> NTFSCK_BYTE_TO_BITS;
-
-	ntfs_attr_pread(vol->lcnbmp_na, bm_pos, 1, &flb);
-	return ntfs_bit_get(&flb, lcn & 7);
-}
-
-static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
-{
-	s64 pos = 0, wpos, i, count, written;
-	s64 clear_lcn_cnt = 0;
-	s64 set_lcn_cnt = 0;
-	BOOL backup_boot_check = FALSE, repair = FALSE;
-	u8 bm[NTFS_BUF_SIZE], *flb;
-
-	fsck_start_step("Check cluster bitmap...\n");
-
-	while (1) {
-		wpos = pos;
-		count = ntfs_attr_pread(vol->lcnbmp_na, pos, NTFS_BUF_SIZE, bm);
-		if (count == -1) {
-			ntfs_log_error("Couldn't get $Bitmap $DATA");
-			break;
-		}
-
-		if (count == 0) {
-			/* the backup bootsector need not be accounted for */
-			if (((vol->nr_clusters + 7) >> 3) > pos)
-				ntfs_log_error("$Bitmap size is smaller than expected (%"PRId64" < %"PRId64")\n",
-						pos, vol->lcnbmp_na->data_size);
-			break;
-		}
-
-		flb = ntfs_fsck_find_lcnbmp_block(vol, pos);
-
-		for (i = 0; i < count; i++, pos++) {
-			s64 cl;  /* current cluster */
-
-			if (flb[i] == bm[i])
-				continue;
-
-			for (cl = pos * 8; cl < (pos + 1) * 8; cl++) {
-				char lbmp_bit, fsck_bmp_bit;
-
-				if (cl >= vol->nr_clusters)
-					break;
-
-				lbmp_bit = ntfs_bit_get(bm, i * 8 + cl % 8);
-				fsck_bmp_bit = ntfs_bit_get(flb, i * 8 + cl % 8);
-				if (fsck_bmp_bit != lbmp_bit) {
-					if (!fsck_bmp_bit && backup_boot_check == FALSE &&
-					    cl == vol->nr_clusters / 2) {
-						if (!ntfsck_check_backup_boot_sector(vol, cl)) {
-							backup_boot_check = TRUE;
-							continue;
-						}
-					}
-
-					if (fsck_bmp_bit == 0 && lbmp_bit == 1) {
-						fsck_err_found();
-						clear_lcn_cnt++;
-						ntfs_log_trace("Found orphaned cluster bit(%"PRId64") "
-								"in $Bitmap. Clear it\n", cl);
-					} else {
-						fsck_err_found();
-						set_lcn_cnt++;
-						ntfs_log_trace("Found missing cluster bit(%"PRId64") "
-								"in $Bitmap. Set it\n", cl);
-					}
-					if (_ntfsck_ask_repair(vol, FALSE)) {
-						ntfs_bit_set(bm, i * 8 + cl % 8, !lbmp_bit);
-						repair = TRUE;
-						fsck_err_fixed();
-					}
-				}
-			}
-		}
-
-		if (repair == TRUE) {
-			written = ntfs_attr_pwrite(vol->lcnbmp_na, wpos, count, bm);
-			if (written != count)
-				ntfs_log_error("lcn bitmap write failed, pos:%"PRId64 ", "
-						"count:%"PRId64", written:%"PRId64"\n",
-					wpos, count, written);
-			repair = FALSE;
-		}
-	}
-
-	if (clear_lcn_cnt || set_lcn_cnt)
-		ntfs_log_info("Total lcn bitmap clear:%"PRId64", "
-			      "Total missing lcn bitmap:%"PRId64"\n",
-			      clear_lcn_cnt, set_lcn_cnt);
-
-	fsck_end_step();
-}
-
 static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 {
 	ntfs_attr_search_ctx *actx;
@@ -432,17 +328,6 @@ static int ntfsck_check_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 					rl[i].length);
 
 			ntfs_fsck_set_lcnbmp_range(vol, rl[i].lcn, rl[i].length, set_bit, TRUE);
-
-			if (_ntfsck_ask_repair(vol, FALSE)) {
-				int ret = 0;
-
-				if (set_bit == 0)
-					ret = ntfs_bitmap_clear_run(vol->lcnbmp_na, rl[i].lcn, rl[i].length);
-				else
-					ret = ntfs_bitmap_set_run(vol->lcnbmp_na, rl[i].lcn, rl[i].length);
-				if (ret)
-					ntfs_log_error("Error: set/clear ntfs lcn bitmap\n");
-			}
 
 			rsize = rl[i].length << vol->cluster_size_bits;
 			rl_data_size += rsize;
@@ -926,37 +811,47 @@ static int ntfsck_remove_filename(ntfs_inode *ni, FILE_NAME_ATTR *fn)
 	return STATUS_OK;
 }
 
+/* get entry of orphan mft candidate list */
+static struct orphan_mft *ntfsck_get_oc_list_entry(struct ntfs_list_head *head, u64 mft_no)
+{
+	struct orphan_mft *entry = NULL;
+	struct ntfs_list_head *pos;
 
-static int ntfsck_add_index_entry_orphaned_file(ntfs_volume *vol, s64 mft_no)
+	ntfs_list_for_each(pos, head) {
+		entry = ntfs_list_entry(pos, struct orphan_mft, oc_list);
+		if (entry->mft_no == mft_no)
+			return entry;
+	}
+	return NULL;
+}
+
+static int ntfsck_add_index_entry_orphaned_file(ntfs_volume *vol, struct orphan_mft *e)
 {
 	ntfs_attr_search_ctx *ctx = NULL;
 	FILE_NAME_ATTR *fn;
 	ntfs_inode *parent_ni = NULL;
 	ntfs_inode *ni = NULL;
 	u64 parent_no;
-	struct orphan_mft {
-		s64 mft_no;
-		struct ntfs_list_head list;
-	};
-	NTFS_LIST_HEAD(ntfs_orphan_list);
-	struct orphan_mft *of;
 	int ret = STATUS_OK;
 	int nlink = 0;
+	struct orphan_mft *entry;
 
+	NTFS_LIST_HEAD(ot_list_head);
+
+	if (!e)
+		return -EINVAL;
+
+	entry = e;
 stack_of:
-	of = (struct orphan_mft *)calloc(1, sizeof(struct orphan_mft));
-	if (!of)
-		return -ENOMEM;
+	ntfs_list_del(&entry->oc_list);
+	ntfs_list_add(&entry->ot_list, &ot_list_head);
 
-	of->mft_no = mft_no;
-	ntfs_list_add(&of->list, &ntfs_orphan_list);
+	while (!ntfs_list_empty(&ot_list_head)) {
+		entry = ntfs_list_entry(ot_list_head.next, struct orphan_mft, ot_list);
 
-	while (!ntfs_list_empty(&ntfs_orphan_list)) {
-		of = ntfs_list_entry(ntfs_orphan_list.next, struct orphan_mft, list);
-
-		ni = ntfs_inode_open(vol, of->mft_no);
+		ni = ntfs_inode_open(vol, entry->mft_no);
 		if (!ni) {
-			ntfsck_delete_orphaned_mft(vol, of->mft_no);
+			ntfsck_delete_orphaned_mft(vol, entry->mft_no);
 			ret = STATUS_OK;
 			goto next_inode;
 		}
@@ -992,25 +887,10 @@ stack_of:
 			 */
 
 			if (!ntfs_fsck_mftbmp_get(vol, MREF(parent_no))) {
-				if (check_mftrec_in_use(vol, MREF(parent_no), 1)) {
-					struct ntfs_list_head *pos;
-					struct orphan_mft *tof;
+				struct orphan_mft *p_entry;
 
-					/*
-					 * Lookup parent in list to avoid infinite loop
-					 * issue by circular parent number.
-					 * TODO: change the linear lookup with hash table.
-					 */
-					ntfs_list_for_each(pos, &ntfs_orphan_list) {
-						tof = ntfs_list_entry(pos, struct orphan_mft, list);
-						if (tof->mft_no == MREF(parent_no)) {
-							ntfs_log_error("Found same parent number(%"PRIu64
-									") in orphan list\n",
-									MREF(parent_no));
-							goto add_to_lostfound;
-						}
-					}
-
+				p_entry = ntfsck_get_oc_list_entry(&oc_list_head, MREF(parent_no));
+				if (p_entry) {
 					/*
 					 * Parent is also orphaned file!
 					 */
@@ -1019,14 +899,10 @@ stack_of:
 					ntfs_attr_put_search_ctx(ctx);
 					ctx = NULL;
 					ntfs_inode_close(ni);
-					mft_no = MREF(parent_no);
+					entry = p_entry;
 					goto stack_of;
 				}
-				/*
-				 * Parent inode is deleted!
-				 */
-				ntfs_log_verbose("!! FOUND Deleted parent inode(%"PRIu64"), "
-						"inode(%"PRIu64")\n", MREF(parent_no), ni->mft_no);
+
 				goto add_to_lostfound;
 			}
 
@@ -1115,10 +991,9 @@ next_inode:
 			ntfs_inode_close(ni);
 			ni = NULL;
 		}
-
-		ntfs_list_del(&of->list);
-		free(of);
-	} /* while (!ntfs_list_empty(&ntfs_orphan_list)) */
+		ntfs_list_del(&entry->ot_list);
+		free(entry);
+	} /* while (!ntfs_list_empty(&ot_list_head)) */
 
 	return ret;
 }
@@ -1164,6 +1039,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	int is_used;
 	int always_exist_sys_meta_num = vol->major_ver >= 3 ? 11 : 10;
 	ntfs_inode *ni;
+	struct orphan_mft *of;
 
 	is_used = utils_mftrec_in_use(vol, mft_num);
 	if (is_used < 0) {
@@ -1180,14 +1056,14 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		if (ntfs_fsck_mftbmp_get(vol, mft_num)) {
 			ni = ntfs_inode_open(vol, mft_num);
 			if (ni) {
-				ntfsck_set_mft_record_bitmap(ni, TRUE);
+				ntfsck_set_mft_record_bitmap(ni, FALSE);
 				ntfs_inode_close(ni);
 				return;
 			}
 		}
 
 		ntfsck_check_mft_record_unused(vol, mft_num);
-		/* TODO: below function should use mft bitmap cache */
+		/* TODO: below function is needed? */
 		ntfs_fsck_mftbmp_clear(vol, mft_num);
 		return;
 	}
@@ -1228,24 +1104,16 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		return;
 	}
 
-	check_failed("Found an orphaned file(mft no: %"PRId64"). "
-			"Try to add index entry", mft_num);
-	if (ntfsck_ask_repair(vol)) {
-		/* close inode to avoid nested call of ntfs_inode_open() */
-		ntfs_inode_close(ni);
-
-		if (ntfsck_add_index_entry_orphaned_file(vol, mft_num)) {
-			/*
-			 * error returned.
-			 * inode is already freed and closed in that function,
-			 * do not need to call ntfs_inode_close()
-			 */
-			return;
-		}
-		fsck_err_fixed();
-	} else {
-		ntfs_inode_close(ni);
+	of = (struct orphan_mft *)calloc(1, sizeof(struct orphan_mft));
+	if (!of) {
+		ntfs_log_error("orphan_mft malloc failed");
+		return;
 	}
+
+	of->mft_no = mft_num;
+	ntfs_list_add(&of->oc_list, &oc_list_head);
+
+	ntfs_inode_close(ni);
 }
 
 #if DEBUG
@@ -3226,6 +3094,7 @@ create_lf:
 			ntfs_log_error("Failed to open/check '%s'\n", FILENAME_LOST_FOUND);
 	} else {
 		vol->lost_found = lf_ni->mft_no;
+		ntfsck_update_lcn_bitmap(lf_ni);
 		ntfs_inode_close(lf_ni);
 	}
 }
@@ -3291,8 +3160,6 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		ntfs_log_error("Failed to open root inode\n");
 		return -1;
 	}
-
-	ntfsck_check_lost_found(vol, dir_ni);
 
 	dir->mft_no = dir_ni->mft_no;
 	ntfs_inode_close(dir_ni);
@@ -3507,12 +3374,6 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	s64 mft_num, nr_mft_records;
 	ntfs_inode *lost_found = NULL;
 
-	mrec_unused_chk = ntfs_malloc(vol->sector_size);
-	if (!mrec_unused_chk) {
-		ntfs_log_perror("Couldn't allocate mrec_unused_chk buffer");
-		return;
-	}
-
 	fsck_start_step("Check mft entries in volume...\n");
 
 	// For each mft record, verify that it contains a valid file record.
@@ -3537,18 +3398,17 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	 */
 	ntfsck_update_lcn_bitmap(vol->mft_ni);
 
-	lost_found = ntfs_inode_open(vol, vol->lost_found);
-	if (!lost_found) {
-		ntfs_log_error("Can't open lost+found directory\n");
-		return;
+	if (vol->lost_found) {
+		lost_found = ntfs_inode_open(vol, vol->lost_found);
+		if (!lost_found) {
+			ntfs_log_error("Can't open lost+found directory\n");
+			return;
+		}
+		ntfsck_update_lcn_bitmap(lost_found);
+		ntfs_inode_close(lost_found);
 	}
 
-	ntfsck_update_lcn_bitmap(lost_found);
-	ntfs_inode_close(lost_found);
-
 	fsck_end_step();
-
-	free(mrec_unused_chk);
 }
 
 static int ntfsck_reset_dirty(ntfs_volume *vol)
@@ -3825,6 +3685,126 @@ close_inode:
 	return ret;
 }
 
+static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
+{
+	struct orphan_mft *entry;
+	ntfs_inode *root_ni;
+
+	/* check lost found directory */
+	if (!vol->lost_found) {
+		root_ni = ntfs_inode_open(vol, FILE_root);
+		if (!root_ni) {
+			ntfs_log_error("Failed to open root inode\n");
+			return STATUS_ERROR;
+		}
+
+		ntfsck_check_lost_found(vol, root_ni);
+		ntfs_inode_close(root_ni);
+	}
+
+	/* check orphaned mft */
+	while (!ntfs_list_empty(&oc_list_head)) {
+		entry = ntfs_list_entry(oc_list_head.next, struct orphan_mft, oc_list);
+
+		check_failed("Found an orphaned file(mft no: %"PRId64"). "
+				"Try to add index entry", entry->mft_no);
+
+		if (ntfsck_ask_repair(vol)) {
+			/* close inode to avoid nested call of ntfs_inode_open() */
+
+			if (ntfsck_add_index_entry_orphaned_file(vol, entry)) {
+				/*
+				 * error returned.
+				 * inode is already freed and closed in that function,
+				 * do not need to call ntfs_inode_close()
+				 */
+				return STATUS_ERROR;
+			}
+			fsck_err_fixed();
+		} else {
+			ntfs_list_del(&entry->oc_list);
+			free(entry);
+		}
+	}
+	return STATUS_OK;
+}
+
+typedef u8 *(*get_bmp_func)(ntfs_volume *, s64);
+
+static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func func)
+{
+	s64 count, pos, total, remain;
+	s64 rcnt, wcnt;
+	u8 *disk_bm;
+	u8 *fsck_bm;
+	int i;
+	unsigned long *ondisk_bmp;
+	unsigned long *fsck_bmp;
+
+	if (na != vol->lcnbmp_na && na != vol->mftbmp_na)
+		return STATUS_ERROR;
+
+	disk_bm = ntfs_calloc(NTFS_BUF_SIZE);
+	if (!disk_bm)
+		return STATUS_ERROR;
+
+	pos = 0;
+	count = NTFS_BUF_SIZE;
+	total = na->data_size;
+	remain = total;
+
+	if (total < count)
+		count = total;
+
+	/* apply btimap(fsck OR lcnbmp) to disk */
+	while (1) {
+		/* read bitmap from disk */
+		rcnt = ntfs_attr_pread(na, pos, count, disk_bm);
+		if (rcnt == STATUS_ERROR) {
+			ntfs_log_error("Couldn't get $Bitmap $DATA");
+			break;
+		}
+
+		if (rcnt != count)
+			continue; /* read again */
+
+		fsck_bm = func(vol, pos);
+
+		if (!memcmp(fsck_bm, disk_bm, count))
+			goto next;
+
+		/* ondisk lcnbmp OR fsck lcnbmp */
+		for (i = 0; i < (count / sizeof(unsigned long)); i++) {
+			ondisk_bmp = (unsigned long *)disk_bm + i;
+			fsck_bmp = (unsigned long *)fsck_bm + i;
+			*ondisk_bmp |= *fsck_bmp;
+		}
+
+		if (_ntfsck_ask_repair(vol, FALSE)) {
+			wcnt = ntfs_attr_pwrite(na, pos, count, disk_bm);
+			if (wcnt != count) {
+				ntfs_log_error("Cluster bitmap write failed, "
+						"pos:%"PRId64 "count:%"PRId64", writtne:%"PRId64"\n",
+						pos, count, wcnt);
+				/* TODO: continue? error? */
+			}
+
+		}
+
+next:
+		pos += count;
+		remain -= count;
+		if (remain && remain < NTFS_BUF_SIZE)
+			count = remain;
+
+		if (!remain)
+			break;
+	}
+
+	free(disk_bm);
+	return STATUS_OK;
+}
+
 /**
  * main - Does just what C99 claim it does.
  *
@@ -3998,9 +3978,21 @@ conflict_option:
 		goto err_out;
 	}
 
+	mrec_unused_chk = ntfs_malloc(vol->sector_size);
+	if (!mrec_unused_chk) {
+		ntfs_log_perror("Couldn't allocate mrec_unused_chk buffer");
+		goto err_out;
+	}
+
+	/* apply mft bitmap & cluster bitmap to disk */
 	ntfsck_check_mft_records(vol);
 
-	ntfsck_check_orphaned_clusters(vol);
+	ntfsck_apply_bitmap(vol, vol->lcnbmp_na, ntfs_fsck_find_lcnbmp_block);
+	ntfsck_apply_bitmap(vol, vol->mftbmp_na, ntfs_fsck_find_mftbmp_block);
+
+	ntfsck_check_orphaned_mft(vol);
+
+	free(mrec_unused_chk);
 
 err_out:
 	errors = fsck_errors - fsck_fixes;

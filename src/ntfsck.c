@@ -2114,7 +2114,7 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 	vol = na->ni->vol;
 	a =  actx->attr;
 
-	/* check cluster runlist and set bitmap */
+	/* check whole cluster runlist and set cluster bitmap of fsck */
 	if (ntfsck_check_attr_runlist(na, &rls, &need_fix, set_bit)) {
 		ntfs_log_error("Failed to get non-resident attribute(%d) "
 				"in directory(%"PRId64")", na->type, ni->mft_no);
@@ -2184,7 +2184,10 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 	if (!ntfsck_ask_repair(vol))
 		goto out;
 
-	ntfs_non_resident_attr_shrink(na, new_size);
+	if (na->type == AT_INDEX_ALLOCATION)
+		ntfsck_initialize_index_attr(ni);
+	else
+		ntfs_non_resident_attr_shrink(na, new_size);
 
 	fsck_err_fixed();
 
@@ -2413,6 +2416,9 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit)
 		if (!a->non_resident)
 			continue;
 
+		/* skip already checked same attribute type,
+		 * because ntfsck_check_non_resident_attr()
+		 * check all same attribute type at once */
 		if (CONV_TYPE_TO_BIT(a->type) & type_bitmap) {
 			ntfs_log_trace("SKIP: inode %"PRIu64", type %02x type_bitmap %08x\n",
 					ni->mft_no, a->type, type_bitmap);
@@ -2917,19 +2923,12 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 					 ntfs_index_context *ictx)
 {
 	ntfs_attr *bmp_na;
-	INDEX_ALLOCATION *ia;
-	FILE_NAME_ATTR *ie_fn;
-	INDEX_ENTRY *ie;
-	INDEX_ROOT *ir = ictx->ir;
-	ntfs_inode *ni = ictx->ni, *cni;
-	MFT_REF mref;
+	ntfs_inode *ni = ictx->ni;
 	VCN vcn;
-	u32 ir_size = le32_to_cpu(ir->index.index_length);
-	u32 ib_cnt = 0, i;
+	u32 i;
 	BOOL ib_corrupted = FALSE;
-	u8 *ir_buf, *ia_buf = NULL, *bmp_buf = NULL, *ibs, *index_end;
-	char *filename;
-	u64 max_vcn_bits;
+	u8 *ia_buf = NULL;
+	VCN max_vcn_bits;
 
 	ictx->ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION,
 			ictx->name, ictx->name_len);
@@ -2944,64 +2943,33 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		return;
 	}
 
-	bmp_buf = malloc(bmp_na->data_size);
-	if (!bmp_buf) {
-		ntfs_log_error("Failed to allocate bitmap buffer\n");
-		ntfs_attr_close(ictx->ia_na);
-		ntfs_attr_close(bmp_na);
-		ictx->ia_na = NULL;
-		return;
-	}
-
-	ir_buf = malloc(le32_to_cpu(ir->index.index_length));
-	if (!ir_buf) {
-		ntfs_log_error("Failed to allocate ir buffer\n");
-		ntfs_free(bmp_buf);
-		ntfs_attr_close(ictx->ia_na);
-		ntfs_attr_close(bmp_na);
-		ictx->ia_na = NULL;
-		return;
-	}
-
-	memcpy(ir_buf, (u8 *)&ir->index + le32_to_cpu(ir->index.entries_offset),
-		       ir_size);
-
-	ia_buf = ntfs_malloc(ictx->ia_na->data_size);
+	ia_buf = ntfs_malloc(ictx->block_size);
 	if (!ia_buf) {
 		ntfs_log_error("Failed to allocate ia buffer\n");
 		goto out;
 	}
 
-	if (ntfs_attr_pread(bmp_na, 0, bmp_na->data_size, bmp_buf) != bmp_na->data_size) {
-		ntfs_log_perror("Failed to read $BITMAP");
-		goto out;
-	}
-
 	max_vcn_bits = bmp_na->data_size * 8;
 
-	ibs = ia_buf;
 	for (i = ictx->ia_na->data_size, vcn = 0; i > 0; i -= ictx->block_size, vcn++) {
 		if (max_vcn_bits <= vcn)
 			break;
 
-		if (!ntfs_bit_get(bmp_buf, vcn))
-			continue;
-
 		if (ntfs_attr_mst_pread(ictx->ia_na,
 					ntfs_ib_vcn_to_pos(ictx, vcn), 1,
-					ictx->block_size, ibs) != 1) {
+					ictx->block_size, ia_buf) != 1) {
 			ntfs_log_perror("Failed to read index blocks of inode(%"PRIu64"), %d",
 					ictx->ni->mft_no, errno);
 			ib_corrupted = TRUE;
-			goto out;
+			break;
 		}
 
-		if (ntfs_index_block_inconsistent(vol, ictx->ia_na, (INDEX_ALLOCATION *)ibs,
+		if (ntfs_index_block_inconsistent(vol, ictx->ia_na, (INDEX_ALLOCATION *)ia_buf,
 					ictx->block_size, ni->mft_no,
-					vcn))
+					vcn)) {
 			ib_corrupted = TRUE;
-		ibs += ictx->block_size;
-		ib_cnt++;
+			break;
+		}
 	}
 
 	if (ib_corrupted == FALSE)
@@ -3013,107 +2981,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		goto out;
 	}
 
-	index_end = ir_buf + ir_size;
-	ie = (INDEX_ENTRY *)ir_buf;
-
-	for (;; ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
-		if ((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end ||
-		    (u8 *)ie + le16_to_cpu(ie->length) > index_end) {
-
-			ntfs_log_verbose("Index root entry out of bounds in"
-					" inode %"PRId64"\n", ni->mft_no);
-			break;
-		}
-
-		/* The last entry cannot contain a name. */
-		if (ie->ie_flags & INDEX_ENTRY_END)
-			break;
-
-		if (!le16_to_cpu(ie->length))
-			break;
-
-		/* The file name must not overflow from the entry */
-		if (ntfs_index_entry_inconsistent(vol, ie, COLLATION_FILE_NAME,
-				ni->mft_no, NULL) < 0)
-			continue;
-
-		ie_fn = &ie->key.file_name;
-		mref = le64_to_cpu(ie->indexed_file);
-		filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
-		ntfs_log_info("Inserting entry to index root, mref : %"PRIu64", %s\n",
-			      MREF(le64_to_cpu(ie->indexed_file)), filename);
-		free(filename);
-
-		cni = ntfs_inode_open(vol, MREF(mref));
-		if (!cni)
-			continue;
-
-		if (ntfs_index_add_filename(ni, ie_fn,
-					    MK_MREF(cni->mft_no,
-					    le16_to_cpu(cni->mrec->sequence_number))))
-			ntfs_log_error("Failed to add index entry, errno : %d\n",
-					errno);
-		ntfs_inode_close(cni);
-	}
-
-	ia = (INDEX_ALLOCATION *)ia_buf;
-	for (i = 0; i < ib_cnt; i++) {
-		index_end = (u8 *)ia + ictx->block_size;
-		ie = (INDEX_ENTRY *)((u8 *)&ia->index +
-				le32_to_cpu(ia->index.entries_offset));
-
-		for (;; ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
-			/* Bounds checks. */
-			if ((u8 *)ie < (u8 *)ia || (u8 *)ie +
-				sizeof(INDEX_ENTRY_HEADER) > index_end ||
-				(u8 *)ie + le16_to_cpu(ie->length) >
-				index_end) {
-
-				ntfs_log_verbose("Index entry out of bounds in directory inode "
-						 "%"PRId64".\n", ni->mft_no);
-				break;
-			}
-
-			/* The last entry cannot contain a name. */
-			if (ie->ie_flags & INDEX_ENTRY_END)
-				break;
-
-			if (!le16_to_cpu(ie->length))
-				break;
-
-			/* The file name must not overflow from the entry */
-			if (ntfs_index_entry_inconsistent(vol, ie,
-							  COLLATION_FILE_NAME,
-							  ni->mft_no,
-							  NULL))
-				continue;
-
-			ie_fn = &ie->key.file_name;
-			mref = le64_to_cpu(ie->indexed_file);
-			filename = ntfs_attr_name_get(ie_fn->file_name,
-					ie_fn->file_name_length);
-			ntfs_log_info("Inserting entry to $IA, mref : %"PRIu64", %s\n",
-				      MREF(le64_to_cpu(ie->indexed_file)), filename);
-			free(filename);
-
-			cni = ntfs_inode_open(vol, MREF(mref));
-			if (!cni)
-				continue;
-
-			if (ntfs_index_add_filename(ni, ie_fn,
-					MK_MREF(cni->mft_no,
-						le16_to_cpu(cni->mrec->sequence_number))))
-				ntfs_log_error("Failed to add index entry, errno : %d\n",
-						errno);
-			ntfs_inode_close(cni);
-		}
-		ia = (INDEX_ALLOCATION *)((u8 *)ia + ictx->block_size);
-	}
-
 out:
-	ntfs_free(ir_buf);
-	if (bmp_buf)
-		ntfs_free(bmp_buf);
 	if (ia_buf)
 		ntfs_free(ia_buf);
 	ntfs_attr_close(ictx->ia_na);

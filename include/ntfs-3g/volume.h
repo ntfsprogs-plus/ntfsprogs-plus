@@ -295,6 +295,7 @@ struct _ntfs_volume {
 
 	s64 nr_clusters;	/* Volume size in clusters, hence also the
 				   number of bits in lcn_bitmap. */
+	s64 nr_sectors;		/* total number of sectors */
 	ntfs_inode *lcnbmp_ni;	/* ntfs_inode structure for FILE_Bitmap. */
 	ntfs_attr *lcnbmp_na;	/* ntfs_attr structure for the data attribute
 				   of FILE_Bitmap. Each bit represents a

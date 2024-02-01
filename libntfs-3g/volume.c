@@ -438,6 +438,8 @@ mft_has_no_attr_list:
 	if (!filename || strcmp(filename, "$MFT")) {
 		ntfs_log_error("filename of $MFT record is not '$MFT'(%s)\n",
 				filename);
+		if (filename)
+			ntfs_attr_name_free(&filename);
 		goto error_exit;
 	}
 	ntfs_attr_name_free(&filename);

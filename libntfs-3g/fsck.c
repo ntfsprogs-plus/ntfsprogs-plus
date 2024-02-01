@@ -73,15 +73,15 @@ int ntfs_fsck_set_mftbmp_value(ntfs_volume *vol, u64 mft_no, int value)
 }
 
 /* get fsck mft bitmap */
-char ntfs_fsck_mftbmp_get(ntfs_volume *vol, const u64 bit)
+char ntfs_fsck_mftbmp_get(ntfs_volume *vol, const u64 mft_no)
 {
-	u32 bm_i = FB_ROUND_DOWN(bit >> NTFSCK_BYTE_TO_BITS);
+	u32 bm_i = FB_ROUND_DOWN(mft_no >> NTFSCK_BYTE_TO_BITS);
 	s64 bm_pos = (s64)bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
 
 	if (bm_i >= vol->max_fmb_cnt || !vol->fsck_mft_bitmap[bm_i])
 		return 0;
 
-	return ntfs_bit_get(vol->fsck_mft_bitmap[bm_i], bit - bm_pos);
+	return ntfs_bit_get(vol->fsck_mft_bitmap[bm_i], mft_no - bm_pos);
 }
 
 /* clear fsck mft bitmap */
@@ -96,9 +96,9 @@ int ntfs_fsck_mftbmp_set(ntfs_volume *vol, u64 mft_no)
 	return ntfs_fsck_set_mftbmp_value(vol, mft_no, 1);
 }
 
-u8 *ntfs_fsck_find_mftbmp_block(ntfs_volume *vol, s64 mft_no)
+u8 *ntfs_fsck_find_mftbmp_block(ntfs_volume *vol, s64 pos)
 {
-	u32 bm_i = FB_ROUND_DOWN(mft_no);
+	u32 bm_i = FB_ROUND_DOWN(pos);
 
 	if (bm_i >= vol->max_fmb_cnt || !vol->fsck_mft_bitmap[bm_i])
 		return zero_bm;

@@ -803,8 +803,8 @@ static int ntfs_ib_read(ntfs_index_context *icx, VCN vcn, INDEX_BLOCK *dst)
 		if (ret == -1)
 			ntfs_log_perror("Failed to read index block");
 		else
-			ntfs_log_error("Failed to read full index block at "
-				       "%lld\n", (long long)pos);
+			ntfs_log_error("Failed(%lld) to read full index block at "
+				       "%lld\n", (long long)ret, (long long)pos);
 		return -1;
 	}
 

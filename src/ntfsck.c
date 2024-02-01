@@ -454,8 +454,9 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 
 		/* If check_flag set FALSE, when found $FN in parent index, return error */
 		if (check_flag == FALSE) {
-			ntfs_log_error("Index already exist in parent, delete inode(%"PRIu64")\n",
-					ni->mft_no);
+			ntfs_log_error("Index already exist in parent(%"PRIu64"), "
+					"inode(%"PRIu64")\n",
+					parent_ni->mft_no, ni->mft_no);
 			errno = EEXIST;
 			ntfs_index_ctx_put(ictx);
 			return STATUS_ERROR;
@@ -573,7 +574,7 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	}
 
 	if (!ntfs_fsck_mftbmp_get(vol, parent_ni->mft_no)) {
-		ntfs_log_info("parent(%"PRIu64") of orphaned inode(%"PRIu64") mft bitmap not set\n",
+		ntfs_log_debug("parent(%"PRIu64") of orphaned inode(%"PRIu64") mft bitmap not set\n",
 				parent_ni->mft_no, ni->mft_no);
 	}
 
@@ -633,6 +634,7 @@ static int ntfsck_add_inode_to_lostfound(ntfs_inode *ni, FILE_NAME_ATTR *fn,
 			goto err_out;
 		}
 	} else if (ret != STATUS_NOT_FOUND) {
+		ntfs_log_error("error find_and_check_inode():%"PRIu64"\n", ni->mft_no);
 		goto err_out;
 	}
 
@@ -946,7 +948,9 @@ stack_of:
 					goto stack_of;
 				}
 
-				/* TODO: set mft record unused for parent_no ??? */
+				ntfs_log_debug("Not found parent inode(%"PRIu64")"
+						"of inode(%"PRIu64") in orphaned list\n",
+						MREF(parent_no), ni->mft_no);
 				goto add_to_lostfound;
 			}
 
@@ -964,10 +968,9 @@ stack_of:
 
 				if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn)) {
 					/* do not add inode to parent */
-					ntfs_log_info("Different sequence number of parent(%"PRIu64
+					ntfs_log_debug("Different sequence number of parent(%"PRIu64
 							") and inode(%"PRIu64")\n",
 							parent_ni->mft_no, ni->mft_no);
-					printf("Delete orphaned inode(%"PRIu64")\n", ni->mft_no);
 					ntfs_attr_record_rm(ctx);
 					NInoClearDirty(parent_ni);
 					NInoFileNameClearDirty(parent_ni);
@@ -1190,10 +1193,9 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 			if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn) < 0) {
 				/* do not add inode to parent */
-				ntfs_log_info("Different sequence number of parent(%"PRIu64
+				ntfs_log_debug("Different sequence number of parent(%"PRIu64
 						") and inode(%"PRIu64")\n",
 						parent_ni->mft_no, ni->mft_no);
-				printf("Remove filename of inode(%"PRIu64")\n", ni->mft_no);
 				ntfsck_remove_filename(ni, fn);
 				ntfsck_close_inode(parent_ni);
 				continue;
@@ -3118,7 +3120,7 @@ initialize_index:
 	goto out;
 }
 
-static int _ntfsck_remove_index(ntfs_inode *parent_ni, ntfs_inode *ni)
+static int ntfsck_remove_index(ntfs_inode *parent_ni, ntfs_inode *ni)
 {
 	ntfs_attr_search_ctx *actx;
 	ntfs_index_context *ictx;
@@ -3194,7 +3196,7 @@ create_lf:
 					return;
 				}
 
-				ntfs_log_info("%s(%"PRIu64") created\n", FILENAME_LOST_FOUND,
+				ntfs_log_debug("%s(%"PRIu64") created\n", FILENAME_LOST_FOUND,
 						lf_ni->mft_no);
 			}
 			free(ucs_name);
@@ -3210,7 +3212,7 @@ create_lf:
 
 			ntfs_log_error("%s(%"PRIu64") is not a directory, delete it\n",
 					FILENAME_LOST_FOUND, lf_ni->mft_no);
-			ret = _ntfsck_remove_index(ni, lf_ni);
+			ret = ntfsck_remove_index(ni, lf_ni);
 			if (!ret) {
 				ntfsck_free_mft_records(vol, lf_ni);
 				goto create_lf;
@@ -3495,7 +3497,7 @@ static int ntfsck_scan_index_entries(ntfs_volume *vol)
 {
 	int ret;
 
-	fsck_start_step("Check index entries in volume...\n");
+	fsck_start_step("Check index entries in volume...");
 
 	ret = ntfsck_scan_index_entries_btree(vol);
 
@@ -3507,7 +3509,7 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
 
-	fsck_start_step("Check mft entries in volume...\n");
+	fsck_start_step("Check mft entries in volume...");
 
 	// For each mft record, verify that it contains a valid file record.
 	nr_mft_records = vol->mft_na->initialized_size >>
@@ -3548,7 +3550,7 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 
 static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 {
-	fsck_start_step("Replay logfile...\n");
+	fsck_start_step("Replay logfile...");
 
 	/*
 	 * For now, Just reset logfile.
@@ -3688,7 +3690,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	int is_used;
 	BOOL trivial;	/* represent system file is trivial or not */
 
-	fsck_start_step("Check system files...\n");
+	fsck_start_step("Check system files...");
 
 	root_ni = ntfsck_check_root_inode(vol);
 	if (!root_ni) {
@@ -3726,7 +3728,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 
 			sys_ni = ntfsck_open_inode(vol, mft_num);
 			if (!sys_ni) {
-				ntfs_log_info("Failed to open system file(%"PRId64")\n",
+				ntfs_log_error("Failed to open system file(%"PRId64")\n",
 						mft_num);
 				continue;
 			}
@@ -3875,7 +3877,7 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 			fbml = (unsigned long *)fsck_bm + i;
 			if (*dbml != *fbml) {
 #ifdef DEBUG
-				printf("%s bitmap:\n", na->type == 0xb0 ? "MFT" : "LCN");
+				ntfs_log_info("%s bitmap:\n", na->type == 0xb0 ? "MFT" : "LCN");
 				ntfs_log_info("1:difference pos(%"PRIu64":%lu:%"PRIu64
 						"): %0lx:%0lx\n", pos, i,
 						(pos + i) * sizeof(unsigned long) << 3, *dbml, *fbml);
@@ -3890,7 +3892,7 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 		}
 
 		if (direction != 1)
-			ntfs_log_info("fsck/disk bitmap inode(%"PRIu64":%02x),bitmap pos(%"PRIu64":%"PRIu64
+			ntfs_log_debug("fsck/disk bitmap inode(%"PRIu64":%02x),bitmap pos(%"PRIu64":%"PRIu64
 					") are different\n", na->ni->mft_no, na->type, pos, count);
 
 		if (_ntfsck_ask_repair(vol, FALSE)) {
@@ -3928,7 +3930,7 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 	struct orphan_mft *entry = NULL;
 	ntfs_inode *root_ni;
 
-	fsck_start_step("Check orphaned mft...\n");
+	fsck_start_step("Check orphaned mft...");
 
 	ntfsck_apply_bitmap(vol, vol->lcnbmp_na, ntfs_fsck_find_lcnbmp_block, 1);
 	ntfsck_apply_bitmap(vol, vol->mftbmp_na, ntfs_fsck_find_mftbmp_block, 1);
@@ -3958,7 +3960,8 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 				 * error returned.
 				 * inode is already freed and closed in that function,
 				 */
-				printf("failed to add entry(%"PRIu64") orphaned file\n", entry->mft_no);
+				ntfs_log_error("failed to add entry(%"PRIu64") orphaned file\n",
+						entry->mft_no);
 				return STATUS_ERROR;
 			}
 			fsck_err_fixed();

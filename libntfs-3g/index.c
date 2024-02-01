@@ -479,7 +479,7 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 	if (!ntfs_is_indx_record(ib->magic)) {
 		ntfs_log_error("Corrupt index block signature: vcn(%llu) inode(%llu)\n",
 			       (long long)vcn, (unsigned long long)inum);
-		return -1;
+		fixed = TRUE;
 	}
 
 	if (sle64_to_cpu(ib->index_block_vcn) != vcn) {
@@ -526,6 +526,20 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 		return -1;
 	}
 
+	if (fixed && ntfsck_ask_repair(vol)) {
+		u8 vcn_size_bits;
+
+		ib->magic = magic_INDX;
+
+		if (vol->cluster_size <= block_size)
+			vcn_size_bits = vol->cluster_size_bits;
+		else
+			vcn_size_bits = NTFS_BLOCK_SIZE_BITS;
+
+		if (ntfs_attr_mst_pwrite(ia_na, vcn << vcn_size_bits, 1,
+					block_size, (u8 *)ib) != 1)
+			return -1;
+	}
 	return (0);
 }
 

@@ -85,6 +85,10 @@ extern int parse_errors;
 #define fsck_start_step(FORMAT, ARGS...) \
 	do { \
 		ntfs_log_info("Parse #%d: " FORMAT, parse_count++, ##ARGS); \
+		if (fsck_errors) \
+			ntfs_log_info(" (left:%d, errors:%d, fixed:%d)", \
+				fsck_errors - fsck_fixes, fsck_errors, fsck_fixes); \
+		ntfs_log_info("\n"); \
 	} while (0)
 
 /* It is called when each fsck step end */

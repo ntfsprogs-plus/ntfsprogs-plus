@@ -852,6 +852,9 @@ static void ntfs_dump_filename(const char *indent,
 	printf("%sParent directory:\t %lld (0x%llx)\n", indent,
 			(long long)MREF_LE(file_name_attr->parent_directory),
 			(long long)MREF_LE(file_name_attr->parent_directory));
+	printf("%sParent seqeunece No:\t %lld (0x%llx)\n", indent,
+			(long long)MSEQNO_LE(file_name_attr->parent_directory),
+			(long long)MSEQNO_LE(file_name_attr->parent_directory));
 	/* time stuff */
 	if (!opts.notime) {
 		char *ntfs_time_str;

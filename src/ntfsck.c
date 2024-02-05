@@ -267,25 +267,6 @@ static int ntfsck_close_inode_in_dir(ntfs_inode *ni, ntfs_inode *dir_ni)
 	return res;
 }
 
-static void ntfsck_delete_inode(ntfs_inode *ni)
-{
-	ntfs_volume *vol;
-
-	if (!ni) {
-		ntfs_log_error("Can't delete orphaned inode: ni is NULL\n");
-		return;
-	}
-	vol = ni->vol;
-
-	/* Do not delete system file */
-	if (utils_is_metadata(ni) == 1) {
-		ntfsck_close_inode(ni);
-		return;
-	}
-	ntfsck_check_inode_non_resident(ni, 0);
-	ntfsck_free_mft_records(vol, ni);
-}
-
 /* update lcn bitmap to disk, not set in fsck lcn bitmap */
 static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 {
@@ -736,30 +717,6 @@ static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no)
 	ntfs_fsck_mftbmp_clear(vol, mft_no);
 }
 
-static void ntfsck_delete_orphaned_inode(ntfs_inode **ni)
-{
-	ntfs_volume *vol;
-
-	if (!*ni) {
-		ntfs_log_error("Can't delete orphaned inode: ni is NULL\n");
-		return;
-	}
-
-	vol = (*ni)->vol;
-
-	/* Do not delete system file */
-	if (utils_is_metadata(*ni) == 1) {
-		ntfsck_close_inode(*ni);
-		*ni = NULL;
-		return;
-	}
-
-	ntfsck_check_inode_non_resident(*ni, 0);
-	ntfsck_free_mft_records(vol, *ni);
-
-	*ni = NULL;
-}
-
 /*
  * compare parent mft sequence number and sequence number of inode's $FN
  */
@@ -1053,12 +1010,19 @@ add_to_lostfound:
 		} /* while (!ntfs_attr_lookup(AT_FILE_NAME, ... */
 
 		if (nlink == 0) {
-			ntfsck_delete_orphaned_inode(&ni);
-			ret = STATUS_OK;
-		} else if (nlink != le16_to_cpu(ni->mrec->link_count)) {
-			ni->mrec->link_count = cpu_to_le16(nlink);
-			ntfs_inode_mark_dirty(ni);
-			ret = STATUS_OK;
+			ntfsck_close_inode(ni);
+			ni = NULL;
+			ntfsck_check_mft_record_unused(vol, entry->mft_no);
+			ntfs_fsck_mftbmp_clear(vol, entry->mft_no);
+			check_mftrec_in_use(vol, entry->mft_no, 1);
+		} else {
+			ntfsck_set_mft_record_bitmap(ni, TRUE);  // FALSE is also ok?
+			check_mftrec_in_use(vol, ni->mft_no, 1);
+
+			if (nlink != le16_to_cpu(ni->mrec->link_count)) {
+				ni->mrec->link_count = cpu_to_le16(nlink);
+				ntfs_inode_mark_dirty(ni);
+			}
 		}
 
 next_inode:
@@ -1235,9 +1199,13 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	} /* while (!ntfs_attr_lookup(AT_FILE_NAME, ... */
 
 	if (nlink == 0) {
-		printf("Delete orphaned candidate inode(%"PRIu64")\n", ni->mft_no);
-		ntfsck_delete_orphaned_inode(&ni);
+		ntfs_log_debug("Delete orphaned candidate inode(%"PRIu64")\n", ni->mft_no);
 		ntfs_attr_put_search_ctx(ctx);
+		ntfsck_close_inode(ni);
+		ntfsck_check_mft_record_unused(vol, mft_num);
+		ntfs_fsck_mftbmp_clear(vol, mft_num);
+		check_mftrec_in_use(vol, mft_num, 1);
+		clear_mft_cnt++;
 		return;
 	}
 
@@ -2802,7 +2770,9 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 				NInoAttrListClearDirty(ni);
 				NInoClearDirty(ni);
 				/* TODO: distinguish delete or not, as error type */
-				ntfsck_delete_inode(ni);
+
+				/* Do not clear bitmap on disk */
+				ntfsck_close_inode(ni);
 				goto remove_index;
 			}
 		}
@@ -3257,7 +3227,6 @@ create_lf:
 					FILENAME_LOST_FOUND, lf_ni->mft_no);
 			ret = _ntfsck_remove_index(ni, lf_ni);
 			if (!ret) {
-				ntfsck_check_inode_non_resident(lf_ni, 0);
 				ntfsck_free_mft_records(vol, lf_ni);
 				goto create_lf;
 			}
@@ -4007,7 +3976,11 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 
 err_check_inode:
 		ntfs_log_error("Failed to previous check inode(%"PRIu64")\n", ni->mft_no);
-		ntfsck_delete_orphaned_inode(&ni);
+		ntfsck_close_inode(ni);
+		ntfsck_check_mft_record_unused(vol, ni->mft_no);
+		ntfs_fsck_mftbmp_clear(vol, ni->mft_no);
+		check_mftrec_in_use(vol, ni->mft_no, 1);
+		clear_mft_cnt++;
 		ntfs_list_del(&entry->oc_list);
 		free(entry);
 		continue;

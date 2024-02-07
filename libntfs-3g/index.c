@@ -471,7 +471,8 @@ INDEX_ROOT *ntfs_ir_lookup2(ntfs_inode *ni, ntfschar *name, u32 len)
 int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 		INDEX_BLOCK *ib, u32 block_size, u64 inum, VCN vcn)
 {
-	u32 ib_size = (unsigned)le32_to_cpu(ib->index.allocated_size)
+	INDEX_HEADER *ih = &ib->index;
+	u32 ib_size = (unsigned)le32_to_cpu(ih->allocated_size)
 			+ offsetof(INDEX_BLOCK, index);
 	BOOL fixed = FALSE;
 
@@ -498,19 +499,28 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 			       (unsigned int)block_size);
 		return -1;
 	}
-	if (le32_to_cpu(ib->index.entries_offset) < sizeof(INDEX_HEADER)) {
+
+	if (le32_to_cpu(ih->entries_offset) < sizeof(INDEX_HEADER)) {
 		ntfs_log_error("Invalid index entry offset in inode %lld\n",
 				(unsigned long long)inum);
 		return -1;
 	}
-	if (le32_to_cpu(ib->index.index_length)
-			<= le32_to_cpu(ib->index.entries_offset)) {
+
+	if (le32_to_cpu(ih->index_length)
+			<= le32_to_cpu(ih->entries_offset)) {
 		ntfs_log_error("No space for index entries in inode %lld\n",
 				(unsigned long long)inum);
 		return -1;
 	}
-	if (le32_to_cpu(ib->index.allocated_size)
-			< le32_to_cpu(ib->index.index_length)) {
+
+	if ((le32_to_cpu(ih->index_length) > le32_to_cpu(ih->allocated_size)) ||
+			(le32_to_cpu(ih->index_length) > vol->cluster_size)) {
+		ntfs_log_error("index length of %lld is too big\n", (unsigned long long)inum);
+		return -1;
+	}
+
+	if (le32_to_cpu(ih->allocated_size)
+			< le32_to_cpu(ih->index_length)) {
 		ntfs_log_error("Index entries overflow in inode %lld\n",
 				(unsigned long long)inum);
 		return -1;
@@ -600,35 +610,9 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 		}
 
 		if (data_size > ictx->ia_na->data_size) {
-			check_failed("VCN(%llu) in INDEX NODE exceed data_size of ia attr",
+			ntfs_log_error("VCN(%llu) in INDEX NODE exceed data_size of ia attr",
 					(unsigned long long)vcn);
-			if (ntfsck_ask_repair(vol)) {
-				VCN vcn_idx, end_vcn_idx;
-
-				/*
-				 * data_size of index allocation should be validated
-				 * with cluster run and $BITMAP in previous ntfs_inode_open().
-				 */
-				ie->ie_flags &= ~INDEX_ENTRY_NODE;
-				ie->length = cpu_to_le16(le16_to_cpu(ie->length) - 8);
-
-				/*
-				 * Clear cluster bit in $BITMAP as much as the difference
-				 * between data_size that cacludated with index node vcn
-				 * number and ia_na->data_size.
-				 */
-				vcn_idx = ((data_size + ictx->ir->index_block_size - 1) /
-						ictx->ir->index_block_size) - 1;
-				end_vcn_idx = ictx->ia_na->data_size / 8;
-				for (; vcn_idx >= end_vcn_idx; vcn_idx--)
-					ntfs_ibm_modify(ictx, vcn_idx, 0);
-
-				if (ictx->ia_na->data_size == 0)
-					ictx->ir->index.ih_flags = SMALL_INDEX;
-
-				ret = 1;
-				fsck_err_fixed();
-			}
+			return -1;
 		}
 	}
 
@@ -660,23 +644,9 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 	if (ie->key_length &&
 	    ((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key)) >
 	     le16_to_cpu(ie->length))) {
-		check_failed("Overflow from index entry in inode %lld",
+		ntfs_log_error("Overflow from index entry in inode %lld",
 				(long long)inum);
-		if (ntfsck_ask_repair(vol)) {
-			int index_off = offsetof(INDEX_ENTRY, key.file_name.file_name) +
-					ie->key.file_name.file_name_length * sizeof(ntfschar);
-			if (ie->ie_flags & INDEX_ENTRY_NODE)
-				index_off += 8;
-
-			if (index_off <= le16_to_cpu(ie->length)) {
-				ie->key_length = index_off;
-				fsck_err_fixed();
-				ret = 1;
-			} else
-				ret = -1;
-		} else
-			ret = -1;
-
+		ret = -1;
 	} else {
 		if (collation_rule == COLLATION_FILE_NAME) {
 			if ((offsetof(INDEX_ENTRY, key.file_name.file_name)
@@ -697,24 +667,6 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 					" entry in inode %lld",
 					(long long)inum);
 				ret = -1;
-			}
-		}
-
-		if (ret == -1) {
-			fsck_err_found();
-			if (ntfsck_ask_repair(vol)) {
-				if (collation_rule == COLLATION_FILE_NAME) {
-					ie->key.file_name.file_name_length = ie->key_length / sizeof(ntfschar);
-				} else {
-					u16 data_length = le16_to_cpu(ie->length);
-
-					if (ie->ie_flags & INDEX_ENTRY_NODE)
-						data_length -= 8;
-
-					ie->data_length = cpu_to_le16(data_length);
-				}
-				fsck_err_fixed();
-				ret = 1;
 			}
 		}
 	}

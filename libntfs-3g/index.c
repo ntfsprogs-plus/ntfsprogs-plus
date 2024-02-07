@@ -2153,15 +2153,27 @@ int ntfs_index_rm(ntfs_index_context *icx)
 	else
 		ih = &icx->ib->index;
 
+	if ((le32_to_cpu(ih->index_length) > le32_to_cpu(ih->allocated_size)) ||
+			(le32_to_cpu(ih->index_length) > icx->ni->vol->cluster_size)) {
+		ntfs_log_error("%s Index entry(0x%p)'s length is too big.\n",
+				icx->is_in_root ? "Index root" : "Index block",
+				(u8 *)icx->entry);
+		errno = EINVAL;
+		goto sweep_entries;
+	}
+
 	ie_start = (u8 *)ih + le32_to_cpu(ih->entries_offset);
 	ie_end = (u8 *)ih + le32_to_cpu(ih->index_length);
 
-	if (ie_start > (u8 *)icx->entry || ie_end <= (u8 *)icx->entry) {
+	if (ie_start > (u8 *)icx->entry ||
+			ie_end <= ((u8 *)icx->entry + icx->entry->length) ||
+			icx->entry->length > le32_to_cpu(ih->allocated_size) ||
+			icx->entry->length > icx->ni->vol->cluster_size) {
 		ntfs_log_error("Index entry(0x%p) is out of range from %s\n",
 				(u8 *)icx->entry,
 				icx->is_in_root ? "index root" : "index block");
 		errno = EINVAL;
-		goto err_out;
+		goto sweep_entries;
 	}
 
 	if (icx->entry->ie_flags & INDEX_ENTRY_NODE) {
@@ -2185,6 +2197,7 @@ int ntfs_index_rm(ntfs_index_context *icx)
 	}
 out:
 	return ret;
+sweep_entries:
 err_out:
 	ret = STATUS_ERROR;
 	goto out;

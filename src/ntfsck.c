@@ -627,11 +627,32 @@ static int ntfsck_add_inode_to_lostfound(ntfs_inode *ni, FILE_NAME_ATTR *fn,
 	/* check before rename orphaned file */
 	ret = ntfsck_find_and_check_index(lost_found, ni, fn, FALSE);
 	if (ret == STATUS_ERROR) {
-		ntfs_log_error("Failed to check inode(%"PRIu64")"
-				"to add to lost+found\n", ni->mft_no);
+		if (errno == EEXIST) {
+			goto rename_fn;
+		} else {
+			ntfs_log_error("Failed to check inode(%"PRIu64")"
+					"to add to lost+found\n", ni->mft_no);
+			goto err_out;
+		}
+	} else if (ret != STATUS_NOT_FOUND) {
 		goto err_out;
 	}
 
+	fn->parent_directory = MK_LE_MREF(lost_found->mft_no,
+			le16_to_cpu(lost_found->mrec->sequence_number));
+add_to_parent:
+	ret = ntfsck_add_inode_to_parent(vol, lost_found, ni, fn, ctx);
+
+err_out:
+	if (ucs_name)
+		free(ucs_name);
+	if (new_fn)
+		ntfs_free(new_fn);
+	if (lost_found)
+		ntfsck_close_inode(lost_found);
+	return ret;
+
+rename_fn:
 	/* rename 'FSCK_#' + 'mft_no' */
 	snprintf(filename, MAX_FILENAME_LEN_LOST_FOUND, "%s%"PRIu64"",
 			FILENAME_PREFIX_LOST_FOUND, ni->mft_no);
@@ -679,16 +700,7 @@ static int ntfsck_add_inode_to_lostfound(ntfs_inode *ni, FILE_NAME_ATTR *fn,
 		goto err_out;
 	}
 
-	ret = ntfsck_add_inode_to_parent(vol, lost_found, ni, fn, ctx);
-
-err_out:
-	if (ucs_name)
-		free(ucs_name);
-	if (new_fn)
-		ntfs_free(new_fn);
-	if (lost_found)
-		ntfsck_close_inode(lost_found);
-	return ret;
+	goto add_to_parent;
 }
 
 MFT_RECORD *mrec_unused_chk;
@@ -1174,7 +1186,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			parent_ni = ntfsck_open_inode(vol, MREF(parent_no));
 			if (!parent_ni) {
 				ntfs_log_error("Failed to open parent inode(%"PRIu64")\n",
-						parent_no);
+						MREF(parent_no));
 				continue;
 			}
 

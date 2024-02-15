@@ -139,7 +139,7 @@ struct ntfsls_dirent {
 	ntfs_volume *vol;
 };
 
-/* runlist allocated size: TODO move to runlist.c */
+/* runlist allocated size */
 struct rl_size {
 	s64 alloc_size;		/* allocated size (include hole length) */
 	s64 real_size;		/* data size (real allocated size) */
@@ -321,7 +321,6 @@ static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
  * check runlist size and set/clear bitmap of runlist.
  * Set or clear bit until encountering lcn whose value is less than LCN_HOLE,
  * Clear bit for invalid lcn.
- * (TODO: check $BITMAP if exist)
  *
  * @ni : MFT entry inode
  * @rl : runlist to check
@@ -586,7 +585,6 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	if (ret != STATUS_OK) {
 		err = -EIO;
 		free(tfn);
-		/* TODO: I don't know what should be done ??? */
 		return STATUS_ERROR;
 	}
 	free(tfn);
@@ -2370,8 +2368,6 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set)
 	return STATUS_OK;
 }
 
-#define CONV_TYPE_TO_BIT(type) (1 << ((type) >> 4))
-
 /*
  * check all cluster runlist of non-resident attributes of a inode
  */
@@ -2380,7 +2376,6 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit)
 	ntfs_attr_search_ctx *ctx;
 	ntfs_attr *na;
 	ATTR_RECORD *a;
-	unsigned long type_bitmap = 0;
 	int ret = STATUS_OK;
 
 	ctx = ntfs_attr_get_search_ctx(ni, NULL);
@@ -2397,8 +2392,19 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit)
 		 * because ntfsck_check_non_resident_attr()
 		 * check all same attribute type at once
 		 */
-		if ((a->type >= AT_FIRST_USER_DEFINED_ATTRIBUTE) ||
-				(CONV_TYPE_TO_BIT(a->type) & type_bitmap)) {
+		if (a->type >= AT_FIRST_USER_DEFINED_ATTRIBUTE) {
+			ntfs_log_trace("SKIP: inode %"PRIu64", type(%04x) for user defined\n",
+					ni->mft_no, a->type);
+			continue;
+		}
+
+		/*
+		 * To distinguish named attribute like as $DATA:UNNAMED, $DATA:NAMED,
+		 * check lowest_vcn. if lowest_vcn of attribute is not zero and attribute
+		 * bitmap is already set, then we can skip that attribute
+		 * because it has already checked in previous attributes walk.
+		 */
+		if (le64_to_cpu(a->lowest_vcn) != 0) {
 			ntfs_log_trace("SKIP: inode %"PRIu64", type %02x type_bitmap %08lx\n",
 					ni->mft_no, a->type, type_bitmap);
 			continue;
@@ -2416,8 +2422,6 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit)
 
 		ret = ntfsck_check_non_resident_attr(na, ctx, NULL, set_bit);
 
-		/* FIXME: how to handle named attribute */
-		type_bitmap |= CONV_TYPE_TO_BIT(a->type);
 		ntfs_attr_close(na);
 		if (ret) {
 			ntfs_attr_put_search_ctx(ctx);
@@ -2875,7 +2879,6 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 		ntfs_log_info("\n\nBitmap changed during check_inodes\n");
 		check_failed("Inode(%"PRIu64") $IA bitmap size are different. Fix it", ni->mft_no);
 		if (ntfsck_ask_repair(vol)) {
-			/* TODO: should modify while loop for insufficient write() */
 			wcnt = ntfs_attr_pwrite(bm_na, 0, ni->fsck_ibm_size, ni->fsck_ibm);
 			if (wcnt == ni->fsck_ibm_size)
 				fsck_err_fixed();
@@ -2904,7 +2907,6 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 #endif
 		check_failed("Inode(%"PRIu64") $IA bitmap different. Fix it", ni->mft_no);
 		if (ntfsck_ask_repair(vol)) {
-			/* TODO: should reimpelemt with loop for insufficient write */
 			wcnt = ntfs_attr_pwrite(bm_na, 0, ibm_size, ni->fsck_ibm);
 			if (wcnt == ibm_size)
 				fsck_err_fixed();

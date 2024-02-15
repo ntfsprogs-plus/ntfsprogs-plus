@@ -278,17 +278,13 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 
 	while (!ntfs_attrs_walk(actx)) {
 		runlist *rl;
+		runlist *part_rl;
 		int i = 0;
 
 		if (!actx->attr->non_resident)
 			continue;
 
-		/*
-		 * FIXME:
-		 * don't use ntfs_mapping_pairs_decompress,
-		 * use ntfs_mapping_pairs_decompress for fsck'
-		 */
-		rl = ntfs_mapping_pairs_decompress(ni->vol, actx->attr, NULL);
+		rl = ntfs_decompress_cluster_run(ni->vol, actx->attr, NULL, &part_rl);
 		if (!rl) {
 			ntfs_log_error("Failed to decompress runlist(mft_no:%"PRIu64", type:0x%x). "
 					"Leaving inconsistent metadata.\n",
@@ -325,7 +321,7 @@ static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
  * check runlist size and set/clear bitmap of runlist.
  * Set or clear bit until encountering lcn whose value is less than LCN_HOLE,
  * Clear bit for invalid lcn.
- * (TODO: check duplicated, check $BITMAP if exist)
+ * (TODO: check $BITMAP if exist)
  *
  * @ni : MFT entry inode
  * @rl : runlist to check
@@ -485,7 +481,6 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 				return STATUS_ERROR;
 			}
 		} else {
-			/* TODO: should be modified how to check inode */
 			if (ntfsck_check_inode(ni, ictx->entry, ictx)) {
 				/* Inode check failed, remove index and inode */
 				ntfs_log_error("Failed to check inode(%"PRId64") "
@@ -1734,57 +1729,6 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 	return (int32_t)ie_flags;
 }
 
-/* TODO: this function is useless call mapping_paris_decompress_on_fsck directly */
-static runlist *_ntfsck_decompose_runlist(ntfs_attr_search_ctx *actx,
-		runlist *old_rl, BOOL *need_fix)
-{
-	runlist *rl = NULL;
-	runlist *part_rl = NULL;
-	ntfs_volume *vol;
-	ATTR_RECORD *attr;
-
-	if (!actx || !actx->ntfs_ino)
-		return NULL;
-
-	vol = actx->ntfs_ino->vol;
-	if (!vol || !actx->attr) {
-		return NULL;
-	}
-
-	attr = actx->attr;
-
-	if (!attr->non_resident) {
-		ntfs_log_error("attr is not non-resident attribute\n");
-		return NULL;
-	}
-
-	rl = ntfs_mapping_pairs_decompress_on_fsck(vol, attr, old_rl,
-			&part_rl);
-	if (!rl) {
-		/*
-		 * decompress mp failed,
-		 * but part of mp is preserved in part_rl.
-		 */
-		if (!part_rl) {
-			part_rl = ntfs_calloc(sizeof(runlist));
-			if (!part_rl)
-				return NULL;
-			part_rl->vcn = 0;
-			part_rl->lcn = LCN_ENOENT;
-			part_rl->length = 0;
-		}
-
-		rl = part_rl;
-		*need_fix = TRUE;
-		/*
-		 * In case of decompress mp failure, fsck will
-		 * truncate it to zero size.
-		 * That is same as Windows repairing tool.
-		 */
-	}
-	return rl;
-}
-
 /*
  * Decompose non-resident cluster runlist and make into runlist structure.
  *
@@ -1811,8 +1755,7 @@ static runlist *_ntfsck_decompose_runlist(ntfs_attr_search_ctx *actx,
  *
  * this function refer to ntfs_attr_map_whole_runlist()
  */
-
-static runlist_element *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
+static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 {
 	ntfs_volume *vol;
 	ntfs_inode *ni;
@@ -1866,7 +1809,20 @@ static runlist_element *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 		temp_rl = rl;
 
 		if (not_mapped) {
-			rl = _ntfsck_decompose_runlist(actx, temp_rl, need_fix);
+			runlist *part_rl = NULL;
+
+			rl = ntfs_decompress_cluster_run(vol, attr, temp_rl, &part_rl);
+			if (!rl)
+				return NULL;
+
+			if (rl == part_rl) {
+				*need_fix = TRUE;
+				/*
+				 * In case of decompress mp failure, fsck will
+				 * truncate it to zero size.
+				 * That is same as Windows repairing tool.
+				 */
+			}
 			na->rl = rl;
 		}
 
@@ -2447,6 +2403,8 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit)
 		}
 
 		ret = ntfsck_check_non_resident_attr(na, ctx, NULL, set_bit);
+
+		/* FIXME: how to handle named attribute */
 		type_bitmap |= CONV_TYPE_TO_BIT(a->type);
 		ntfs_attr_close(na);
 		if (ret) {
@@ -2900,7 +2858,7 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 	}
 
 	if (ibm_size != ni->fsck_ibm_size) {
-		/* FIXME: if ni->fsck_ibm_size is larget than ibm_size,
+		/* FIXME: if ni->fsck_ibm_size is larger than ibm_size,
 		 * it could allocate cluster in ntfs_attr_pwrite() */
 		ntfs_log_info("\n\nBitmap changed during check_inodes\n");
 		check_failed("Inode(%"PRIu64") $IA bitmap size are different. Fix it", ni->mft_no);

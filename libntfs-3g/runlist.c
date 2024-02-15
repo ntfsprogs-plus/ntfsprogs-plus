@@ -1116,14 +1116,29 @@ runlist_element *ntfs_mapping_pairs_decompress(const ntfs_volume *vol,
 	return rle;
 }
 
-runlist_element *ntfs_mapping_pairs_decompress_on_fsck(const ntfs_volume *vol,
-		const ATTR_RECORD *attr, runlist_element *old_rl,
-		runlist_element **part_rl)
+runlist *ntfs_decompress_cluster_run(const ntfs_volume *vol,
+		const ATTR_RECORD *attr, runlist *old_rl, runlist **part_rl)
 {
-	runlist_element *rle;
+	runlist *rle;
 
 	ntfs_log_enter("Entering\n");
 	rle = ntfs_mapping_pairs_decompress_i(vol, attr, old_rl, part_rl);
+	if (!rle) {
+		/*
+		 * decompress cluster-run failed,
+		 * but part of cluster-run may be preserved in part_rl
+		 */
+		if (!*part_rl) {
+			*part_rl = ntfs_calloc(sizeof(runlist));
+			if (!*part_rl)
+				return NULL;
+			(*part_rl)->vcn = 0;
+			(*part_rl)->lcn = LCN_ENOENT;
+			(*part_rl)->length = 0;
+		}
+
+		rle = *part_rl;
+	}
 	ntfs_log_leave("\n");
 	return rle;
 }

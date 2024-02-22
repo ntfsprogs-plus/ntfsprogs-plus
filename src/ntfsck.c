@@ -3102,6 +3102,31 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 					ictx->block_size, ni->mft_no,
 					vcn))
 			ib_corrupted = TRUE;
+		else {
+			/* check index entries in a INDEX_ALLOCATION block */
+			ia = (INDEX_ALLOCATION *)ibs;
+			index_end = (u8 *)ia + ictx->block_size;
+			ie = (INDEX_ENTRY *)((u8 *)&ia->index +
+					le32_to_cpu(ia->index.entries_offset));
+
+			for (; (u8 *)ie < index_end;
+				ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
+				/* Bounds checks. */
+				if (((u8 *)ie < (u8 *)ia) ||
+					((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end) ||
+					((u8 *)ie + le16_to_cpu(ie->length) > index_end)) {
+					ib_corrupted = TRUE;
+					break;
+				}
+
+				/* The last entry cannot contain a name. */
+				if (ie->ie_flags & INDEX_ENTRY_END)
+					break;
+
+				if (!le16_to_cpu(ie->length))
+					break;
+			}
+		}
 		ibs += ictx->block_size;
 		ib_cnt++;
 	}

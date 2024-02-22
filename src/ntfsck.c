@@ -701,7 +701,7 @@ rename_fn:
 	goto add_to_parent;
 }
 
-MFT_RECORD *mrec_unused_chk;
+MFT_RECORD *mrec_temp_buf;
 /* delete orphaned mft, call this when inode open failed. */
 static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no)
 {
@@ -712,9 +712,9 @@ static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no)
 	/*
 	 * should be called this function only in
 	 * ntfsck_check_mft_record_unused().
-	 * So, if mrec_unused_chk memory is NULL, return.
+	 * So, if mrec_temp_buf memory is NULL, return.
 	 */
-	if (!mrec_unused_chk)
+	if (!mrec_temp_buf)
 		return;
 
 	ntfsck_check_mft_record_unused(vol, mft_no);
@@ -1062,13 +1062,13 @@ static int ntfsck_check_if_extent_mft_record(ntfs_volume *vol, s64 mft_num)
 	s64 count = vol->sector_size;
 	u64 base_mft;
 
-	if (ntfs_attr_pread(vol->mft_na, pos, count, mrec_unused_chk) != count) {
+	if (ntfs_attr_pread(vol->mft_na, pos, count, mrec_temp_buf) != count) {
 		ntfs_log_perror("Couldn't read $MFT record %lld",
 				(long long)mft_num);
 		return STATUS_ERROR;
 	}
 
-	base_mft = MREF_LE(mrec_unused_chk->base_mft_record);
+	base_mft = MREF_LE(mrec_temp_buf->base_mft_record);
 	if (base_mft == 0)
 		return STATUS_ERROR;	/* base mft */
 
@@ -1081,14 +1081,14 @@ static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 	s64 pos = mft_num * vol->mft_record_size;
 	s64 count = vol->sector_size;
 
-	if (ntfs_attr_pread(vol->mft_na, pos, count, mrec_unused_chk) != count) {
+	if (ntfs_attr_pread(vol->mft_na, pos, count, mrec_temp_buf) != count) {
 		ntfs_log_perror("Couldn't read $MFT record %lld",
 				(long long)mft_num);
 		return;
 	}
 
-	if (!ntfs_is_file_record(mrec_unused_chk->magic) ||
-	    !(mrec_unused_chk->flags & MFT_RECORD_IN_USE)) {
+	if (!ntfs_is_file_record(mrec_temp_buf->magic) ||
+	    !(mrec_temp_buf->flags & MFT_RECORD_IN_USE)) {
 		ntfs_log_verbose("Record(%"PRId64") unused. Skipping.\n",
 				mft_num);
 		return;
@@ -1097,14 +1097,14 @@ static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 	ntfs_log_error("Record(%"PRId64") used. "
 		       "Mark the mft record as not in use.\n",
 		       mft_num);
-	mrec_unused_chk->flags &= ~MFT_RECORD_IN_USE;
-	seq_no = le16_to_cpu(mrec_unused_chk->sequence_number);
+	mrec_temp_buf->flags &= ~MFT_RECORD_IN_USE;
+	seq_no = le16_to_cpu(mrec_temp_buf->sequence_number);
 	if (seq_no == 0xffff)
 		seq_no = 1;
 	else if (seq_no)
 		seq_no++;
-	mrec_unused_chk->sequence_number = cpu_to_le16(seq_no);
-	if (ntfs_attr_pwrite(vol->mft_na, pos, count, mrec_unused_chk) != count) {
+	mrec_temp_buf->sequence_number = cpu_to_le16(seq_no);
+	if (ntfs_attr_pwrite(vol->mft_na, pos, count, mrec_temp_buf) != count) {
 		ntfs_log_error("Failed to write mft record(%"PRId64")\n",
 				mft_num);
 	}
@@ -1148,7 +1148,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		}
 
 		fsck_err_found();
-		ntfs_log_info("Clear the bit of mft no(%"PRId64") "
+		ntfs_log_debug("Clear the bit of mft no(%"PRId64") "
 				"in the $MFT/$BITMAP corresponding orphaned MFT record\n",
 				mft_num);
 		if (_ntfsck_ask_repair(vol, FALSE)) {
@@ -1203,16 +1203,18 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		nlink++;
 	} /* while (!ntfs_attr_lookup(AT_FILE_NAME, ... */
 
-	if (nlink == 0) {
-		ntfs_log_debug("Delete orphaned candidate inode(%"PRIu64")\n", ni->mft_no);
-		ntfs_attr_put_search_ctx(ctx);
-		ntfsck_close_inode(ni);
-		ntfsck_check_mft_record_unused(vol, mft_num);
-		ntfs_fsck_mftbmp_clear(vol, mft_num);
-		check_mftrec_in_use(vol, mft_num, 1);
-		clear_mft_cnt++;
-		return;
+	if (nlink == 0)
+		goto err_check_inode;
+
+	if (ni->attr_list) {
+		if (ntfsck_check_attr_list(ni))
+			goto err_check_inode;
+
+		if (ntfs_inode_attach_all_extents(ni))
+			goto err_check_inode;
 	}
+
+	ntfsck_update_lcn_bitmap(ni);
 
 	if (ctx) {
 		ntfs_attr_put_search_ctx(ctx);
@@ -1241,6 +1243,17 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	ntfs_log_debug("close inode (%"PRIu64")\n", ni->mft_no);
 	ntfsck_close_inode(ni);
+	return;
+
+err_check_inode:
+	ntfs_log_debug("Delete orphaned candidate inode(%"PRIu64")\n", ni->mft_no);
+	ntfs_attr_put_search_ctx(ctx);
+	ntfsck_close_inode(ni);
+	ntfsck_check_mft_record_unused(vol, mft_num);
+	ntfs_fsck_mftbmp_clear(vol, mft_num);
+	check_mftrec_in_use(vol, mft_num, 1);
+	clear_mft_cnt++;
+	return;
 }
 
 #if DEBUG
@@ -3913,50 +3926,9 @@ next:
 static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 {
 	struct orphan_mft *entry = NULL;
-	struct ntfs_list_head *pos;
-	struct ntfs_list_head *tmp;
 	ntfs_inode *root_ni;
-	ntfs_inode *ni;
 
 	fsck_start_step("Check orphaned mft...\n");
-
-	ntfs_list_for_each_safe(pos, tmp, &oc_list_head) {
-		entry = ntfs_list_entry(pos, struct orphan_mft, oc_list);
-
-		ni = ntfsck_open_inode(vol, entry->mft_no);
-		if (!ni) {
-			ntfs_log_error("Failed to open orphaned inode(%"PRIu64"), check next\n",
-					entry->mft_no);
-			ntfsck_delete_orphaned_mft(vol, entry->mft_no);
-			ntfs_list_del(&entry->oc_list);
-			free(entry);
-			continue;
-		}
-
-		if (ni->attr_list) {
-			if (ntfsck_check_attr_list(ni))
-				goto err_check_inode;
-
-			if (ntfs_inode_attach_all_extents(ni))
-				goto err_check_inode;
-		}
-
-		ntfsck_update_lcn_bitmap(ni);
-		/* FALSE or TRUE? */
-		ntfsck_close_inode(ni);
-		continue;
-
-err_check_inode:
-		ntfs_log_error("Failed to previous check inode(%"PRIu64")\n", ni->mft_no);
-		ntfsck_close_inode(ni);
-		ntfsck_check_mft_record_unused(vol, ni->mft_no);
-		ntfs_fsck_mftbmp_clear(vol, ni->mft_no);
-		check_mftrec_in_use(vol, ni->mft_no, 1);
-		clear_mft_cnt++;
-		ntfs_list_del(&entry->oc_list);
-		free(entry);
-		continue;
-	}
 
 	ntfsck_apply_bitmap(vol, vol->lcnbmp_na, ntfs_fsck_find_lcnbmp_block, 1);
 	ntfsck_apply_bitmap(vol, vol->mftbmp_na, ntfs_fsck_find_mftbmp_block, 1);
@@ -4226,9 +4198,9 @@ conflict_option:
 	if (ntfsck_replay_log(vol))
 		goto err_out;
 
-	mrec_unused_chk = ntfs_malloc(vol->sector_size);
-	if (!mrec_unused_chk) {
-		ntfs_log_perror("Couldn't allocate mrec_unused_chk buffer");
+	mrec_temp_buf = ntfs_malloc(vol->sector_size);
+	if (!mrec_temp_buf) {
+		ntfs_log_perror("Couldn't allocate mrec_temp_buf buffer");
 		goto err_out;
 	}
 
@@ -4242,7 +4214,7 @@ conflict_option:
 
 	ntfsck_check_orphaned_mft(vol);
 
-	free(mrec_unused_chk);
+	free(mrec_temp_buf);
 
 err_out:
 	errors = fsck_errors - fsck_fixes;

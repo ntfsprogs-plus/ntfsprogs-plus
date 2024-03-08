@@ -1009,7 +1009,8 @@ add_to_lostfound:
 			if (ret) {
 				ntfs_log_error("Failed to add inode(%"PRIu64") to %s\n",
 						ni->mft_no, FILENAME_LOST_FOUND);
-				ntfsck_remove_filename(ni, fn);
+				if (_ntfsck_ask_repair(vol, FALSE))
+					ntfsck_remove_filename(ni, fn);
 				ret = STATUS_OK;
 			} else {
 				ret = STATUS_OK;
@@ -1251,7 +1252,9 @@ err_check_inode:
 	ntfs_log_debug("Delete orphaned candidate inode(%"PRIu64")\n", ni->mft_no);
 	ntfs_attr_put_search_ctx(ctx);
 	ntfsck_close_inode(ni);
-	ntfsck_check_mft_record_unused(vol, mft_num);
+
+	if (_ntfsck_ask_repair(vol, FALSE))
+		ntfsck_check_mft_record_unused(vol, mft_num);
 	ntfs_fsck_mftbmp_clear(vol, mft_num);
 	check_mftrec_in_use(vol, mft_num, 1);
 	clear_mft_cnt++;
@@ -2280,8 +2283,9 @@ init_all:
 	if (ia_na)
 		ntfs_attr_close(ia_na);
 
-	ntfsck_initialize_index_attr(ni);
-	fsck_err_fixed();
+	if (_ntfsck_ask_repair(ni->vol, FALSE))
+		ntfsck_initialize_index_attr(ni);
+
 	return ret;
 }
 
@@ -3098,6 +3102,9 @@ out:
 initialize_index:
 	ntfs_log_info("inode(%"PRIu64") index is initialized\n", ni->mft_no);
 
+	if (!_ntfsck_ask_repair(vol, FALSE))
+		goto out;
+
 	if (ntfsck_initialize_index_attr(ni))
 		ntfs_log_perror("Failed to initialize index attributes of inode(%"PRIu64")\n",
 				ni->mft_no);
@@ -3230,7 +3237,8 @@ create_lf:
 			ntfs_log_error("Failed to open/check '%s'\n", FILENAME_LOST_FOUND);
 	} else {
 		vol->lost_found = lf_ni->mft_no;
-		ntfsck_set_mft_record_bitmap(lf_ni, TRUE);
+		if (_ntfsck_ask_repair(vol, FALSE))
+			ntfsck_set_mft_record_bitmap(lf_ni, TRUE);
 		ntfsck_close_inode(lf_ni);
 	}
 }
@@ -3282,7 +3290,6 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 	ntfs_index_context *ictx = NULL;
 	ntfs_attr *bm_na = NULL;
 	int ret;
-	COLLATION_RULES cr;
 
 	dir = (struct dir *)calloc(1, sizeof(struct dir));
 	if (!dir) {
@@ -3333,8 +3340,6 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		/* Get to the index root value. */
 		ir = (INDEX_ROOT *)((u8 *)ctx->attr +
 				le16_to_cpu(ctx->attr->value_offset));
-
-		cr = ir->collation_rule;
 
 		ictx->ir = ir;
 		ictx->actx = ctx;
@@ -3404,17 +3409,6 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 				}
 				dir_ni->fsck_ibm_size = bm_na->allocated_size;
 			}
-		}
-
-		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0, ictx);
-		if (ret > 0) {
-			ret = ntfsck_update_index_entry(ictx);
-			if (ret) {
-				fsck_err_failed();
-				goto err_continue;
-			}
-		} else if (ret < 0) {
-			goto err_continue;
 		}
 
 		if (next->ie_flags == INDEX_ENTRY_END) {
@@ -3555,9 +3549,11 @@ static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 	/*
 	 * For now, Just reset logfile.
 	 */
-	if (ntfs_logfile_reset(vol)) {
-		check_failed("ntfs logfile reset failed, errno : %d\n", errno);
-		return STATUS_ERROR;
+	if (_ntfsck_ask_repair(vol, FALSE)) {
+		if (ntfs_logfile_reset(vol)) {
+			check_failed("ntfs logfile reset failed, errno : %d\n", errno);
+			return STATUS_ERROR;
+		}
 	}
 
 	fsck_end_step();

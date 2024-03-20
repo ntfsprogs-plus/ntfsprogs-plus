@@ -155,6 +155,8 @@ struct orphan_mft {
 } orphan_mft_t;
 
 int parse_count = 1;
+s64 clear_mft_cnt;
+s64 total_valid_mft;
 
 #define NTFS_PROGS	"ntfsck"
 /**
@@ -1114,7 +1116,6 @@ static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 	}
 }
 
-s64 clear_mft_cnt;
 static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	ntfs_inode *ni = NULL;
@@ -4027,6 +4028,79 @@ static int ntfsck_check_backup_boot(ntfs_volume *vol)
 	return STATUS_ERROR;
 }
 
+static void ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
+{
+	ntfs_inode *ni = NULL;
+	int is_used;
+
+	is_used = check_mftrec_in_use(vol, mft_num, 0);
+	if (is_used < 0) {
+		check_failed("Error getting bit value for record %"PRId64".\n",
+			mft_num);
+		return;
+	} else if (!is_used) {
+		if (mft_num < FILE_Extend) {
+			check_failed("Record(%"PRId64") unused. Fixing or fail about system files.\n",
+					mft_num);
+		}
+		return;
+	}
+
+	ni = ntfsck_open_inode(vol, mft_num);
+	if (!ni)
+		return;
+
+	total_valid_mft++;
+
+	if (ni->attr_list) {
+		if (ntfsck_check_attr_list(ni))
+			goto err_check_inode;
+
+		if (ntfs_inode_attach_all_extents(ni))
+			goto err_check_inode;
+	}
+
+	/*
+	 * TODO:
+	 * now, set cluster bitmap on every runlists of attributes in inode,
+	 * it's heavy operation. so it's better to use fsck cluster bitmap
+	 * and applying it to disk in this function
+	 */
+	ntfsck_update_lcn_bitmap(ni);
+	ntfsck_close_inode(ni);
+	return;
+
+err_check_inode:
+	ntfs_log_debug("Delete orphaned candidate inode(%"PRIu64")\n", ni->mft_no);
+	ntfsck_close_inode(ni);
+
+	if (_ntfsck_ask_repair(vol, FALSE))
+		ntfsck_check_mft_record_unused(vol, mft_num);
+	ntfs_fsck_mftbmp_clear(vol, mft_num);
+	check_mftrec_in_use(vol, mft_num, 1);
+}
+
+static void ntfsck_scan_mft_records(ntfs_volume *vol)
+{
+	s64 mft_num, nr_mft_records;
+
+	fsck_start_step("Scan mft entries in volume...");
+
+	// For each mft record, verify that it contains a valid file record.
+	nr_mft_records = vol->mft_na->initialized_size >>
+			vol->mft_record_size_bits;
+	ntfs_log_verbose("Scanning maximum %"PRId64" MFT records.\n", nr_mft_records);
+
+	/*
+	 * Force to read first bitmap block to invalidate static cache
+	 * array buffer.
+	 */
+	for (mft_num = FILE_MFT; mft_num < nr_mft_records; mft_num++)
+		ntfsck_scan_mft_record(vol, mft_num);
+
+	fsck_end_step();
+}
+
 /**
  * main - Does just what C99 claim it does.
  *
@@ -4190,6 +4264,8 @@ conflict_option:
 	}
 
 	ntfsck_check_backup_boot(vol);
+
+	ntfsck_scan_mft_records(vol);
 
 	if (ntfsck_check_system_files(vol))
 		goto err_out;

@@ -142,7 +142,6 @@ struct ntfsls_dirent {
 struct rl_size {
 	s64 alloc_size;		/* allocated size (include hole length) */
 	s64 real_size;		/* data size (real allocated size) */
-	VCN vcn;		/* last valid vcn */
 };
 
 NTFS_LIST_HEAD(ntfs_dirs_list);
@@ -525,7 +524,6 @@ static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 	s64 rl_alloc_size = 0;	/* rl allocated size (including HOLE length) */
 	s64 rl_data_size = 0;	/* rl data size (real allocated size) */
 	s64 rsize;		/* a cluster run size */
-	VCN valid_vcn = 0;
 	int i = 0;
 
 	if (!ni || !rl)
@@ -553,12 +551,6 @@ static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 			rsize = rl[i].length << vol->cluster_size_bits;
 			rl_alloc_size += rsize;
 		} else {
-			/* valid vcn until encountered < LCN_HOLE */
-			if (set_bit) {
-				valid_vcn = rl_alloc_size >> vol->cluster_size_bits;
-				set_bit = 0;
-			}
-
 			rl[i].lcn = LCN_ENOENT;
 			rl[i].length = 0;
 			break;
@@ -567,11 +559,7 @@ static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 		i++;
 	}
 
-	if (!valid_vcn)
-		valid_vcn = rl_alloc_size >> vol->cluster_size_bits;
-
 	if (rls) {
-		rls->vcn = valid_vcn;
 		rls->alloc_size = rl_alloc_size;
 		rls->real_size = rl_data_size;
 	}
@@ -2030,6 +2018,7 @@ static runlist_element *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 				break;
 			}
 
+			/* TODO: last_vcn value should be recalculated */
 			/* Get the last vcn in the attribute. */
 			last_vcn = sle64_to_cpu(attr->allocated_size) >>
 					vol->cluster_size_bits;
@@ -2951,7 +2940,7 @@ static int ntfsck_set_index_bitmap(ntfs_inode *ni, ntfs_index_context *ictx,
 
 	vcn = ictx->parent_vcn[ictx->pindex];
 	pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
-	bpos = pos / 8;
+	bpos = pos >> NTFSCK_BYTE_TO_BITS;
 
 	if (ictx->ni->fsck_ibm_size < bpos + 1) {
 		ictx->ni->fsck_ibm = ntfs_realloc(ictx->ni->fsck_ibm,
@@ -2967,7 +2956,8 @@ static int ntfsck_set_index_bitmap(ntfs_inode *ni, ntfs_index_context *ictx,
 
 	for (i = ictx->pindex; i > 0; i--) {
 		vcn = ictx->parent_vcn[i];
-		ntfs_bit_set(ictx->ni->fsck_ibm, vcn, 1);
+		pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
+		ntfs_bit_set(ictx->ni->fsck_ibm, pos, 1);
 	}
 
 	return STATUS_OK;
@@ -3061,6 +3051,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	u8 *ir_buf, *ia_buf = NULL, *bmp_buf = NULL, *ibs, *index_end;
 	char *filename;
 	u64 max_vcn_bits;
+	u32 vcn_step;
 
 	ictx->ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION,
 			ictx->name, ictx->name_len);
@@ -3110,12 +3101,16 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 	max_vcn_bits = bmp_na->data_size * 8;
 
+	vcn_step = ictx->block_size >> ictx->vcn_size_bits;
 	ibs = ia_buf;
-	for (i = ictx->ia_na->data_size, vcn = 0; i > 0; i -= ictx->block_size, vcn++) {
+	for (i = ictx->ia_na->data_size, vcn = 0; i > 0; i -= ictx->block_size, vcn += vcn_step) {
+		u32 bmp_pos;
+
 		if (max_vcn_bits <= vcn)
 			break;
 
-		if (!ntfs_bit_get(bmp_buf, vcn))
+		bmp_pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
+		if (!ntfs_bit_get(bmp_buf, bmp_pos))
 			continue;
 
 		if (ntfs_attr_mst_pread(ictx->ia_na,

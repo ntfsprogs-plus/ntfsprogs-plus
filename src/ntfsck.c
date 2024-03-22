@@ -464,6 +464,12 @@ static int ntfsck_set_lcnbmp_range(s64 lcn, s64 length, u8 bit)
 	return 0;
 }
 
+static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
+{
+	ntfs_attr_map_whole_runlist(na);
+	ntfsck_setbit_runlist(na->ni, na->rl, 0, NULL, TRUE);
+}
+
 static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 {
 	ntfs_attr_search_ctx *actx;
@@ -2076,6 +2082,9 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 	 */
 	ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4);
 	if (ia_na) {
+		/* clear fsck cluster(lcn) bitmap */
+		ntfsck_clear_attr_lcnbmp(ia_na);
+
 		if (ntfs_attr_rm(ia_na)) {
 			ntfs_log_error("Failed to remove $IA attr. of inode(%"PRId64")\n",
 					ni->mft_no);

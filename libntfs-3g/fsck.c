@@ -136,7 +136,7 @@ do { \
 } while (0)
 
 /*
- * for a entry of runlists (lcn, length)
+ * for a entry of runlists (lcn, length), set/clear lcn bitmap
  *                          ^^^  ^^^^^^
  * fsck_lcn_bitmap
  *   0-th                 s_idx                             e_idx
@@ -151,8 +151,7 @@ do { \
  *              | rel_slcn in s_idx           idx_slcn = rel_slcn in e_idx
  *          idx_slcn
  */
-int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit,
-		BOOL check)
+int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit, BOOL check)
 {
 	/* calculate last lcn (bit) */
 	s64 last_lcn = lcn + length - 1;
@@ -168,6 +167,7 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit,
 
 	s64 idx;
 	u8 *buf;
+	int i;
 
 	if (length <= 0)
 		return -EINVAL;
@@ -186,11 +186,96 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit,
 		if (rel_slcn)
 			rel_slcn -= idx_slcn;
 
-		rel_length = (1 << NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS) - rel_slcn;
+		rel_length = (1 << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS)) - rel_slcn;
 		if (remain_length < rel_length)
 			rel_length = remain_length;
 
-		FSCK_CHECK_AND_SET(buf, idx_slcn + rel_slcn, rel_slcn, rel_length, bit, check);
+		for (i = 0; i < rel_length; i++) {
+			if (ntfs_bit_get_and_set(buf, rel_slcn + i, bit)) {
+				if (bit)
+					ntfs_log_info("Cluster Duplication #1 %"PRIu64"\n",
+							(idx_slcn + rel_slcn) + i);
+			}
+		}
+
+		remain_length -= rel_length;
+		if (remain_length <= 0)
+			break;
+		rel_slcn = 0;
+	}
+	return 0;
+}
+
+/*
+ * For resolving cluster duplication.
+ * Set fsck cluster bitmap and if it found cluster duplication,
+ * then this function will try to resolve it.
+ * This function only use for setting bitmap.
+ *
+ * this function logic looks like same as ntfs_fsck_set_lcnbmp_range()
+ * except cluster duplication handling logic.
+ *
+ * it will check for rl[idx] (rl[idx].lcn, rl[idx].length),
+ * if it found duplication, will change whole rl data
+ */
+int ntfs_fsck_set_and_check_lcnbmp(ntfs_volume *vol, runlist *rl, int item)
+{
+	s64 lcn;
+	s64 length;
+
+	s64 last_lcn;	/* calculate last lcn (bit) */
+	s64 s_idx;	/* start index of fsck_lcn_bitmap */
+	s64 e_idx;	/* end index of fsck_lcn_bitmap */
+
+	s64 idx_slcn;	/* real start lcn of fsck_lcn_bitmap[idx] (bit) */
+	s64 rel_slcn;	/* relative start lcn in fsck_lcn_bitmap[idx] (bit) */
+	s64 remain_length = 0;
+	s64 rel_length;	/* relative length in fsck_lcn_bitmap[idx] (bit) */
+
+	s64 idx;
+	u8 *buf;
+
+	int i;
+
+	if (!rl || item < 0)
+		return -EINVAL;
+
+	lcn = rl[item].lcn;
+	length = rl[item].length;
+	if (length <= 0)
+		return -EINVAL;
+
+	rel_slcn = lcn;
+	last_lcn = lcn + length - 1;
+	s_idx = FB_ROUND_DOWN(lcn >> NTFSCK_BYTE_TO_BITS);
+	e_idx = FB_ROUND_DOWN(last_lcn >> NTFSCK_BYTE_TO_BITS);
+
+	remain_length = length;
+	for (idx = s_idx; idx <= e_idx; idx++) {
+		if (!vol->fsck_lcn_bitmap[idx]) {
+			vol->fsck_lcn_bitmap[idx] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
+			if (!vol->fsck_lcn_bitmap[idx])
+				return -ENOMEM;
+		}
+
+		buf = vol->fsck_lcn_bitmap[idx];
+
+		idx_slcn = idx << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
+		if (rel_slcn)
+			rel_slcn -= idx_slcn;
+
+		rel_length = (1 << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS)) - rel_slcn;
+		if (remain_length < rel_length)
+			rel_length = remain_length;
+
+		for (i = 0; i < rel_length; i++) {
+			if (ntfs_bit_get_and_set(buf, rel_slcn + i, 1)) {
+				/* TODO: call handling cluster duplication function */
+				ntfs_log_info("Cluster Duplication #1 %"PRIu64"\n",
+						(idx_slcn + rel_slcn) + i);
+			}
+		}
+
 		remain_length -= rel_length;
 		if (remain_length <= 0)
 			break;

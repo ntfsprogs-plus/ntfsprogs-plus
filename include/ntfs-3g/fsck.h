@@ -33,6 +33,7 @@ void ntfs_fsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit);
 u8 *ntfs_fsck_find_lcnbmp_block(ntfs_volume *vol, s64 pos);
 u8 *ntfs_fsck_find_mftbmp_block(ntfs_volume *vol, s64 pos);
 int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit, BOOL check);
+int ntfs_fsck_set_and_check_lcnbmp(ntfs_volume *vol, runlist *rl, int item);
 
 ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 		ntfs_mount_flags flags __attribute__((unused)));

@@ -86,6 +86,18 @@ static void ntfs_rl_mc(runlist_element *dstbase, int dst,
 }
 
 /**
+ * ntfs_rl_malloc - Malloc memory for runlists
+ */
+static runlist_element *ntfs_rl_malloc(int size)
+{
+	runlist_element *rl;
+
+	size = (size * sizeof(runlist_element) + 0xfff) & ~0xfff;
+	rl = ntfs_calloc(size);
+	return rl;
+}
+
+/**
  * ntfs_rl_realloc - Reallocate memory for runlists
  * @rl:		original runlist
  * @old_size:	number of runlist elements in the original runlist @rl
@@ -381,7 +393,7 @@ static runlist_element *ntfs_rl_insert(runlist_element *dst, int dsize,
  * On error, return NULL, with errno set to the error code. Both runlists are
  * left unmodified.
  */
-static runlist_element *ntfs_rl_replace(runlist_element *dst, int dsize,
+runlist_element *ntfs_rl_replace(runlist_element *dst, int dsize,
 					runlist_element *src, int ssize,
 					int loc)
 {
@@ -1198,6 +1210,39 @@ LCN ntfs_rl_vcn_to_lcn(const runlist_element *rl, const VCN vcn)
 }
 
 /**
+ * ntfs_rl_find_vcn - find a vcn in a runlist
+ * @rl:		runlist to search
+ * @vcn:	vcn to find
+ *
+ * Find the virtual cluster number @vcn in the runlist @rl and return the
+ * address of the runlist element containing the @vcn on success.
+ *
+ * Return NULL if @rl is NULL or @vcn is in an unmapped part/out of bounds of
+ * the runlist.
+ *
+ */
+runlist_element *ntfs_rl_find_vcn(runlist_element *rl, const VCN vcn)
+{
+	if (vcn < 0)
+		return NULL;
+
+	if (!rl || vcn < rl[0].vcn)
+		return NULL;
+
+	while (rl->length) {
+		if (vcn < rl[1].vcn) {
+			if (rl->lcn >= LCN_HOLE)
+				return rl;
+			return NULL;
+		}
+		rl++;
+	}
+	if (rl->lcn == LCN_ENOENT)
+		return rl;
+	return NULL;
+}
+
+/**
  * ntfs_rl_pread - gather read from disk
  * @vol:	ntfs volume to read from
  * @rl:		runlist specifying where to read the data from
@@ -1359,6 +1404,7 @@ retry:
 					to_write, b);
 		else
 			written = to_write;
+
 		/* If everything ok, update progress counters and continue. */
 		if (written > 0) {
 			total += written;
@@ -1880,6 +1926,214 @@ s64 ntfs_rl_get_compressed_size(ntfs_volume *vol, runlist *rl)
 			ret += rlc->length;
 	}
 	return ret << vol->cluster_size_bits;
+}
+
+runlist_element *ntfs_rl_punch_hole(runlist_element *dst_rl, int dst_cnt,
+				    VCN start_vcn, s64 len,
+				    runlist_element **punch_rl)
+{
+	runlist_element *s_rl, *e_rl, *new_rl, *dst_3rd_rl, hole_rl[1];
+	VCN end_vcn;
+	int new_1st_cnt, dst_3rd_cnt, new_cnt, punch_cnt, merge_cnt;
+	BOOL begin_split, end_split, one_split_3;
+
+	if (dst_cnt < 2 || dst_rl[dst_cnt - 1].length != 0)
+		return NULL;
+
+	end_vcn = min(start_vcn + len - 1,
+			dst_rl[dst_cnt - 2].vcn + dst_rl[dst_cnt - 2].length - 1);
+
+	s_rl = ntfs_rl_find_vcn(dst_rl, start_vcn);
+	if (!s_rl || s_rl->lcn <= LCN_ENOENT)
+		return NULL;
+
+	begin_split = s_rl->vcn != start_vcn ? TRUE : FALSE;
+
+	e_rl = ntfs_rl_find_vcn(dst_rl, end_vcn);
+	if (!e_rl || e_rl->lcn <= LCN_ENOENT)
+		return NULL;
+
+	end_split = e_rl->vcn + e_rl->length - 1 != end_vcn ? TRUE : FALSE;
+
+	/* @s_rl has to be split into left, punched hole, and right */
+	one_split_3 = e_rl == s_rl && begin_split && end_split ? TRUE : FALSE;
+
+	punch_cnt = (int)(e_rl - s_rl) + 1;
+	new_cnt = dst_cnt - punch_cnt + 3;
+	new_rl = ntfs_rl_malloc(new_cnt);
+	if (!new_rl)
+		return NULL;
+
+	new_1st_cnt = (int)(s_rl - dst_rl) + 1;
+
+	if (punch_rl) {
+		*punch_rl = ntfs_rl_malloc(punch_cnt + 1);
+		if (!*punch_rl)
+			return NULL;
+
+		ntfs_rl_mc(*punch_rl, 0, dst_rl, new_1st_cnt - 1, punch_cnt);
+
+		(*punch_rl)[punch_cnt].lcn = LCN_ENOENT;
+		(*punch_rl)[punch_cnt].length = 0;
+	}
+
+	if (!begin_split)
+		new_1st_cnt--;
+
+	dst_3rd_rl = e_rl;
+	dst_3rd_cnt = (int)(&dst_rl[dst_cnt - 1] - e_rl) + 1;
+	if (!end_split) {
+		dst_3rd_rl++;
+		dst_3rd_cnt--;
+	}
+
+	/* Copy the 1st part of @dst_rl into @new_rl */
+	ntfs_rl_mc(new_rl, 0, dst_rl, 0, new_1st_cnt);
+	if (begin_split) {
+		/*
+		 * the @e_rl has to be splited and copied into the last of @new_rl
+		 * and the first of @punch_rl if @punch_rl is not null.
+		 */
+		VCN first_cnt = start_vcn - dst_rl[new_1st_cnt - 1].vcn;
+
+		if (new_1st_cnt)
+			new_rl[new_1st_cnt - 1].length = first_cnt;
+
+		if (punch_rl) {
+			(*punch_rl)[0].vcn = start_vcn;
+			(*punch_rl)[0].length -= first_cnt;
+			if ((*punch_rl)[0].lcn > LCN_HOLE)
+				(*punch_rl)[0].lcn += first_cnt;
+		}
+	}
+
+	/* Copy a hole into @new_rl */
+	hole_rl[0].vcn = start_vcn;
+	hole_rl[0].length = (s64)len;
+	hole_rl[0].lcn = LCN_HOLE;
+	ntfs_rl_mc(new_rl, new_1st_cnt, hole_rl, 0, 1);
+
+	/* Copy the 3rd part of @dst_rl into @new_rl */
+	ntfs_rl_mc(new_rl, new_1st_cnt + 1, dst_3rd_rl, 0, dst_3rd_cnt);
+	if (end_split) {
+		/* the @e_rl has to be splited and copied into the first of
+		 * @new_rl and the last of @punch_rl if @punch_rl is not null.
+		 */
+		VCN first_cnt = end_vcn - dst_3rd_rl[0].vcn + 1;
+
+		new_rl[new_1st_cnt + 1].vcn = end_vcn + 1;
+		new_rl[new_1st_cnt + 1].length -= first_cnt;
+		if (new_rl[new_1st_cnt + 1].lcn > LCN_HOLE)
+			new_rl[new_1st_cnt + 1].lcn += first_cnt;
+
+		if (punch_rl) {
+			if (one_split_3)
+				(*punch_rl)[punch_cnt - 1].length -=
+					new_rl[new_1st_cnt + 1].length;
+			else
+				(*punch_rl)[punch_cnt - 1].length = first_cnt;
+		}
+	}
+
+	/* Merge left and hole, or hole and right in @new_rl, if left or right
+	 * consists of holes.
+	 */
+	merge_cnt = 0;
+	if (new_1st_cnt > 0 && new_rl[new_1st_cnt - 1].lcn == LCN_HOLE) {
+		/* Merge right and hole */
+		s_rl =  &new_rl[new_1st_cnt - 1];
+		s_rl->length += s_rl[1].length;
+		merge_cnt = 1;
+		/* Merge left and right */
+		if (new_1st_cnt + 1 < new_cnt &&
+		    new_rl[new_1st_cnt + 1].lcn == LCN_HOLE) {
+			s_rl->length += s_rl[2].length;
+			merge_cnt++;
+		}
+	} else if (new_1st_cnt + 1 < new_cnt &&
+		   new_rl[new_1st_cnt + 1].lcn == LCN_HOLE) {
+		/* Merge left and hole */
+		s_rl = &new_rl[new_1st_cnt];
+		s_rl->length += s_rl[1].length;
+		merge_cnt = 1;
+	}
+
+	if (merge_cnt) {
+		runlist_element *d_rl, *src_rl;
+
+		d_rl = s_rl + 1;
+		src_rl = s_rl + 1 + merge_cnt;
+		ntfs_rl_mm(new_rl, (int)(d_rl - new_rl), (int)(src_rl - new_rl),
+			   (int)(&new_rl[new_cnt - 1] - src_rl) + 1);
+	}
+
+	if (punch_rl) {
+		(*punch_rl)[punch_cnt].vcn = (*punch_rl)[punch_cnt - 1].vcn +
+			(*punch_rl)[punch_cnt - 1].length;
+	}
+
+	ntfs_free(dst_rl);
+	return new_rl;
+}
+
+#define MAX_CLUSTER_COPY_SIZE(vol)	(vol->cluster_size * 4)
+#define MAX_CLUSTER_COPY_NUM(vol)	(MAX_CLUSTER_COPY_SIZE(vol) >> (vol)->cluster_size_bits)
+
+runlist *ntfs_copy_rl_clusters(ntfs_volume *vol, runlist *new_rl, int new_cnt,
+		runlist *orig_rl, int orig_cnt)
+{
+	u8 *buf;
+	s64 rpos;
+	s64 rcnt, wcnt;
+	s64 rbuf_offset, wpos_offset;
+	s64 max_rsize;
+
+	if (!vol)
+		return NULL;
+
+	max_rsize = MAX_CLUSTER_COPY_SIZE(vol);
+	buf = ntfs_calloc(max_rsize);
+	if (!buf) {
+		ntfs_log_error("Error, failed to allocate memory\n");
+		return NULL;
+	}
+
+	rpos = 0;
+	wpos_offset = 0;
+	ntfs_log_debug("copy_rl_clusters orig_rl dump\n");
+	ntfs_debug_runlist_dump(orig_rl);
+	ntfs_debug_runlist_dump(new_rl);
+	for (;;) {
+		rcnt = ntfs_rl_pread(vol, orig_rl, rpos, max_rsize, buf);
+		if (rcnt <= 0)
+			break;
+
+		rpos += rcnt;
+		rbuf_offset = 0;
+
+		while (rcnt) {
+			ntfs_log_trace("before write : rpos(%"PRIu64") wpos_offset(%"PRIu64") "
+					"rcnt(%"PRIu64") rbuf_offset(%"PRIu64")\n",
+					rpos, wpos_offset, rcnt, rbuf_offset);
+			wcnt = ntfs_rl_pwrite(vol, new_rl, 0, wpos_offset, rcnt, buf + rbuf_offset);
+			if (wcnt < 0) {
+				ntfs_log_error("Failed to write new runlist data\n");
+				free(buf);
+				return NULL;
+			}
+
+			wpos_offset += wcnt;
+			rbuf_offset += wcnt;
+			rcnt -= wcnt;
+
+			ntfs_log_trace("after write : wcnt(%"PRIu64") wpos_offset(%"PRIu64") "
+					"rcnt(%"PRIu64") rbuf_offset(%"PRIu64")\n",
+					wcnt, wpos_offset, rcnt, rbuf_offset);
+		}
+	}
+
+	free(buf);
+	return new_rl;
 }
 
 

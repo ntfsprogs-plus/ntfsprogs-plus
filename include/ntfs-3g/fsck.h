@@ -32,8 +32,12 @@ int ntfs_fsck_mftbmp_set(ntfs_volume *vol, u64 mft_no);
 void ntfs_fsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit);
 u8 *ntfs_fsck_find_lcnbmp_block(ntfs_volume *vol, s64 pos);
 u8 *ntfs_fsck_find_mftbmp_block(ntfs_volume *vol, s64 pos);
-int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit, BOOL check);
-int ntfs_fsck_set_and_check_lcnbmp(ntfs_volume *vol, runlist *rl, int item);
+int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit);
+runlist *ntfs_fsck_check_and_set_lcnbmp(ntfs_volume *vol, ntfs_attr *na, int rl_idx,
+		u8 set_bit, runlist *dup_rl);
+runlist_element *ntfs_rl_append(runlist_element *dst, int dsize,
+				       runlist_element *src, int ssize, int loc);
+int ntfs_fsck_repair_cluster_dup(ntfs_attr *na, runlist *dup_rl);
 
 ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 		ntfs_mount_flags flags __attribute__((unused)));

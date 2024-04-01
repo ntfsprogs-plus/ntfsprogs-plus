@@ -208,7 +208,7 @@ static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
 		FILE_NAME_ATTR *ie_fn, ntfs_attr_search_ctx *actx);
 static int ntfsck_check_directory(ntfs_inode *ni);
 static int ntfsck_check_file(ntfs_inode *ni);
-static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls);
+static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, BOOL *need_fix);
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx);
 static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
@@ -225,6 +225,7 @@ static void ntfsck_check_mft_records(ntfs_volume *vol);
 static void ntfsck_free_mft_records(ntfs_volume *vol, ntfs_inode *ni);
 static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num);
 static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no);
+static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size, ntfs_attr_search_ctx *actx);
 
 #define ntfsck_delete_mft	ntfsck_delete_orphaned_mft
 
@@ -316,7 +317,7 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
 {
 	ntfs_attr_map_whole_runlist(na);
-	ntfsck_check_runlist(na, 0, NULL);
+	ntfsck_check_runlist(na, 0, NULL, NULL);
 }
 
 /*
@@ -330,11 +331,12 @@ static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
  * @rls : structure for runlist length, it contains allocated size and
  *	  real allocated size. it may be NULL, don't return calculated size.
  */
-static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls)
+static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, BOOL *need_fix)
 {
 	ntfs_volume *vol;
 	ntfs_inode *ni;
 	runlist *rl;
+	runlist *dup_rl = NULL;
 	s64 rl_alloc_size = 0;	/* rl allocated size (including HOLE length) */
 	s64 rl_data_size = 0;	/* rl data size (real allocated size) */
 	s64 rsize;		/* a cluster run size */
@@ -355,7 +357,7 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls)
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
 
-			ntfs_fsck_set_lcnbmp_range(vol, rl[i].lcn, rl[i].length, set_bit, TRUE);
+			dup_rl = ntfs_fsck_check_and_set_lcnbmp(vol, na, i, set_bit, dup_rl);
 
 			/* Do not clear bitmap on disk, it may trigger cluster duplication */
 
@@ -377,6 +379,32 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls)
 	if (rls) {
 		rls->alloc_size = rl_alloc_size;
 		rls->real_size = rl_data_size;
+	}
+
+	if (dup_rl) {
+		check_failed("Found cluster duplication of inode(%"PRId64":%d), Fix it\n",
+				ni->mft_no, na->type);
+
+		if (_ntfsck_ask_repair(vol, FALSE)) {
+			ntfs_log_debug("dup_rl: duplicated runlists\n");
+			ntfs_debug_runlist_dump(dup_rl);
+			ntfs_fsck_repair_cluster_dup(na, dup_rl);
+
+#ifdef DEBUG
+			ntfs_log_info("Resolve cluster duplication of inode(%"
+					PRIu64":%d)\n",
+					ni->mft_no, na->type);
+			ntfs_log_info("   cluster no : length \n");
+			for (i = 0; dup_rl[i].length; i++) {
+				ntfs_log_info("   (%"PRIu64": %"PRIu64")\n",
+						dup_rl[i].lcn, dup_rl[i].length);
+			}
+#endif
+		}
+
+		if (need_fix)
+			*need_fix = TRUE;
+		ntfs_free(dup_rl);
 	}
 
 	return STATUS_OK;
@@ -2028,33 +2056,62 @@ static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
 		return STATUS_ERROR;
 	}
 
-#ifdef _DEBUG
-	ntfs_log_info("Before (%"PRId64") =========================\n",
+	if (*need_fix == TRUE) {
+		check_failed("Non-resident cluster run of inode(%"PRId64")(%02x:%"PRIu64") "
+				"corrupted. rl_size(%"PRIx64":%"PRIx64"). Truncate it",
+				na->ni->mft_no, na->type, na->data_size, rls->alloc_size, rls->real_size);
+	}
+
+#if UNUSED
+	ntfs_log_debug("Before (%"PRId64") =========================\n",
 			na->ni->mft_no);
-	ntfs_dump_runlist(rl);
+	ntfs_debug_runlist_dump(rl);
 #endif
 
-	ret = ntfsck_check_runlist(na, set_bit, rls);
+	ret = ntfsck_check_runlist(na, set_bit, rls, need_fix);
 	if (ret)
 		return STATUS_ERROR;
 
-#ifdef _DEBUG
-	ntfs_log_info("After (%"PRId64") =========================\n",
+#if UNUSED
+	ntfs_log_debug("After (%"PRId64") =========================\n",
 			na->ni->mft_no);
-	ntfs_dump_runlist(rl);
+	ntfs_debug_runlist_dump(na->rl);
 #endif
 
 	return 0;
 }
 
-static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size)
+static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size, ntfs_attr_search_ctx *actx)
 {
+	ntfs_inode *ni;
+	u32 backup_attr_list_size;
+
+	if (!na->ni)
+		return STATUS_ERROR;
+
+	ni = na->ni;
+	if (NInoAttrList(ni))
+		backup_attr_list_size = ni->attr_list_size;
+
 	/* apply rl to disk */
 	na->allocated_size = new_size;
 	if (ntfs_attr_update_mapping_pairs(na, 0)) {
 		ntfs_log_error("Failed to update mapping pairs of "
-				"inode(%"PRIu64")\n", na->ni->mft_no);
+				"inode(%"PRIu64")\n", ni->mft_no);
 		return STATUS_ERROR;
+	}
+
+	/*
+	 * new allocated attr_list of inode in ntfs_attr_update_mapping_pairs()
+	 * so, SHOULD change field related with attr_list
+	 */
+	if (actx && ni->attr_list_size != backup_attr_list_size) {
+		ntfs_attr_reinit_search_ctx(actx);
+		if (ntfs_attr_lookup(na->type, na->name, na->name_len, 0, 0, NULL, 0, actx)) {
+			ntfs_log_error("Failed to lookup type(%d) of inode(%"PRIu64")\n",
+					na->type, ni->mft_no);
+			return STATUS_ERROR;
+		}
 	}
 
 	/* Update data size in the index. */
@@ -2109,22 +2166,17 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 
 	/* if need_fix is set to TRUE, apply modified runlist to cluster runs */
 	if (need_fix == TRUE) {
-		check_failed("Non-resident cluster run of inode(%"PRId64")(%02x:%"PRIu64") "
-				"corrupted. rl_size(%"PRIx64":%"PRIx64"). Truncate it",
-				ni->mft_no, na->type, na->data_size, rls.alloc_size, rls.real_size);
-
 		if (ntfsck_ask_repair(vol)) {
 			/*
 			 * keep a valid runlist as long as possible.
 			 * if truncate zero, call with second parameter to 0
 			 */
-			if (ntfsck_update_runlist(na, rls.alloc_size)) {
+			if (ntfsck_update_runlist(na, rls.alloc_size, actx)) {
 				/* FIXME: why ntfsck_update_runlist failed? and
 				 * what should it do? */
 				fsck_err_fixed();
 				return STATUS_ERROR;
 			}
-
 			fsck_err_fixed();
 		}
 	}
@@ -2425,8 +2477,8 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit)
 		 * because it has already checked in previous attributes walk.
 		 */
 		if (le64_to_cpu(a->lowest_vcn) != 0) {
-			ntfs_log_trace("SKIP: inode %"PRIu64", type %02x type_bitmap %08lx\n",
-					ni->mft_no, a->type, type_bitmap);
+			ntfs_log_trace("SKIP: inode %"PRIu64", type %02x\n",
+					ni->mft_no, a->type);
 			continue;
 		}
 
@@ -2595,6 +2647,8 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ret = ntfsck_check_directory(ni);
 		if (ret)
 			goto err_out;
+	} else if (flags & FILE_ATTR_VIEW_INDEX_PRESENT) {
+		/* TODO: check view index */
 	} else {
 		ret = ntfsck_check_file(ni);
 		if (ret)
@@ -3101,10 +3155,10 @@ out:
 	return;
 
 initialize_index:
-	ntfs_log_info("inode(%"PRIu64") index is initialized\n", ni->mft_no);
-
 	if (!_ntfsck_ask_repair(vol, FALSE))
 		goto out;
+
+	ntfs_log_info("inode(%"PRIu64") index is initialized\n", ni->mft_no);
 
 	if (ntfsck_initialize_index_attr(ni))
 		ntfs_log_perror("Failed to initialize index attributes of inode(%"PRIu64")\n",
@@ -3626,7 +3680,7 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 		}
 
 		/* Check cluster run of $DATA attribute */
-		if (ntfsck_check_runlist(vol->lcnbmp_na, 1, NULL)) {
+		if (ntfsck_check_runlist(vol->lcnbmp_na, 1, NULL, NULL)) {
 			ntfs_log_error("Failed to check and setbit runlist. "
 					"Leaving inconsistent metadata.\n");
 			return -EIO;
@@ -3991,7 +4045,7 @@ static int _ntfsck_check_backup_boot(ntfs_volume *vol, s64 sector, u8 *buf)
 	if (ntfs_boot_sector_is_ntfs((NTFS_BOOT_SECTOR *)buf) == FALSE)
 		return STATUS_ERROR;
 
-	ntfs_fsck_set_lcnbmp_range(vol, sector >> spc_bits, 1, 1, FALSE);
+	ntfs_fsck_set_lcnbmp_range(vol, sector >> spc_bits, 1, 1);
 	return STATUS_OK;
 }
 
@@ -4117,6 +4171,7 @@ int main(int argc, char **argv)
 	ntfs_log_set_handler(ntfs_log_handler_outerr);
 
 	ntfs_log_set_levels(NTFS_LOG_LEVEL_INFO);
+	ntfs_log_clear_levels(NTFS_LOG_LEVEL_TRACE|NTFS_LOG_LEVEL_ENTER|NTFS_LOG_LEVEL_LEAVE);
 
 	option.verbose = 0;
 	opterr = 0;

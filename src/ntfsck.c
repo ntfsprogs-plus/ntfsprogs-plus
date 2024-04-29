@@ -3108,6 +3108,46 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		goto out;
 	}
 
+	/* check Index entry on $INDEX_ROOT */
+	index_end = ir_buf + ir_size;
+	ie = (INDEX_ENTRY *)ir_buf;
+	for (; (u8 *)ie < index_end;
+			ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
+		VCN vcn = ntfs_ie_get_vcn(ie);
+		u32 sub_bmp_pos;
+
+		sub_bmp_pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
+
+		/* check length bound */
+		if ((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end ||
+		    (u8 *)ie + le16_to_cpu(ie->length) > index_end) {
+
+			ntfs_log_verbose("Index root entry out of bounds in"
+					" inode %"PRId64"\n", ni->mft_no);
+			goto initialize_index;
+		}
+
+		if (ie->ie_flags & INDEX_ENTRY_NODE) {
+			/* check bitmap for sub-node */
+			if (!ntfs_bit_get(bmp_buf, sub_bmp_pos)) {
+				goto initialize_index;
+			}
+		}
+
+		/* The file name must not overflow from the entry */
+		if (ntfs_index_entry_inconsistent(vol, ie, COLLATION_FILE_NAME,
+				ni->mft_no, NULL) < 0) {
+			goto initialize_index;
+		}
+
+		/* The last entry cannot contain a name. */
+		if (ie->ie_flags & INDEX_ENTRY_END)
+			break;
+
+		if (!le16_to_cpu(ie->length))
+			break;
+	}
+
 	max_vcn_bits = bmp_na->data_size * 8;
 
 	vcn_step = ictx->block_size >> ictx->vcn_size_bits;
@@ -3144,10 +3184,35 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 			for (; (u8 *)ie < index_end;
 				ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
-				/* Bounds checks. */
-				if (((u8 *)ie < (u8 *)ia) ||
+				VCN vcn = ntfs_ie_get_vcn(ie);
+				u32 sub_bmp_pos;
+
+				sub_bmp_pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
+
+				/* check length bound */
+				if ((u8 *)ie < (u8 *)ia ||
 					((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end) ||
 					((u8 *)ie + le16_to_cpu(ie->length) > index_end)) {
+					ib_corrupted = TRUE;
+					break;
+				}
+
+				/* check bitmap for sub-node */
+				if (ie->ie_flags & INDEX_ENTRY_NODE) {
+					if (max_vcn_bits <= vcn) {
+						ib_corrupted = TRUE;
+						break;
+					}
+
+					if (!ntfs_bit_get(bmp_buf, sub_bmp_pos)) {
+						ib_corrupted = TRUE;
+						break;
+					}
+				}
+
+				/* check index entry inconsistency */
+				if (ntfs_index_entry_inconsistent(vol, ie, COLLATION_FILE_NAME,
+							ni->mft_no, NULL) < 0) {
 					ib_corrupted = TRUE;
 					break;
 				}
@@ -3167,6 +3232,8 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	if (ib_corrupted == FALSE)
 		goto out;
 
+initialize_index:
+	ntfs_log_info("Initialize index structure of inode(%"PRIu64")\n", ni->mft_no);
 	if (ntfsck_initialize_index_attr(ni)) {
 		ntfs_log_perror("Failed to initialize index attributes of inode(%"PRIu64")\n",
 				ni->mft_no);

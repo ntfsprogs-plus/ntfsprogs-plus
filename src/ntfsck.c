@@ -3047,13 +3047,28 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	ie = (INDEX_ENTRY *)ir_buf;
 	for (; (u8 *)ie < index_end;
 			ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
+		/* check length bound */
 		if ((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end ||
 		    (u8 *)ie + le16_to_cpu(ie->length) > index_end) {
-
 			ntfs_log_verbose("Index root entry out of bounds in"
 					" inode %"PRId64"\n", ni->mft_no);
 			goto initialize_index;
 		}
+
+		if (ie->ie_flags & INDEX_ENTRY_NODE) {
+			VCN vcn = ntfs_ie_get_vcn(ie);
+			u32 sub_bmp_pos;
+
+			/* check bitmap for sub-node */
+			sub_bmp_pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
+			if (!ntfs_bit_get(bmp_buf, sub_bmp_pos))
+				goto initialize_index;
+		}
+
+		/* The file name must not overflow from the entry */
+		if (ntfs_index_entry_inconsistent(vol, ie, COLLATION_FILE_NAME,
+				ni->mft_no, NULL) < 0)
+			goto initialize_index;
 
 		/* The last entry cannot contain a name. */
 		if (ie->ie_flags & INDEX_ENTRY_END)
@@ -3061,11 +3076,6 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 		if (!le16_to_cpu(ie->length))
 			break;
-
-		/* The file name must not overflow from the entry */
-		if (ntfs_index_entry_inconsistent(vol, ie, COLLATION_FILE_NAME,
-				ni->mft_no, NULL) < 0)
-			goto initialize_index;
 	}
 
 	ia_buf = ntfs_malloc(ictx->block_size);
@@ -3110,15 +3120,32 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 				le32_to_cpu(ia->index.entries_offset));
 
 		for (;; ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
-			/* Bounds checks. */
+			/* check bitmap for sub-node */
+			if (ie->ie_flags & INDEX_ENTRY_NODE) {
+				VCN vcn = ntfs_ie_get_vcn(ie);
+				u32 sub_bmp_pos;
+
+				sub_bmp_pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
+				if (max_vcn_bits <= vcn)
+					goto initialize_index;
+
+				if (!ntfs_bit_get(bmp_buf, sub_bmp_pos))
+					goto initialize_index;
+			}
+
+			/* check length bound */
 			if (((u8 *)ie < (u8 *)ia) ||
 					((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end) ||
 					((u8 *)ie + le16_to_cpu(ie->length) > index_end)) {
-
 				ntfs_log_verbose("Index entry out of bounds in directory inode "
 						"%"PRId64"\n", ni->mft_no);
 				goto initialize_index;
 			}
+
+			/* The file name must not overflow from the entry */
+			if (ntfs_index_entry_inconsistent(vol, ie,
+						COLLATION_FILE_NAME, ni->mft_no, NULL))
+				goto initialize_index;
 
 			/* The last entry cannot contain a name. */
 			if (ie->ie_flags & INDEX_ENTRY_END)
@@ -3126,11 +3153,6 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 			if (!le16_to_cpu(ie->length))
 				break;
-
-			/* The file name must not overflow from the entry */
-			if (ntfs_index_entry_inconsistent(vol, ie,
-						COLLATION_FILE_NAME, ni->mft_no, NULL))
-				goto initialize_index;
 		}
 	}
 

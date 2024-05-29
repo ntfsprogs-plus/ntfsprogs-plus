@@ -2358,15 +2358,17 @@ err_out:
 	return err ? -1 : 0;
 }
 
-BOOL _ntfsck_ask_repair(const ntfs_volume *vol, BOOL flag)
+BOOL ntfsck_ask_repair(const ntfs_volume *vol)
 {
 	BOOL repair = FALSE;
 	char answer[8];
 
-	if (NVolFsNoRepair(vol) || !NVolFsck(vol))
-		repair = FALSE;
-	else if (NVolFsYesRepair(vol) || NVolFsAutoRepair(vol)) {
-		repair = TRUE;
+	if (NVolFsNoRepair(vol) || !NVolFsck(vol)) {
+		ntfs_log_error(" No\n");
+		return FALSE;
+	} else if (NVolFsYesRepair(vol) || NVolFsAutoRepair(vol)) {
+		ntfs_log_error(" Yes\n");
+		return TRUE;
 	} else if (NVolFsAskRepair(vol)) {
 		do {
 			ntfs_log_error(" (y/N)? ");
@@ -2376,18 +2378,11 @@ BOOL _ntfsck_ask_repair(const ntfs_volume *vol, BOOL flag)
 				if (strcasecmp(answer, "Y\n") == 0)
 					return TRUE;
 				else if (strcasecmp(answer, "\n") == 0 ||
-					 strcasecmp(answer, "N\n") == 0)
+						strcasecmp(answer, "N\n") == 0)
 					return FALSE;
 			}
 		} while (1);
 	}
 
-	if (flag == TRUE)
-		ntfs_log_error(" (y/N)? %c\n", repair ? 'y' : 'N');
 	return repair;
-}
-
-BOOL ntfsck_ask_repair(const ntfs_volume *vol)
-{
-	return _ntfsck_ask_repair(vol, TRUE);
 }

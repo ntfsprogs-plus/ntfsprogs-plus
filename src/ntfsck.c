@@ -1944,6 +1944,180 @@ out:
 	return rl;
 }
 
+static int ntfsck_init_root(ntfs_volume *vol, ntfs_inode *ni, ntfs_index_context *ictx)
+{
+	ntfs_attr_search_ctx *ctx = NULL;
+	ntfs_attr *bm_na = NULL;
+	ntfs_attr *ia_na = NULL;
+	INDEX_ROOT *ir = NULL;
+	INDEX_ENTRY *ie = NULL;
+	INDEX_BLOCK *ib = NULL;
+	int ret = STATUS_ERROR;
+	int index_len;
+	int ir_init_size;
+	u32 block_size;
+	s64 r_size;
+	u8 *bm = NULL;
+
+	block_size = ictx->block_size;
+
+	ia_na = ictx->ia_na;
+	if (!ia_na)
+		goto out;
+
+	/* remain one index block not to allocate when add index for meta files in fsck */
+	if (ntfs_attr_truncate(ia_na, block_size))
+		goto out;
+
+	/* initialized $INDEX_ROOT of root */
+	ir = ntfs_ir_lookup(ni, NTFS_INDEX_I30, 4, &ctx);
+	if (!ir)
+		return STATUS_ERROR;
+
+	index_len = sizeof(INDEX_HEADER) + sizeof(INDEX_ENTRY_HEADER) + sizeof(VCN);
+
+	ir->index.allocated_size = cpu_to_le32(index_len);
+	ir->index.index_length = cpu_to_le32(index_len);
+	ir->index.entries_offset = const_cpu_to_le32(sizeof(INDEX_HEADER));
+	ir->index.ih_flags = LARGE_INDEX;
+	ie = (INDEX_ENTRY *)((u8 *)ir + sizeof(INDEX_ROOT));
+
+	ie->length = cpu_to_le16(sizeof(INDEX_ENTRY_HEADER) + sizeof(VCN));
+	ie->key_length = 0;
+	ie->ie_flags = INDEX_ENTRY_END | INDEX_ENTRY_NODE;
+
+	ir_init_size = sizeof(INDEX_ROOT) - sizeof(INDEX_HEADER) +
+		le32_to_cpu(ir->index.allocated_size);
+	ntfs_resident_attr_value_resize(ctx->mrec, ctx->attr, ir_init_size);
+
+	/* ntfs_ie_set_vcn(ie, 0) */
+	*(leVCN *)((u8 *)ie + le16_to_cpu(ie->length) - sizeof(leVCN)) = cpu_to_sle64(0);
+
+	block_size = le32_to_cpu(ir->index_block_size);
+
+	ib = ntfs_malloc(block_size);
+	if (!ib)
+		goto out;
+
+	if (ntfs_ib_read(ictx, 0, ib)) {
+		ntfs_log_perror("Failed to read $INDEX_ALLOCATION of root\n");
+		goto out;
+	}
+	index_len = le32_to_cpu(ib->index.entries_offset) + sizeof(INDEX_ENTRY_HEADER);
+	ib->index_block_vcn = cpu_to_sle64(0);
+	ib->index.index_length = cpu_to_le32(index_len);
+	ib->index.allocated_size = cpu_to_le32(block_size - offsetof(INDEX_BLOCK, index));
+	ib->index.ih_flags = LEAF_NODE;
+	ie = (INDEX_ENTRY *)((u8 *)&ib->index + le32_to_cpu(ib->index.entries_offset));
+	ie->length = cpu_to_le16(sizeof(INDEX_ENTRY_HEADER));
+	ie->key_length = 0;
+	ie->ie_flags = INDEX_ENTRY_END;
+
+	ntfs_ib_write(ictx, ib);
+
+	bm_na = ntfs_attr_open(ni, AT_BITMAP, NTFS_INDEX_I30, 4);
+	if (!bm_na)
+		goto out;
+
+	bm = ntfs_malloc(bm_na->data_size);
+	if (!bm)
+		goto out;
+
+	r_size = ntfs_attr_pread(bm_na, 0, bm_na->data_size, bm);
+	if (r_size != bm_na->data_size) {
+		ntfs_log_perror("Failed to read $BITMAP of root\n");
+		goto out;
+	}
+
+	memset(bm, 0, r_size);
+	memset(ni->fsck_ibm, 0, ni->fsck_ibm_size);
+	ntfs_inode_sync(ni);
+	ntfs_attr_pwrite(bm_na, 0, bm_na->data_size, bm);
+	ntfs_ibm_modify(ictx, 0, 1);
+
+	ret = STATUS_OK;
+
+out:
+	if (ir)
+		ntfs_attr_put_search_ctx(ctx);
+	if (bm)
+		ntfs_free(bm);
+	if (bm_na)
+		ntfs_attr_close(bm_na);
+
+	return ret;
+}
+static int ntfsck_add_index_fn(ntfs_inode *parent_ni, ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *ctx = NULL;
+	FILE_NAME_ATTR *fn = NULL;
+	int ret = STATUS_ERROR;
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		goto out;
+
+	if (ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, CASE_SENSITIVE,
+				0, NULL, 0, ctx)) {
+		ntfs_log_perror("No $FILE_NAME in %"PRIu64" inode\n",
+				ni->mft_no);
+		goto out;
+	}
+	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
+			le16_to_cpu(ctx->attr->value_offset));
+
+	ret = ntfs_index_add_filename(parent_ni, fn, MK_MREF(ni->mft_no,
+				le16_to_cpu(ni->mrec->sequence_number)));
+	if (ret) {
+		goto out;
+	}
+	ntfs_attr_put_search_ctx(ctx);
+	ctx = NULL;
+	ret = STATUS_OK;
+out:
+	return ret;
+}
+
+static int ntfsck_initiaiize_root_index(ntfs_inode *ni, ntfs_index_context *ictx)
+{
+	ntfs_volume *vol;
+	ntfs_inode *meta_ni;
+	u64 mft_no = FILE_MFT;
+	int ret = STATUS_ERROR;
+
+	if (!ni)
+		return STATUS_ERROR;
+
+	vol = ni->vol;
+
+	if (ni->mft_no != FILE_root)
+		return STATUS_ERROR;
+
+	ntfsck_init_root(vol, ni, ictx);
+
+	for (mft_no = FILE_MFT; mft_no <= FILE_Extend; mft_no++) {
+		meta_ni = ntfsck_open_inode(vol, mft_no);
+		if (!meta_ni) {
+			goto out;
+		}
+		ntfsck_add_index_fn(ni, meta_ni);
+		ntfsck_close_inode(meta_ni);
+	}
+
+	if (vol->lost_found) {
+		meta_ni = ntfsck_open_inode(vol, vol->lost_found);
+		if (!meta_ni) {
+			goto out;
+		}
+		ntfsck_add_index_fn(ni, meta_ni);
+		ntfsck_close_inode(meta_ni);
+	}
+	ret = STATUS_OK;
+
+out:
+	return ret;
+}
+
 /*
  * Remove $IA/$BITMAP, and initialize $IR attribute for repairing.
  * This function should be called $IA or $BITMAP attribute is corrupted.
@@ -3019,6 +3193,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	u64 max_vcn_bits;
 	u32 vcn_step;
 	VCN max_vcn;
+	int ret = STATUS_OK;
 
 	ictx->ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION,
 			ictx->name, ictx->name_len);
@@ -3211,29 +3386,18 @@ initialize_index:
 	if (!ntfsck_ask_repair(vol))
 		goto out;
 
-	ntfs_log_info("inode(%"PRIu64") index is initialized\n", ni->mft_no);
+	if (ni->mft_no == FILE_root)
+		ret = ntfsck_initiaiize_root_index(ni, ictx);
+	else
+		ret = ntfsck_initialize_index_attr(ni);
 
-	if (ntfsck_initialize_index_attr(ni)) {
+	if (ret)
 		ntfs_log_perror("Failed to initialize index attributes of inode(%"PRIu64")\n",
 				ni->mft_no);
-	} else
+	else
 		fsck_err_fixed();
 
-	if (ni->mft_no == FILE_root) {
-		/* clear bitmap for already opened mft to add orphaned candidate */
-		ntfs_fsck_mftbmp_clear(vol, FILE_MFT);
-		ntfsck_check_inode_non_resident(vol->mft_ni, 0);
-		ntfs_fsck_mftbmp_clear(vol, FILE_MFTMirr);
-		ntfsck_check_inode_non_resident(vol->mftmirr_ni, 0);
-		ntfs_fsck_mftbmp_clear(vol, FILE_Volume);
-		ntfsck_check_inode_non_resident(vol->vol_ni, 0);
-		ntfs_fsck_mftbmp_clear(vol, FILE_root);
-		ntfsck_check_inode_non_resident(ni, 0);
-		ntfs_fsck_mftbmp_clear(vol, FILE_Bitmap);
-		ntfsck_check_inode_non_resident(vol->lcnbmp_ni, 0);
-		ntfs_fsck_mftbmp_clear(vol, FILE_Secure);
-		ntfsck_check_inode_non_resident(vol->secure_ni, 0);
-	}
+	ntfs_log_info("inode(%"PRIu64") index is initialized\n", ni->mft_no);
 
 	goto out;
 }
@@ -3797,6 +3961,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	ntfs_index_context *ictx;
 	FILE_NAME_ATTR *fn;
 	s64 mft_num;
+	u64 lf_mftno = (u64)-1; /* lost+found mft record number */
 	int ret = STATUS_ERROR;
 	int is_used;
 	BOOL trivial;	/* represent system file is trivial or not */
@@ -3808,6 +3973,10 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 		ntfs_log_error("Couldn't open the root directory.\n");
 		return ret;
 	}
+
+	/* find 'lost+found' directory in root directory */
+	lf_mftno = ntfs_inode_lookup_by_mbsname(root_ni, FILENAME_LOST_FOUND);
+	vol->lost_found = lf_mftno;	/* if not found, lf_mftno = -1 */
 
 	root_ctx = ntfs_attr_get_search_ctx(root_ni, NULL);
 	if (!root_ctx)
@@ -3896,6 +4065,8 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 		ret = ntfs_index_lookup(fn,
 				le32_to_cpu(sys_ctx->attr->value_length), ictx);
 		if (ret) {
+			/* TODO: add index filename to root?? not return error */
+
 			ntfs_log_error("There's no system file entry"
 					"(%"PRId64") in root\n", mft_num);
 			ntfs_attr_put_search_ctx(sys_ctx);

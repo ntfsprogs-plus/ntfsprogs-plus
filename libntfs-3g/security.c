@@ -4479,7 +4479,7 @@ int ntfs_open_secure(ntfs_volume *vol)
 	if (vol->secure_ni) /* Already open? */
 		return 0;
 
-	ni = ntfs_pathname_to_inode(vol, NULL, "$Secure");
+	ni = ntfs_inode_open(vol, FILE_Secure);
 	if (!ni)
 		goto err;
 

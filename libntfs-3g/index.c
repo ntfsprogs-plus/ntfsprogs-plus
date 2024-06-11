@@ -399,7 +399,7 @@ static INDEX_ENTRY *ntfs_ie_dup_novcn(INDEX_ENTRY *ie)
 	return dup;
 }
 
-static INDEX_ROOT *ntfs_ir_lookup(ntfs_inode *ni, ntfschar *name,
+INDEX_ROOT *ntfs_ir_lookup(ntfs_inode *ni, ntfschar *name,
 				  u32 name_len, ntfs_attr_search_ctx **ctx)
 {
 	ATTR_RECORD *a;
@@ -790,7 +790,7 @@ static int ntfs_ie_lookup(const void *key, const int key_len,
 	return STATUS_KEEP_SEARCHING;
 }
 
-static int ntfs_ib_read(ntfs_index_context *icx, VCN vcn, INDEX_BLOCK *dst)
+int ntfs_ib_read(ntfs_index_context *icx, VCN vcn, INDEX_BLOCK *dst)
 {
 	s64 pos, ret;
 

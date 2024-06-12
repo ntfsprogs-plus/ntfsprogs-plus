@@ -175,13 +175,6 @@ struct bitmap {
 	u8 *bm;
 };
 
-struct progress_bar {
-	u64 start;
-	u64 stop;
-	int resolution;
-	float unit;
-};
-
 typedef struct {
 	ntfs_inode *ni;			/* inode being processed */
 	ntfs_attr_search_ctx *ctx;	/* inode attribute being processed */
@@ -605,31 +598,6 @@ static void generate_serial_number(void) {
 	volume_serial_number = cpu_to_le64(sn);
 }
 
-static void progress_init(struct progress_bar *p, u64 start, u64 stop, int res)
-{
-	p->start = start;
-	p->stop = stop;
-	p->unit = 100.0 / (stop - start);
-	p->resolution = res;
-}
-
-
-static void progress_update(struct progress_bar *p, u64 current)
-{
-	float percent = p->unit * current;
-
-	if (opt.quiet)
-		return;
-
-	if (current != p->stop) {
-		if ((current - p->start) % p->resolution)
-			return;
-		Printf("%6.2f percent completed\r", percent);
-	} else
-		Printf("100.00 percent completed\n");
-	fflush(msg_out);
-}
-
 static s64 is_critical_metadata(ntfs_walk_clusters_ctx *image, runlist *rl)
 {
 	s64 inode = image->ni->mft_no;
@@ -944,6 +912,7 @@ static void clone_ntfs(u64 nr_clusters, int more_use)
 	u64 p_counter = 0;
 	char alignment[IMAGE_HDR_ALIGN];
 	struct progress_bar progress;
+	int pb_flags = 0;
 
 	if (opt.save_image)
 		Printf("Saving NTFS to image ...\n");
@@ -953,11 +922,14 @@ static void clone_ntfs(u64 nr_clusters, int more_use)
 	if (opt.new_serial)
 		generate_serial_number();
 
+	if (!opt.quiet)
+		pb_flags |= NTFS_PROGBAR;
+
 	buf = ntfs_calloc(csize);
 	if (!buf)
 		perr_exit("clone_ntfs");
 
-	progress_init(&progress, p_counter, nr_clusters, 100);
+	progress_init(&progress, p_counter, nr_clusters, 100, pb_flags);
 
 	if (opt.save_image) {
 		int alignsize = le32_to_cpu(image_hdr.offset_to_image_data)
@@ -1023,13 +995,17 @@ static void restore_image(void)
 	char cmd;
 	u64 p_counter = 0;
 	struct progress_bar progress;
+	int pb_flags = 0;
 
 	Printf("Restoring NTFS from image ...\n");
+
+	if (!opt.quiet)
+		pb_flags |= NTFS_PROGBAR;
 
 	progress_init(&progress, p_counter, opt.std_out ?
 		      (u64)sle64_to_cpu(image_hdr.nr_clusters) + 1 :
 		      le64_to_cpu(image_hdr.inuse) + 1,
-		      100);
+		      100, pb_flags);
 
 	if (opt.new_serial)
 		generate_serial_number();
@@ -1964,15 +1940,19 @@ static int walk_clusters(ntfs_volume *volume, struct ntfs_walk_cluster *walk)
 	u64 nr_clusters;
 	ntfs_inode *ni;
 	struct progress_bar progress;
+	int pb_flags = 0;
 
 	if (opt.restore_image || (!opt.metadata && wipe))
 		err_exit("Bug : invalid walk_clusters()\n");
 	Printf("Scanning volume ...\n");
 
+	if (!opt.quiet)
+		pb_flags |= NTFS_PROGBAR;
+
 	last_mft_rec = (volume->mft_na->initialized_size >>
 			volume->mft_record_size_bits) - 1;
 	walk->image->current_lcn = 0;
-	progress_init(&progress, inode, last_mft_rec, 100);
+	progress_init(&progress, inode, last_mft_rec, 100, pb_flags);
 
 	NVolSetNoFixupWarn(volume);
 	for (; inode <= last_mft_rec; inode++) {

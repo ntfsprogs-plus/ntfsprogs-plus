@@ -158,6 +158,12 @@ int parse_count = 1;
 s64 clear_mft_cnt;
 s64 total_valid_mft;
 
+struct progress_bar prog;
+int pb_flags;
+u64 total_cnt;
+u64 checked_cnt;
+u64 orphan_cnt;
+
 #define NTFS_PROGS	"ntfsck"
 /**
  * usage
@@ -171,6 +177,7 @@ static void usage(int error)
 		      "-p,			auto-repair. no questions\n"
 		      "-C,			just check volume dirty\n"
 		      "-n, --repair-no		just check the consistency and no fix\n"
+		      "-q, --quiet		No progress bar\n"
 		      "-r, --repair		Repair interactively\n"
 		      "-y, --repair-yes		all yes about all question\n"
 		      "-v, --verbose		verbose\n"
@@ -199,6 +206,7 @@ static const struct option opts[] = {
 	{"repair-no",		no_argument,		NULL,	'n' },
 	{"repair",		no_argument,		NULL,	'r' },
 	{"repair-yes",		no_argument,		NULL,	'y' },
+	{"quiet",		no_argument,		NULL,	'q' },
 	{"verbose",		no_argument,		NULL,	'v' },
 	{"version",		no_argument,		NULL,	'V' },
 	{NULL,			0,			NULL,	 0  }
@@ -1163,9 +1171,6 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	u64 parent_no;
 	int nlink;
 
-	if (ntfs_fsck_mftbmp_get(vol, mft_num))
-		return;
-
 	is_used = check_mftrec_in_use(vol, mft_num, 0);
 	if (is_used < 0) {
 		ntfs_log_error("Error getting bit value for record %"PRId64".\n",
@@ -1276,6 +1281,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	of->mft_no = mft_num;
 	ntfs_list_add_tail(&of->oc_list, &oc_list_head);
+	orphan_cnt++;
 
 	ntfs_log_debug("close inode (%"PRIu64")\n", ni->mft_no);
 	ntfsck_close_inode(ni);
@@ -3586,6 +3592,8 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 	ntfsck_close_inode(dir_ni);
 	ntfs_list_add(&dir->list, &ntfs_dirs_list);
 
+	progress_init(&prog, 0, total_cnt, 1000, pb_flags);
+
 	while (!ntfs_list_empty(&ntfs_dirs_list)) {
 
 		dir = ntfs_list_entry(ntfs_dirs_list.next, struct dir, list);
@@ -3728,6 +3736,8 @@ check_index:
 					goto check_index;
 			}
 
+			progress_update(&prog, ++checked_cnt);
+
 			/* check bitmap */
 			if (bm_na && ictx->ib)
 				ntfsck_set_index_bitmap(dir_ni, ictx, bm_na);
@@ -3762,6 +3772,12 @@ err_continue:
 		free(dir);
 	}
 
+	progress_update(&prog, total_cnt);
+
+	total_cnt -= checked_cnt;
+	if (total_cnt < 0)
+		total_cnt = 0;
+
 	return 0;
 }
 
@@ -3788,13 +3804,19 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 			vol->mft_record_size_bits;
 	ntfs_log_verbose("Checking %"PRId64" MFT records.\n", nr_mft_records);
 
+	progress_init(&prog, 0, nr_mft_records, 1000, pb_flags);
+
 	/*
 	 * Force to read first bitmap block to invalidate static cache
 	 * array buffer.
 	 */
 	check_mftrec_in_use(vol, FILE_first_user, 1);
-	for (mft_num = FILE_MFT; mft_num < nr_mft_records; mft_num++)
+	for (mft_num = FILE_MFT; mft_num < nr_mft_records; mft_num++) {
+		if (ntfs_fsck_mftbmp_get(vol, mft_num))
+			continue;
 		ntfsck_verify_mft_record(vol, mft_num);
+		progress_update(&prog, mft_num + 1);
+	}
 
 	if (clear_mft_cnt)
 		ntfs_log_info("Clear MFT bitmap count:%"PRId64"\n", clear_mft_cnt);
@@ -3968,6 +3990,8 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 
 	fsck_start_step("Check system files...");
 
+	progress_init(&prog, 0, FILE_first_user + 1, 1, pb_flags);
+
 	root_ni = ntfsck_check_root_inode(vol);
 	if (!root_ni) {
 		ntfs_log_error("Couldn't open the root directory.\n");
@@ -3986,12 +4010,15 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	if (!ictx)
 		goto put_attr_ctx;
 
+	progress_update(&prog, 1);
+
 	/*
 	 * System MFT entries should be verified checked by ntfs_device_mount().
 	 * Here just account number of clusters that is used by system MFT
 	 * entries.
 	 */
 	for (mft_num = FILE_MFT; mft_num < FILE_first_user; mft_num++) {
+		progress_update(&prog, mft_num + 2);
 		if (vol->major_ver < 3 && mft_num == FILE_Extend)
 			continue;
 
@@ -4216,11 +4243,14 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 {
 	struct orphan_mft *entry = NULL;
 	ntfs_inode *root_ni;
+	u64 cnt = 1;
 
 	fsck_start_step("Check orphaned mft...");
 
 	ntfsck_apply_bitmap(vol, vol->lcnbmp_na, ntfs_fsck_find_lcnbmp_block, 1);
 	ntfsck_apply_bitmap(vol, vol->mftbmp_na, ntfs_fsck_find_mftbmp_block, 1);
+
+	progress_init(&prog, 0, orphan_cnt + 1, 1000, pb_flags);
 
 	/* check lost found directory */
 	if (!vol->lost_found) {
@@ -4233,6 +4263,7 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 		ntfsck_check_lost_found(vol, root_ni);
 		ntfsck_close_inode(root_ni);
 	}
+	progress_update(&prog, cnt);
 
 	/* check orphaned mft */
 	while (!ntfs_list_empty(&oc_list_head)) {
@@ -4241,6 +4272,7 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 		check_failed("Found an orphaned file(mft no: %"PRId64"). "
 				"Try to add index entry", entry->mft_no);
 
+		cnt++;
 		if (ntfsck_ask_repair(vol)) {
 			if (ntfsck_add_index_entry_orphaned_file(vol, entry)) {
 				/*
@@ -4252,6 +4284,7 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 				return STATUS_ERROR;
 			}
 			fsck_err_fixed();
+			progress_update(&prog, cnt);
 		} else {
 			ntfs_list_del(&entry->oc_list);
 			free(entry);
@@ -4318,7 +4351,7 @@ static int ntfsck_check_backup_boot(ntfs_volume *vol)
 	return STATUS_ERROR;
 }
 
-static void ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
+static int ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	ntfs_inode *ni = NULL;
 	int is_used;
@@ -4327,18 +4360,18 @@ static void ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
 	if (is_used < 0) {
 		ntfs_log_error("Error getting bit value for record %"PRId64".\n",
 			mft_num);
-		return;
+		return STATUS_ERROR;
 	} else if (!is_used) {
 		if (mft_num < FILE_Extend) {
 			ntfs_log_error("Record(%"PRId64") unused. Fixing or fail about system files.\n",
 					mft_num);
 		}
-		return;
+		return STATUS_ERROR;
 	}
 
 	ni = ntfsck_open_inode(vol, mft_num);
 	if (!ni)
-		return;
+		return STATUS_ERROR;
 
 	total_valid_mft++;
 
@@ -4358,7 +4391,7 @@ static void ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
 	 */
 	ntfsck_update_lcn_bitmap(ni);
 	ntfsck_close_inode(ni);
-	return;
+	return STATUS_OK;
 
 err_check_inode:
 	ntfs_log_trace("Delete orphaned candidate inode(%"PRIu64")\n", ni->mft_no);
@@ -4367,6 +4400,7 @@ err_check_inode:
 	ntfsck_check_mft_record_unused(vol, mft_num);
 	ntfs_fsck_mftbmp_clear(vol, mft_num);
 	check_mftrec_in_use(vol, mft_num, 1);
+	return STATUS_ERROR;
 }
 
 static void ntfsck_scan_mft_records(ntfs_volume *vol)
@@ -4386,12 +4420,18 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 		return;
 	}
 
+	progress_init(&prog, 0, nr_mft_records, 1000, pb_flags);
+
 	/*
 	 * Force to read first bitmap block to invalidate static cache
 	 * array buffer.
 	 */
-	for (mft_num = FILE_MFT; mft_num < nr_mft_records; mft_num++)
-		ntfsck_scan_mft_record(vol, mft_num);
+	for (mft_num = FILE_MFT; mft_num < nr_mft_records; mft_num++) {
+		if (!ntfsck_scan_mft_record(vol, mft_num))
+			total_cnt++;
+		progress_update(&prog, mft_num + 1);
+	}
+
 
 	fsck_end_step();
 }
@@ -4413,12 +4453,12 @@ int main(int argc, char **argv)
 
 	ntfs_log_set_levels(NTFS_LOG_LEVEL_INFO);
 	ntfs_log_clear_levels(NTFS_LOG_LEVEL_TRACE|NTFS_LOG_LEVEL_ENTER|NTFS_LOG_LEVEL_LEAVE);
-
+	pb_flags = NTFS_PROGBAR;
 	option.verbose = 0;
 	opterr = 0;
 	option.flags = NTFS_MNT_FSCK | NTFS_MNT_IGNORE_HIBERFILE;
 
-	while ((c = getopt_long(argc, argv, "aCnpryhvV", opts, NULL)) != EOF) {
+	while ((c = getopt_long(argc, argv, "aCnpqryhvV", opts, NULL)) != EOF) {
 		switch (c) {
 		case 'a':
 		case 'p':
@@ -4456,6 +4496,9 @@ conflict_option:
 			}
 
 			option.flags |= NTFS_MNT_FS_NO_REPAIR | NTFS_MNT_RDONLY;
+			break;
+		case 'q':
+			pb_flags |= ~NTFS_PROGBAR;
 			break;
 		case 'r':
 			if (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |

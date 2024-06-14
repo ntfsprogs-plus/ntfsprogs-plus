@@ -112,6 +112,7 @@ enum {
 
 	NTFS_MNT_FS_NO_REPAIR		= 0x00000010,
 	NTFS_MNT_FS_AUTO_REPAIR		= 0x00000020,
+	NTFS_MNT_FS_PREEN_REPAIR	= 0x00000020,	/* same as AUTO_REPAIR */
 	NTFS_MNT_FS_YES_REPAIR		= 0x00000040,
 	NTFS_MNT_FS_ASK_REPAIR		= 0x00000080,
 	NTFS_MNT_FSCK			= 0x00000100,
@@ -354,11 +355,13 @@ struct _ntfs_volume {
 	ntfs_volume_special_files special_files; /* Implementation of special files */
 	const char *abs_mnt_point; /* Mount point */
 
+	/* TODO: separate fields related with 'fsck' from volume structure */
 	u64 lost_found;		/* mft record number for lost_found directory */
 	u8 **fsck_lcn_bitmap;	/* lcn bitmap of fsck */
 	u64 max_flb_cnt;
 	u8 **fsck_mft_bitmap;	/* mft bitmap of fsck */
 	u64 max_fmb_cnt;
+	ntfs_mount_flags option_flags;	/* fsck option flags */
 
 #ifdef XATTR_MAPPINGS
 	struct XATTRMAPPING *xattr_mapping;
@@ -408,8 +411,6 @@ extern int ntfs_set_shown_files(ntfs_volume *vol,
 		BOOL show_sys_files, BOOL show_hid_files, BOOL hide_dot_files);
 extern int ntfs_set_locale(void);
 extern int ntfs_set_ignore_case(ntfs_volume *vol);
-
-extern BOOL ntfsck_ask_repair(const ntfs_volume *vol);
 
 #endif /* defined _NTFS_VOLUME_H */
 

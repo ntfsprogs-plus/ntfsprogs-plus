@@ -18,6 +18,7 @@
 #endif
 
 #include "volume.h"
+#include "problem.h"
 
 #define NTFS_BUF_SIZE_BITS		(13)
 #define NTFSCK_BYTE_TO_BITS		(3)
@@ -42,4 +43,5 @@ int ntfs_fsck_repair_cluster_dup(ntfs_attr *na, runlist *dup_rl);
 ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 		ntfs_mount_flags flags __attribute__((unused)));
 void ntfs_fsck_umount(ntfs_volume *vol);
+
 #endif /* _NTFS_FSCK_H */

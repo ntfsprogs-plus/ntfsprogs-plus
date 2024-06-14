@@ -57,6 +57,7 @@
 #include "xattrs.h"
 #include "lib_utils.h"
 #include "bitmap.h"
+#include "problem.h"
 
 ntfs_inode *ntfs_inode_base(ntfs_inode *ni)
 {
@@ -190,7 +191,7 @@ static ntfs_inode *ntfs_inode_real_open(ntfs_volume *vol, const MFT_REF mref)
 		if (NVolFsck(vol) && (utils_is_metadata(ni) == 1) && ni->mft_no != FILE_Extend) {
 			check_failed("System file(%"PRIu64") is marked unused, Fix it",
 					ni->mft_no);
-			if (ntfsck_ask_repair(vol)) {
+			if (ntfs_ask_repair(vol)) {
 				ni->mrec->flags |= MFT_RECORD_IN_USE;
 				ntfs_bitmap_set_bit(vol->mftbmp_na, ni->mft_no);
 				ntfs_inode_mark_dirty(ni);

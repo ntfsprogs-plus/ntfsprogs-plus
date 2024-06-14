@@ -64,6 +64,7 @@
 #include "logging.h"
 #include "misc.h"
 #include "efs.h"
+#include "problem.h"
 
 ntfschar AT_UNNAMED[] = { const_cpu_to_le16('\0') };
 ntfschar STREAM_SDS[] = { const_cpu_to_le16('$'),
@@ -3548,7 +3549,7 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 			if (NVolFsck(vol)) {
 				check_failed("Value offset badly aligned in attribute(type : 0x%x)",
 					     a->type);
-				if (ntfsck_ask_repair(vol)) {
+				if (ntfs_ask_repair(vol)) {
 					value_off += 7 & ~7;
 					a->value_offset = cpu_to_le16(value_off);
 					*fixed = TRUE;
@@ -3572,7 +3573,7 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 			if (NVolFsck(vol)) {
 				check_failed("Name offset is corrupted in attribute(type : 0x%x)",
 					     a->type);
-				if (ntfsck_ask_repair(vol)) {
+				if (ntfs_ask_repair(vol)) {
 					a->name_offset = cpu_to_le16(offsetof(ATTR_RECORD, resident_end));
 					*fixed = TRUE;
 					fsck_err_fixed();
@@ -3594,7 +3595,7 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 			if (NVolFsck(vol)) {
 				check_failed("Value offset is corrupted in attribute(type : 0x%x)",
 					     a->type);
-				if (ntfsck_ask_repair(vol)) {
+				if (ntfs_ask_repair(vol)) {
 					value_off = name_end;
 					a->value_offset = cpu_to_le16(value_off);
 					*fixed = TRUE;
@@ -3625,7 +3626,7 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 			if (NVolFsck(vol)) {
 				check_failed("Attribute length is corrupted in attribute(type : 0x%x)",
 					     a->type);
-				if (ntfsck_ask_repair(vol)) {
+				if (ntfs_ask_repair(vol)) {
 					attr_len = (value_off + value_len + 7) & ~7;
 					a->length = cpu_to_le32(attr_len);
 					*fixed = TRUE;
@@ -3682,7 +3683,7 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 					check_failed("$FILE_NAME attribute's flag "
 							"is not set to be indexed");
 
-					if (ntfsck_ask_repair(vol)) {
+					if (ntfs_ask_repair(vol)) {
 						mod_a->resident_flags = RESIDENT_ATTR_IS_INDEXED;
 						*fixed = TRUE;
 						fsck_err_fixed();
@@ -3735,7 +3736,7 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 						     le32_to_cpu(ir->index_block_size),
 						     vol->indx_record_size,
 						     (unsigned long long)inum);
-					if (ntfsck_ask_repair(vol)) {
+					if (ntfs_ask_repair(vol)) {
 						ir->index_block_size = le32_to_cpu(vol->indx_record_size);
 						*fixed = TRUE;
 						fsck_err_fixed();

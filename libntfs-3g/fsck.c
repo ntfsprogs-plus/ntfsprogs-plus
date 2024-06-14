@@ -42,6 +42,7 @@
 #include "bitmap.h"
 #include "lcnalloc.h"
 #include "runlist.h"
+#include "problem.h"
 
 u8 zero_bm[NTFS_BUF_SIZE];
 
@@ -455,6 +456,8 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 		ntfs_umount(vol, FALSE);
 		return NULL;
 	}
+
+	vol->option_flags = flags;
 
 	return vol;
 }

@@ -47,6 +47,7 @@
 #include "bitmap.h"
 #include "reparse.h"
 #include "misc.h"
+#include "problem.h"
 
 /**
  * ntfs_index_entry_mark_dirty - mark an index entry dirty
@@ -526,7 +527,7 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 		return -1;
 	}
 
-	if (fixed && ntfsck_ask_repair(vol)) {
+	if (fixed && ntfs_ask_repair(vol)) {
 		u8 vcn_size_bits;
 
 		ib->magic = magic_INDX;
@@ -581,7 +582,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 
 	if (ie->length == 0 && ie->key_length == 0) {
 		check_failed("Index entry length is zero, It should be at least INDEX_ENTRY_HEADER(16) size");
-		if (ntfsck_ask_repair(vol)) {
+		if (ntfs_ask_repair(vol)) {
 			ie->length = cpu_to_le16(sizeof(INDEX_ENTRY_HEADER));
 			ie->ie_flags = INDEX_ENTRY_END;
 			ret = 1;
@@ -593,7 +594,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 	if (ie->length == cpu_to_le16(sizeof(INDEX_ENTRY_HEADER)) &&
 	    !ie->ie_flags) {
 		check_failed("Index entry is empty and there is no INDEX_ENTRY_END set in ie_flags");
-		if (ntfsck_ask_repair(vol)) {
+		if (ntfs_ask_repair(vol)) {
 			ie->ie_flags = INDEX_ENTRY_END;
 			ret = 1;
 			fsck_err_fixed();
@@ -631,7 +632,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 	    (le16_to_cpu(ie->length) - 8)) {
 		if (!(ie->ie_flags & INDEX_ENTRY_NODE)) {
 			check_failed("INDEX_ENTRY_NODE is not set in index entry");
-			if (ntfsck_ask_repair(vol)) {
+			if (ntfs_ask_repair(vol)) {
 				ie->ie_flags |= INDEX_ENTRY_NODE;
 				fsck_err_fixed();
 				ret = 1;

@@ -58,6 +58,7 @@
 #include "logging.h"
 #include "misc.h"
 #include "lib_utils.h"
+#include "problem.h"
 
 /**
  * ntfs_mft_records_read - read records from the mft from disk
@@ -254,7 +255,7 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 					(unsigned long long)MREF(mref),
 					(int)le32_to_cpu(*(le32 *)m));
 
-			if (ntfsck_ask_repair(vol)) {
+			if (ntfs_ask_repair(vol)) {
 				m->magic = magic_FILE;
 				fixed = TRUE;
 				fsck_err_fixed();
@@ -275,7 +276,7 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 				     "(%u <> %u)", (unsigned long long)MREF(mref),
 				     vol->mft_record_size,
 				     le32_to_cpu(m->bytes_allocated));
-			if (ntfsck_ask_repair(vol)) {
+			if (ntfs_ask_repair(vol)) {
 				m->bytes_allocated = cpu_to_le32(vol->mft_record_size);
 				fixed = TRUE;
 				fsck_err_fixed();
@@ -319,7 +320,7 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 		else
 			ntfs_log_error("Attributes badly aligned in record %llu",
 				       (unsigned long long)MREF(mref));
-		if (ntfsck_ask_repair(vol)) {
+		if (ntfs_ask_repair(vol)) {
 			offset = (offset + 7) & ~7;
 			m->attrs_offset = cpu_to_le16(offset);
 			fixed = TRUE;
@@ -379,7 +380,7 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 		if ((a->type == AT_END) && (biu != offset + 8)) {
 			check_failed("Record %llu has corrupt in-use size(%d)",
 					(unsigned long long)MREF(mref), biu);
-			if (ntfsck_ask_repair(vol)) {
+			if (ntfs_ask_repair(vol)) {
 				m->bytes_in_use = cpu_to_le32(offset + 8);
 				fixed = TRUE;
 				fsck_err_fixed();

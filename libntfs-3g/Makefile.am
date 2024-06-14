@@ -47,6 +47,7 @@ libntfs_3g_la_SOURCES =	\
 	volume.c 	\
 	xattrs.c	\
 	fsck.c		\
+	problem.c	\
 	lib_utils.c
 
 if NTFS_DEVICE_DEFAULT_IO_OPS

@@ -75,6 +75,7 @@
 #include "realpath.h"
 #include "misc.h"
 #include "security.h"
+#include "problem.h"
 
 const char *ntfs_home =
 "News, support and information:  https://github.com/tuxera/ntfs-3g/\n";
@@ -668,7 +669,7 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 
 	if (NVolFsck(vol)) {
 		check_failed("Boot sector: invalid boot sector, Fix");
-		if (ntfsck_ask_repair(vol)) {
+		if (ntfs_ask_repair(vol)) {
 			s64 actual_sectors, shown_sectors;
 
 			actual_sectors = ntfs_device_size_get(dev, sector_size) - 1;
@@ -969,7 +970,7 @@ reload_mft:
 	if (ntfs_mft_load(vol) < 0) {
 		if (try_recover_mft == FALSE) {
 			check_failed("Failed to load $MFT, Fix");
-			if (ntfsck_ask_repair(vol)) {
+			if (ntfs_ask_repair(vol)) {
 				if (!ntfs_recover_mft_from_mftmirr(vol, 0)) {
 					ntfs_log_info("Try to reload $MFT after updating it using $MFTMirr\n");
 					try_recover_mft = TRUE;
@@ -988,7 +989,7 @@ reload_mft_mirr:
 	if (ntfs_mftmirr_load(vol) < 0) {
 		if (try_recover_mft == FALSE) {
 			check_failed("Failed to load $MFTMirr, Fix");
-			if (ntfsck_ask_repair(vol)) {
+			if (ntfs_ask_repair(vol)) {
 				if (!ntfs_recover_mft_from_mftmirr(vol, 1)) {
 					ntfs_log_info("Try to reload $MFTMirr after updating it using $MFT\n");
 					try_recover_mft = TRUE;
@@ -1358,7 +1359,7 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 
 			check_failed("$MFT/$MFTMirror records do not matched. "
 					"Repair $MFTMirror.");
-			if (ntfsck_ask_repair(vol)) {
+			if (ntfs_ask_repair(vol)) {
 				if (ntfs_recover_mft(vol, mrec, vol->mftmirr_lcn, FILE_MFT + i)) {
 					ntfs_log_perror("Error correcting $MFTMirror record : %d", i);
 					goto io_error_exit;
@@ -1381,7 +1382,7 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 
 		check_failed("$MFT is corrupted, repair $MFT using $MFTMirr");
 
-		if (ntfsck_ask_repair(vol)) {
+		if (ntfs_ask_repair(vol)) {
 			if (ntfs_recover_mft(vol, mrec2, vol->mft_lcn, FILE_MFT + i)) {
 				ntfs_log_perror("Error correcting $MFT record : %d", i);
 				goto io_error_exit;
@@ -2356,33 +2357,4 @@ err_out:
 	if (err)
 		errno = err;
 	return err ? -1 : 0;
-}
-
-BOOL ntfsck_ask_repair(const ntfs_volume *vol)
-{
-	BOOL repair = FALSE;
-	char answer[8];
-
-	if (NVolFsNoRepair(vol) || !NVolFsck(vol)) {
-		ntfs_log_error(" No\n");
-		return FALSE;
-	} else if (NVolFsYesRepair(vol) || NVolFsAutoRepair(vol)) {
-		ntfs_log_error(" Yes\n");
-		return TRUE;
-	} else if (NVolFsAskRepair(vol)) {
-		do {
-			ntfs_log_error(" (y/N)? ");
-			fflush(stdout);
-
-			if (fgets(answer, sizeof(answer), stdin)) {
-				if (strcasecmp(answer, "Y\n") == 0)
-					return TRUE;
-				else if (strcasecmp(answer, "\n") == 0 ||
-						strcasecmp(answer, "N\n") == 0)
-					return FALSE;
-			}
-		} while (1);
-	}
-
-	return repair;
 }

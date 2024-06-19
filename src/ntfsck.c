@@ -68,63 +68,6 @@
 /* 'FSCK_#'(6) + u64 max string(20) + 1(for NULL) */
 #define MAX_FILENAME_LEN_LOST_FOUND	(26)
 
-/* todo: command line: (everything is optional)
- *  fsck-frontend options:
- *	-C [fd]	: display progress bar (send it to the file descriptor if specified)
- *	-T	: don't show the title on startup
- *  fsck-checker options:
- *	-a	: auto-repair. no questions. (optional: if marked clean and -f not specified, just check if mounable)
- *	-p	: auto-repair safe. no questions (optional: same)
- *	-n	: only check. no repair.
- *	-r	: interactively repair.
- *	-y	: always yes.
- *	-v	: verbose.
- *	-V	: version.
- *  taken from fsck.ext2
- *	-b sb	: use the superblock from sb. For corrupted volumes. (do we want separete boot/mft options?)
- *	-c	: use badblocks(8) to find bad blocks (R/O mode) and add the findings to $Bad.
- *	-C fd	: write competion info to fd. If 0, print a completion bar.
- *	-d	: debugging output.
- *	-D	: rebalance indices.
- *	-f	: force checking even if marked clean.
- *	-F	: flush buffers before beginning. (for time-benchmarking)
- *	-k	: When used with -c, don't erase previous $Bad items.
- *	-n	: Open fs as readonly. assume always no. (why is it needed if -r is not specified?)
- *	-t	: Print time statistics.
- *  taken from fsck.reiserfs
- *	--rebuild-sb	: try to find $MFT start and rebuild the boot sector.
- *	--rebuild-tree	: scan for items and rebuild the indices that point to them (0x30, $SDS, etc.)
- *	--clean-reserved: zero rezerved fields. (use with care!)
- *	--adjust-size -z: insert a sparse hole if the data_size is larger than the size marked in the runlist.
- *	--logfile file	: report corruptions (unlike other errors) to a file instead of stderr.
- *	--nolog		: don't report corruptions at all.
- *	--quiet -q	: no progress bar.
- *  taken from fsck.msdos
- *	-w	: flush after every write.
- *	- do n passes. (only 2 in fsck.msdos. second should not report errors. Bonus: stop when error list does not change)
- *  taken from fsck.jfs
- *	--omit-journal-reply: self-descriptive (why would someone do that?)
- *	--replay-journal-only: self-descriptive. don't check otherwise.
- *  taken from fsck.xfs
- *	-s	: only serious errors should be reported.
- *	-i ino	: verbose behaviour only for inode ino.
- *	-b bno	: verbose behaviour only for cluster bno.
- *	-L	: zero log.
- *  inspired by others
- *	- don't do cluster accounting.
- *	- don't do mft record accounting.
- *	- don't do file names accounting.
- *	- don't do security_id accounting.
- *	- don't check acl inheritance problems.
- *	- undelete unused mft records. (bonus: different options for 100% salvagable and less)
- *	- error-level-report n: only report errors above this error level
- *	- error-level-repair n: only repair errors below this error level
- *	- don't fail on ntfsclone metadata pruning.
- *  signals:
- *	SIGUSR1	: start displaying progress bar
- *	SIGUSR2	: stop displaying progress bar.
- */
-
 static struct {
 	int verbose;
 	ntfs_mount_flags flags;

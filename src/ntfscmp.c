@@ -65,17 +65,6 @@ static struct {
 } opt;
 
 
-#define NTFS_PROGBAR		0x0001
-#define NTFS_PROGBAR_SUPPRESS	0x0002
-
-struct progress_bar {
-	u64 start;
-	u64 stop;
-	int resolution;
-	int flags;
-	float unit;
-};
-
 /* WARNING: don't modify the text, external tools grep for it */
 #define ERR_PREFIX   "ERROR"
 #define PERR_PREFIX  ERR_PREFIX "(%d): "
@@ -263,35 +252,6 @@ static ntfs_attr_search_ctx *attr_get_search_ctx(ntfs_inode *ni)
 		perr_println("ntfs_attr_get_search_ctx");
 
 	return ret;
-}
-
-static void progress_init(struct progress_bar *p, u64 start, u64 stop, int flags)
-{
-	p->start = start;
-	p->stop = stop;
-	p->unit = 100.0 / (stop - start);
-	p->resolution = 100;
-	p->flags = flags;
-}
-
-static void progress_update(struct progress_bar *p, u64 current)
-{
-	float percent;
-
-	if (!(p->flags & NTFS_PROGBAR))
-		return;
-	if (p->flags & NTFS_PROGBAR_SUPPRESS)
-		return;
-
-	/* WARNING: don't modify the texts, external tools grep for them */
-	percent = p->unit * current;
-	if (current != p->stop) {
-		if ((current - p->start) % p->resolution)
-			return;
-		printf("%6.2f percent completed\r", percent);
-	} else
-		printf("100.00 percent completed\n");
-	fflush(stdout);
 }
 
 static u64 inumber(ntfs_inode *ni)
@@ -918,7 +878,7 @@ static int cmp_inodes(ntfs_volume *vol1, ntfs_volume *vol2)
 			nr_mft_records = nr_mft_records2;
 	}
 
-	progress_init(&progress, 0, nr_mft_records - 1, pb_flags);
+	progress_init(&progress, 0, nr_mft_records - 1, 100, pb_flags);
 	progress_update(&progress, 0);
 
 	for (inode = 0; inode < nr_mft_records; inode++) {

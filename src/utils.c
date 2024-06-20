@@ -770,6 +770,45 @@ int utils_mftrec_in_use(ntfs_volume *vol, MFT_REF mref)
 }
 
 /**
+ * progress_init
+ *
+ * Create and scale our progress bar.
+ */
+void progress_init(struct progress_bar *p, u64 start, u64 stop, int res, int flags)
+{
+	p->start = start;
+	p->stop = stop;
+	p->unit = 100.0 / (stop - start);
+	p->resolution = res;
+	p->flags = flags;
+}
+
+/**
+ * progress_update
+ *
+ * Update the progress bar and tell the user.
+ */
+void progress_update(struct progress_bar *p, u64 current)
+{
+	float percent;
+
+	if (!(p->flags & NTFS_PROGBAR))
+		return;
+	if (p->flags & NTFS_PROGBAR_SUPPRESS)
+		return;
+
+	/* WARNING: don't modify the texts, external tools grep for them */
+	percent = p->unit * current;
+	if (current != p->stop) {
+		if ((current - p->start) % p->resolution)
+			return;
+		printf("%6.2f percent completed\r", percent);
+	} else
+		printf("100.00 percent completed\n");
+	fflush(stdout);
+}
+
+/**
  * utils_dump_mem - Display a block of memory in hex and ascii
  * @buf:     Buffer to be displayed
  * @start:   Offset into @buf to start from
@@ -1107,4 +1146,4 @@ char *ntfs_utils_unix_path(const char *in)
 	return (out);
 }
 
-#endif
+#endif /* HAVE_WINDOWS_H */

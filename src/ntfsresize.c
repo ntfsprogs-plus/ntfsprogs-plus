@@ -161,17 +161,6 @@ struct bitmap {
 	u8 *bm;
 };
 
-#define NTFS_PROGBAR		0x0001
-#define NTFS_PROGBAR_SUPPRESS	0x0002
-
-struct progress_bar {
-	u64 start;
-	u64 stop;
-	int resolution;
-	int flags;
-	float unit;
-};
-
 struct llcn_t {
 	s64 lcn;	/* last used LCN for a "special" file/attr type */
 	s64 inode;	/* inode using it */
@@ -999,45 +988,6 @@ done:
 	}
 }
 
-/**
- * progress_init
- *
- * Create and scale our progress bar.
- */
-static void progress_init(struct progress_bar *p, u64 start, u64 stop, int flags)
-{
-	p->start = start;
-	p->stop = stop;
-	p->unit = 100.0 / (stop - start);
-	p->resolution = 100;
-	p->flags = flags;
-}
-
-/**
- * progress_update
- *
- * Update the progress bar and tell the user.
- */
-static void progress_update(struct progress_bar *p, u64 current)
-{
-	float percent;
-
-	if (!(p->flags & NTFS_PROGBAR))
-		return;
-	if (p->flags & NTFS_PROGBAR_SUPPRESS)
-		return;
-
-	/* WARNING: don't modify the texts, external tools grep for them */
-	percent = p->unit * current;
-	if (current != p->stop) {
-		if ((current - p->start) % p->resolution)
-			return;
-		printf("%6.2f percent completed\r", percent);
-	} else
-		printf("100.00 percent completed\n");
-	fflush(stdout);
-}
-
 static int inode_close(ntfs_inode *ni)
 {
 	if (ntfs_inode_close(ni)) {
@@ -1071,7 +1021,7 @@ static int build_allocation_bitmap(ntfs_volume *vol, ntfsck_t *fsck)
 	nr_mft_records = vol->mft_na->initialized_size >>
 			vol->mft_record_size_bits;
 
-	progress_init(&progress, inode, nr_mft_records - 1, pb_flags);
+	progress_init(&progress, inode, nr_mft_records - 1, 100, pb_flags);
 
 	for (; inode < nr_mft_records; inode++) {
         	if (!opt.infombonly)
@@ -2251,7 +2201,7 @@ static void relocate_inodes(ntfs_resize_t *resize)
 
 	printf("Relocating needed data ...\n");
 
-	progress_init(&resize->progress, 0, resize->relocations, resize->progress.flags);
+	progress_init(&resize->progress, 0, resize->relocations, 100, resize->progress.flags);
 	resize->relocations = 0;
 
 	resize->mrec = ntfs_malloc(resize->vol->mft_record_size);
@@ -3845,7 +3795,7 @@ static void delayed_expand(ntfs_volume *vol, struct DELAYED *delayed,
 			/* count by steps because of inappropriate resolution */
 		for (current=delayed; current; current=current->next)
 			count += step;
-		progress_init(progress, 0, count,
+		progress_init(progress, 0, count, 100,
 					(opt.show_progress ? NTFS_PROGBAR : 0));
 		current = delayed;
 		count = 0;
@@ -4311,7 +4261,7 @@ static int rebase_all_inodes(expand_t *expand)
 			for (prl=mft_rl; prl->length; prl++) { }
 			inodecnt = (prl->vcn << vol->cluster_size_bits)
 				>> vol->mft_record_size_bits;
-			progress_init(expand->progress, 0, inodecnt,
+			progress_init(expand->progress, 0, inodecnt, 100,
 				(opt.show_progress ? NTFS_PROGBAR : 0));
 			prl = mft_rl;
 			jnum = 0;

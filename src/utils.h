@@ -69,6 +69,18 @@ ntfs_volume * utils_mount_volume(const char *device, unsigned long flags);
 #define FEMR_NOT_BASE_RECORD	(1 << 7)
 #define FEMR_ALL_RECORDS	0xFF
 
+/* for progress bar */
+#define NTFS_PROGBAR            0x0001
+#define NTFS_PROGBAR_SUPPRESS   0x0002
+
+struct progress_bar {
+	u64 start;
+	u64 stop;
+	int resolution;
+	int flags;
+	float unit;
+};
+
 /**
  * struct mft_search_ctx
  */
@@ -118,14 +130,17 @@ char *ntfs_utils_unix_path(const char *in);
 #define vfprintf(file, fmt, args) \
 		do { char _b[MAX_FMT]; vfprintf(file, \
 		ntfs_utils_reformat(_b,MAX_FMT,fmt), args); } while (0)
-#endif
+#endif	/* HAVE_WINDOWS_H */
 
 /**
  * linux-ntfs's ntfs_mbstoucs has different semantics, so we emulate it with
  * ntfs-3g's.
  */
-int ntfs_mbstoucs_libntfscompat(const char *ins,
-		ntfschar **outs, int outs_len);
+int ntfs_mbstoucs_libntfscompat(const char *ins, ntfschar **outs, int outs_len);
+
+/* for progress bar */
+void progress_init(struct progress_bar *p, u64 start, u64 stop, int res, int flags);
+void progress_update(struct progress_bar *p, u64 current);
 
 /* This simple utility function was missing from libntfs-3g. */
 static __inline__ ntfschar *ntfs_attr_get_name(ATTR_RECORD *attr)

@@ -532,6 +532,8 @@ AC_CONFIG_FILES([
 	src/ntfscluster.8
 	src/ntfsinfo.8
 	src/ntfslabel.8
+	src/ntfsprogs-plus.8
+	src/ntfsck.8
 ])
 AC_OUTPUT
 

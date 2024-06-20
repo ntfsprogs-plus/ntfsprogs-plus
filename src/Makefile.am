@@ -15,8 +15,8 @@ LINK=$(STATIC_LINK) $(LIBTOOL_LINK)
 bin_PROGRAMS		= ntfsinfo ntfscluster
 sbin_PROGRAMS		= mkntfs ntfslabel ntfsclone ntfsck
 
-man_MANS		= mkntfs.8 ntfslabel.8 ntfsinfo.8 \
-			  ntfsclone.8 ntfscluster.8
+man_MANS		= mkntfs.8 ntfslabel.8 ntfsinfo.8 ntfsck.8 \
+			  ntfsprogs-plus.8 ntfsclone.8 ntfscluster.8
 
 EXTRA_MANS		=
 

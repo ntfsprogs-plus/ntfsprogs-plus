@@ -1,0 +1,52 @@
+.\" Copyright (c) 2002\-2005 Richard Russon.
+.\" Copyright (c) 2002\-2003 Anton Altaparmakov.
+.\" Copyright (c) 2005\-2006 Szabolcs Szakacsits.
+.\" Copyright (c) 2005\-2007 Yura Pakhuchiy.
+.\" This file may be copied under the terms of the GNU Public License.
+.\"
+.TH NTFSPROGS-PLUS 8
+.SH NAME
+ntfsprogs-plus \- tools for doing neat things with NTFS.
+.SH OVERVIEW
+.B ntfsprogs-plus
+is a suite of NTFS utilities based around a shared library.  The tools are
+available for free and come with full source code.
+.B ntfsprogs-plus
+is forked from ntfs-3g project by borrowing some essential utilities for filesystem.
+essential utilities include making, checking and repairing dumping and viewing filesystem.
+
+.SH TOOLS
+.PP
+.BR mkntfs (8)
+\- Create an NTFS filesystem.
+.PP
+.BR ntfsck (8)
+\- Check and repair an NTFS filesystem. It's new utility implemented differently from ntfsprogs.
+.PP
+.BR ntfsclone (8)
+\- Efficiently clone, backup, restore or rescue NTFS.
+.PP
+.BR ntfscluster (8)
+\- Locate the files which use the given sectors or clusters.
+.PP
+.BR ntfsinfo (8)
+\- Show information about NTFS or one of the files or directories within it.
+.PP
+.BR ntfslabel (8)
+\- Show, or set, an NTFS filesystem's volume label.
+
+.SH AUTHORS
+.PP
+.BR
+ntfsck (8) were written by Namjae Jeon, Jay Sim.
+The tools except ntfsck(8) were written by Anton Altaparmakov, Carmelo Kintana, Cristian Klein,
+Erik Sornes, Giang Nguyen, Holger Ohmacht, Lode Leroy, Matthew J. Fanto, Per
+Olofsson, Richard Russon, Szabolcs Szakacsits, Yura Pakhuchiy and Yuval Fledel.
+.SH AVAILABILITY
+The
+.B ntfsprogs-plus
+can be downloaded from:
+.BR
+.UR
+https://github.com/ntfsprogs-plus/ntfsprogs-plus
+.UE

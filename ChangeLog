@@ -1,0 +1,72 @@
+CHANGE NOTES for ntfsprogs-plus
+
+v0.9.12
+Check and repair duplicate clusters problem.
+Fix some bugs.
+
+v0.9.11
+Add support less than 4K cluster sizes.
+Fix lcnbitmap leakage when initialize index blocks.
+Improve index bitmap checking.
+
+v0.9.10
+validate corrupted index entries in ntfsck_validate_index_blocks().
+
+v0.9.9
+Improve fsck performance(about 20%).
+Fix heap corruption when running fsck against 4K native HDD.
+Fix fsck mount failure if FILENAME attribute of $MFT is located in extent entry.
+
+v0.9.8
+Add more exception handling if ictx->actx is NULL.
+Fix a crash by reinitializing 'icx' if icx->entry is the index end.
+
+v0.9.7
+Fix segfault by accessing freed ->actx when ntfs_index_rm fail.
+
+v0.9.6
+Change $MFT/$MFTMirror check logic. If $MFT is normal, then use it.
+And if $MFT is corrupted and $MFTMirr is normal, then use $MFTMirr.
+
+v0.9.5
+Add more information in ntfsinfo.
+Other utils don't need to check Mirr and MFT.
+Add the check for index entry belongs to index block.
+Improve btree lookup performance to skip FILE_NAME_DOS entry.
+Avoid unneeded STD info attribute update.
+
+v0.9.4
+* Fix nidata cache memory leak
+* Handle IO error when USB/HDD unplugged during fsck
+
+v0.9.3
+* Modify index block check
+Re-lookup $INDEX_ROOT after calling ntfsck_validate_index_blocks()
+check $BITMAP size and $INDEX_ALLOCATION block
+check index block buffer overflow with $BITMAP
+
+* Consider multiple $FILE_NAME or multiple attribute
+check parent directory of $FILE_NAME and parent MFT number
+check multiple $FILE_NAME in orphaned file handling
+check comparing size of first(start VCN is zero) attribute's
+
+* Add checking return error of some functions
+check return error of ntfs_inode_attach_all_extents(), ntfs_inode_close()
+check base_mft_record value of MFT record
+
+* Modify inode index block bitmap check
+
+* Other fixes
+Fix mismatch of fsck error count and fixed count
+Do not initialize directory entry when modified size is zero
+Fix return value check of test script
+
+* Resolve static analysis issues
+
+v0.9.2
+Mark the MFT record as not in use if it wasn't marked in bitmap.
+Recover MFT if MFT and MFTMirr is different using memcmp.
+Handle MFT bitmap free, but MFT record is in-use.
+Add missing checks for MFT Record fields.
+Add file flags check same as kernel does
+Check return value of ntfs_attrs_walk()

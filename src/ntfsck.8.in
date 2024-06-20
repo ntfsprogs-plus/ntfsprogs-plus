@@ -1,0 +1,162 @@
+.\" Copyright (c) 2023\-2024 Namjae jeon
+.\" This file may be copied under the terms of the GNU Public License.
+.\"
+.TH NTFSCK 8 "AUGUST 2023" "ntfsprogs-plus @VERSION@"
+.SH NAME
+ntfsck \- check and repair a Linux ntfs filesystem.
+.SH SYNOPSIS
+.B ntfsck
+[\fIOPTIONS\fR]
+.I \fIdevice\fR
+.br
+.SH DESCRIPTION
+.B ntfsck
+is used to check the ntfs filesystem in linux. It will repair corrupted ntfs filesystem.
+.B ntfsck
+do not support journal replay. Windows ntfs filesystem and some commercial linux ntfs
+filesystem use journal. But there's no open-source ntfs filesystem to support journaling.
+So if you have storage which have journal data, it's better to repair in Windows.
+
+When the system has been shutdonw suddenly on linux, filesystem should be marked as dirty normally.
+Because linux ntfs filesystem does not support journaling, fsck should scan all disk
+for checking and repairing.
+.B ntfsck
+can be useful utility to check and repair ntfs filesystem in linux.
+
+.I device
+is a block device (e.g., /dev/sdc1) or file containing the ntfs filesystem.
+If \fIdevice\fR is mounted, then ntfsck will not be executed because it is not safe to run
+on mounted filesystem.
+
+If
+.B ntfsck
+is run in interactive mode, it will ask the user to fix each problem found in the filesystem.
+If you specify '-r' or not specify any option, ntfsck will execute with interactive mode.
+At that time, you should not specify -a/-p, -y, -C, -n option, because those options are
+mutually exclusive. (meaning that above options should be specified by just only one option)
+Meaning of -a/-p, -y, -n options is same as other fsck utilities's execpt -C option.
+-C option will exit after only checking device is dirty or not.
+It returns 0, if device is clean. return 1 if device is dirty.
+
+And,
+.B ntfsck
+will set clusters bitmap which is allocated to repairable inode even no-repair mode
+to prevent cluster duplication during fsck, or filesystem operations after mount
+without finishing checking filesystem.
+
+.SH OPTIONS
+.TP
+.B \-a, \-\-repair\-auto
+Auto repair mode. This option does the same thing as the
+.B \-p
+option. It is provided for backwards compatibility only; it is suggested that people use
+.B \-p
+option if possible.
+This option should not be specified at the same time with \-y, \-n, \-C options.
+.TP
+.B \-C
+Check only mode. Check if device volume is dirty or not.
+This option should not be specified at the same time with \-a/\-p, \-y, \-n options.
+.B ntfsck
+return zero, if device is clean, else return 1. (meaning that volume is dirty)
+.TP
+.B \-n, \-\-repair\-no
+No repair mode. Open the filesystem read-only. This mode just check only problem of filesystem.
+And answer 'no' to all question. Even this mode,
+.B ntfsck
+will set cluster bitmap for all repairable candidate inode to prevent cluster duplication.
+This option should not be specified at the same time with \-a/\-p, \-y, \-C options.
+.TP
+.B \-q, \-\-quiet
+Do not print progress percent.
+.TP
+.B \-r, \-\-repair
+Interactive mode. Check and repair interactively. Now do not support 'yestoall' or 'notoall'.
+So you should input 'Y' or 'N' for all question for problem.
+.TP
+.B \-p
+Preen repair mode.
+.B ntfsck
+will fix any filesystem problems automatically without human intervention.
+Generally, fsck will try to fix automatically as possible. When it found a problem
+which require human interaction, fsck print problem and ask input from human.
+But now this option is same as \-y in
+.B ntfsck.
+
+.TP
+.B \-y, \-\-repair\-yes
+Yes repair mode. Assume an answer of 'yes' to all questions.
+This option should not be specified at the same time with \-a/\-p, \-n, \-C options.
+.TP
+.B \-y \-\-verbose
+
+.TP
+.B \-V \-\-version
+Print
+.B ntfsck
+version.
+
+.SH EXIT CODES
+All exit codes returned by
+.B ntfsck
+are listed below:
+.br
+\	0\	\-\ No errors
+.br
+\	1\	\-\ Filesystem errors corrected
+.br
+\	2\	\-\ Filesystem errors corrected, need to reboot
+.br
+\	4\	\-\ Filesystem errors left uncorrected
+.br
+\	8\	\-\ Operational error
+.br
+\	16\	\-\ Usage or syntax error
+.br
+\	32\	\-\ Canceled by user interrupt
+.br
+\	64\	\-\ Not supported filesystem
+.br
+\	128\	\-\ Shared library error
+
+.SH EXAMPLES
+
+Normal usage (auto repair mode) for repairing /dev/sdc1:
+.RS
+.sp
+.B ntfsck \-a /dev/sdc1
+.sp
+.RE
+
+.SH AUTHORS
+.B ntfsck
+was written by Namjae Jeon <linkinjeon@kernel.org> with contributions from Jay Sim.
+
+.SH AVAILIBILITY
+.B ntfsck
+is part of the
+.B ntfsprogs-plus
+package and is available at:
+.br
+.nh
+https://github.com/ntfsprogs-plus/ntfsprogs-plus
+.hy
+
+.SH BUG REPORTS
+If you found a problem which
+.B ntfsck
+cannot repair filesystem, then you may dump disk image using ntfsclone
+and send it to above github homepage for debugging.
+Sample of dumping image using ntfsclone:
+.RS
+.sp
+.B ntfsclone -o <target image name> -f -m --ignore-fs-check <device>
+.sp
+.RE
+You can also refer ntfsclone(8) to know further information.
+
+.SH SEE ALSO
+.BR ntfsclone (8)
+.BR ntfsinfo (8)
+.BR ntfscluster (8)
+.BR ntfsprogs-plus (8)

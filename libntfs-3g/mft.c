@@ -244,18 +244,19 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 	s32 space;
 	BOOL fixed = FALSE;
 	BOOL is_fsck = NVolFsck(vol);
+	problem_context_t pctx = {0, };
 
 	if (is_fsck && mref <= FILE_MFTMirr)
 		NVolClearFsck(vol);
 
+	pctx.m = m;
+	pctx.inum = MREF(mref);
+
 	/* check magic number of mft */
 	if (!ntfs_is_file_record(m->magic)) {
 		if (NVolFsck(vol) && m->magic != magic_BAAD) {
-			check_failed("Record %llu has no FILE magic (0x%x)",
-					(unsigned long long)MREF(mref),
-					(int)le32_to_cpu(*(le32 *)m));
-
-			if (ntfs_ask_repair(vol)) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_MFT_MAGIC_CORRUPTED, &pctx)) {
 				m->magic = magic_FILE;
 				fixed = TRUE;
 				fsck_err_fixed();
@@ -272,11 +273,8 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 	/* check allocated size */
 	if (le32_to_cpu(m->bytes_allocated) != vol->mft_record_size) {
 		if (NVolFsck(vol)) {
-			check_failed("Record %llu has corrupt allocation size "
-				     "(%u <> %u)", (unsigned long long)MREF(mref),
-				     vol->mft_record_size,
-				     le32_to_cpu(m->bytes_allocated));
-			if (ntfs_ask_repair(vol)) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_MFT_SIZE_CORRUPTED, &pctx)) {
 				m->bytes_allocated = cpu_to_le32(vol->mft_record_size);
 				fixed = TRUE;
 				fsck_err_fixed();
@@ -314,10 +312,10 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 
 	/* check alignment of attribute start offset */
 	if (offset & 7) {
-		if (NVolFsck(vol))
-			check_failed("Attributes badly aligned in record %llu",
-				       (unsigned long long)MREF(mref));
-		else
+		if (NVolFsck(vol)) {
+			fsck_err_found();
+			ntfs_print_problem(vol, PR_MFT_ATTR_OFFSET_CORRUPTED, &pctx);
+		} else
 			ntfs_log_error("Attributes badly aligned in record %llu",
 				       (unsigned long long)MREF(mref));
 		if (ntfs_ask_repair(vol)) {
@@ -378,9 +376,8 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 		 * +8 mean the attribute terminator.
 		 */
 		if ((a->type == AT_END) && (biu != offset + 8)) {
-			check_failed("Record %llu has corrupt in-use size(%d)",
-					(unsigned long long)MREF(mref), biu);
-			if (ntfs_ask_repair(vol)) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_MFT_BIU_CORRUPTED, &pctx)) {
 				m->bytes_in_use = cpu_to_le32(offset + 8);
 				fixed = TRUE;
 				fsck_err_fixed();

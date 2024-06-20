@@ -476,10 +476,12 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 	u32 ib_size = (unsigned)le32_to_cpu(ih->allocated_size)
 			+ offsetof(INDEX_BLOCK, index);
 	BOOL fixed = FALSE;
+	problem_context_t pctx = {0, };
 
+	ntfs_init_problem_ctx(&pctx, ia_na->ni, ia_na, NULL, NULL, NULL, NULL, NULL);
+	pctx.vcn = vcn;
 	if (!ntfs_is_indx_record(ib->magic)) {
-		ntfs_log_error("Corrupt index block signature: vcn(%llu) inode(%llu)\n",
-			       (long long)vcn, (unsigned long long)inum);
+		ntfs_print_problem(vol, PR_IA_MAGIC_CORRUPTED, &pctx);
 		fixed = TRUE;
 	}
 
@@ -576,13 +578,20 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 			ntfs_index_context *ictx)
 {
 	int ret = 0;
+	problem_context_t pctx = {0, };
 
 	if (!ie)
 		return 0;
 
+	if (ictx) {
+		pctx.ictx = ictx;
+		pctx.ni = ictx->ni;
+	}
+	pctx.inum = inum;
+
 	if (ie->length == 0 && ie->key_length == 0) {
-		check_failed("Index entry length is zero, It should be at least INDEX_ENTRY_HEADER(16) size");
-		if (ntfs_ask_repair(vol)) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_IE_ZERO_LENGTH, &pctx)) {
 			ie->length = cpu_to_le16(sizeof(INDEX_ENTRY_HEADER));
 			ie->ie_flags = INDEX_ENTRY_END;
 			ret = 1;
@@ -593,8 +602,8 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 
 	if (ie->length == cpu_to_le16(sizeof(INDEX_ENTRY_HEADER)) &&
 	    !ie->ie_flags) {
-		check_failed("Index entry is empty and there is no INDEX_ENTRY_END set in ie_flags");
-		if (ntfs_ask_repair(vol)) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_IE_END_FLAG_CORRUPTED, &pctx)) {
 			ie->ie_flags = INDEX_ENTRY_END;
 			ret = 1;
 			fsck_err_fixed();
@@ -631,8 +640,8 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 	if (((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) ==
 	    (le16_to_cpu(ie->length) - 8)) {
 		if (!(ie->ie_flags & INDEX_ENTRY_NODE)) {
-			check_failed("INDEX_ENTRY_NODE is not set in index entry");
-			if (ntfs_ask_repair(vol)) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_IE_FLAG_SUB_NODE_CORRUPTED, &pctx)) {
 				ie->ie_flags |= INDEX_ENTRY_NODE;
 				fsck_err_fixed();
 				ret = 1;

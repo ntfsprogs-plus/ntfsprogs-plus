@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier : GPL-2.0 */
 #ifndef PROBLEM_H
 #define PROBLEM_H
 

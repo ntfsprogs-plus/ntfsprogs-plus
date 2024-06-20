@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier : GPL-2.0 */
+/* problem.c : manage problem which is found during fsck */
+
 #include <strings.h>
 #include "problem.h"
 

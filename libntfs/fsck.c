@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier : GPL-2.0 */
+/* fsck.c : common functions for fsck.
+ * Manages MFT bitmap, cluster bitmap, fsck mount */
+
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif

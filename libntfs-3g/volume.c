@@ -668,8 +668,8 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 		goto out;
 
 	if (NVolFsck(vol)) {
-		check_failed("Boot sector: invalid boot sector, Fix");
-		if (ntfs_ask_repair(vol)) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_BOOT_SECTOR_INVALID, NULL)) {
 			s64 actual_sectors, shown_sectors;
 
 			actual_sectors = ntfs_device_size_get(dev, sector_size) - 1;
@@ -969,8 +969,8 @@ reload_mft:
 	/* Need to setup $MFT so we can use the library read functions. */
 	if (ntfs_mft_load(vol) < 0) {
 		if (try_recover_mft == FALSE) {
-			check_failed("Failed to load $MFT, Fix");
-			if (ntfs_ask_repair(vol)) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_MOUNT_LOAD_MFT_FAILURE, NULL)) {
 				if (!ntfs_recover_mft_from_mftmirr(vol, 0)) {
 					ntfs_log_info("Try to reload $MFT after updating it using $MFTMirr\n");
 					try_recover_mft = TRUE;
@@ -988,8 +988,8 @@ reload_mft_mirr:
 	/* Need to setup $MFTMirr so we can use the write functions, too. */
 	if (ntfs_mftmirr_load(vol) < 0) {
 		if (try_recover_mft == FALSE) {
-			check_failed("Failed to load $MFTMirr, Fix");
-			if (ntfs_ask_repair(vol)) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_MOUNT_LOAD_MFTMIRR_FAILURE, NULL)) {
 				if (!ntfs_recover_mft_from_mftmirr(vol, 1)) {
 					ntfs_log_info("Try to reload $MFTMirr after updating it using $MFT\n");
 					try_recover_mft = TRUE;
@@ -1356,10 +1356,8 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 		if (!ntfs_mft_record_check(vol, FILE_MFT + i, mrec)) {
 			if (!memcmp(mrec, mrec2, vol->mft_record_size))
 				continue;
-
-			check_failed("$MFT/$MFTMirror records do not matched. "
-					"Repair $MFTMirror.");
-			if (ntfs_ask_repair(vol)) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_MOUNT_MFT_MFTMIRR_MISMATCH, NULL)) {
 				if (ntfs_recover_mft(vol, mrec, vol->mftmirr_lcn, FILE_MFT + i)) {
 					ntfs_log_perror("Error correcting $MFTMirror record : %d", i);
 					goto io_error_exit;
@@ -1379,10 +1377,8 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 			fsck_err_found();
 			goto io_error_exit;
 		}
-
-		check_failed("$MFT is corrupted, repair $MFT using $MFTMirr");
-
-		if (ntfs_ask_repair(vol)) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_MOUNT_REPAIRED_MFTMIRR_CORRUPTED, NULL)) {
 			if (ntfs_recover_mft(vol, mrec2, vol->mft_lcn, FILE_MFT + i)) {
 				ntfs_log_perror("Error correcting $MFT record : %d", i);
 				goto io_error_exit;

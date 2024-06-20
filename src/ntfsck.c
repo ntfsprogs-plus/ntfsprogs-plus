@@ -349,6 +349,7 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 	s64 rl_data_size = 0;	/* rl data size (real allocated size) */
 	s64 rsize;		/* a cluster run size */
 	int i = 0;
+	problem_context_t pctx = {0, };
 
 	if (!na || !na->ni || !na->rl)
 		return STATUS_ERROR;
@@ -357,6 +358,8 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 	rl = na->rl;
 
 	vol = ni->vol;
+
+	ntfs_init_problem_ctx(&pctx, ni, na, NULL, NULL, ni->mrec, NULL, NULL);
 
 	while (rl && rl[i].length) {
 		if (rl[i].lcn > LCN_HOLE) {
@@ -391,12 +394,8 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 	}
 
 	if (dup_rl) {
-		ntfs_log_error("Found cluster duplication(%"PRIu64":%"PRIu64")"
-				" of inode(%"PRId64":%d), Fix it\n",
-				dup_rl[0].lcn, dup_rl[0].length,
-				ni->mft_no, na->type);
-
-		if (ntfs_ask_repair(vol)) {
+		/* Found cluster duplication */
+		if (ntfs_fix_problem(vol, PR_CLUSTER_DUPLICATION_FOUND, &pctx)) {
 			/*
 			 * fix cluster duplication in ntfs_fsck_repair_cluster_dup(),
 			 * but it is applied to disk in caller side.
@@ -1170,6 +1169,9 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	FILE_NAME_ATTR *fn;
 	u64 parent_no;
 	int nlink;
+	problem_context_t pctx = {0, };
+
+	pctx.inum = mft_num;
 
 	is_used = check_mftrec_in_use(vol, mft_num, 0);
 	if (is_used < 0) {
@@ -1193,10 +1195,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			return;
 		}
 
-		ntfs_log_error("Clear the bit of mft no(%"PRId64") "
-				"in the $MFT/$BITMAP corresponding orphaned MFT record\n",
-				mft_num);
-		if (ntfs_ask_repair(vol)) {
+		if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_OPEN_FAILURE, &pctx)) {
 			if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
 				ntfs_log_error("ntfs_bitmap_clear_bit failed, errno : %d\n",
 						errno);
@@ -1288,11 +1287,10 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	return;
 
 err_check_inode:
-	ntfs_log_error("Delete orphaned candidate inode(%"PRIu64")", ni->mft_no);
 	ntfs_attr_put_search_ctx(ctx);
 	ntfsck_close_inode(ni);
 
-	if (ntfs_ask_repair(vol))
+	if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_CHECK_FAILURE, &pctx))
 		ntfsck_check_mft_record_unused(vol, mft_num);
 
 	ntfs_fsck_mftbmp_clear(vol, mft_num);
@@ -1414,6 +1412,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	BOOL need_fix = FALSE;
 	FILE_NAME_ATTR *fn;
 	ntfs_attr_search_ctx *actx;
+	problem_context_t pctx = {0, };
 
 	u64 idx_pdir;		/* IDX/$FN's parent MFT no */
 	u64 mft_pdir;		/* MFT/$FN's parent MFT no */
@@ -1435,6 +1434,8 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		ret = STATUS_ERROR;
 		goto out;
 	}
+
+	ntfs_init_problem_ctx(&pctx, ni, NULL, actx, NULL, NULL, NULL, ie_fn);
 
 	idx_pdir = MREF_LE(ie_fn->parent_directory);
 	mft_pdir = MREF_LE(fn->parent_directory);
@@ -1494,11 +1495,10 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		if (ie_fn->reparse_point_tag != rpp->reparse_tag) {
 			filename = ntfs_attr_name_get(ie_fn->file_name,
 						      ie_fn->file_name_length);
-			check_failed("Reparse tag is different "
-				"(IDX/$FN:%08lx MFT/$FN:%08lx) on inode(%"PRIu64", %s)",
-				(long)le32_to_cpu(ie_fn->reparse_point_tag),
-				(long)le32_to_cpu(fn->reparse_point_tag),
-				ni->mft_no, filename);
+			pctx->filename = filename;
+			fsck_err_found();
+			ntfs_print_problem(vol, PR_MFT_REPARSE_TAG_MISMATCH, &pctx);
+
 			ie_fn->reparse_point_tag = rpp->reparse_tag;
 			need_fix = TRUE;
 			ntfs_attr_put_search_ctx(_ctx);
@@ -1518,10 +1518,9 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		if (!(ie_fn->file_attributes & FILE_ATTR_I30_INDEX_PRESENT)) {
 			filename = ntfs_attr_name_get(ie_fn->file_name,
 						      ie_fn->file_name_length);
-			check_failed("MFT flag set as directory, but MFT/$FN flag "
-					"of inode(%"PRIu64":%s) is not set! Fix it.",
-					ni->mft_no, filename);
-			if (ntfs_ask_repair(vol)) {
+			pctx.filename = filename;
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_MFT_FLAG_MISMATCH, &pctx)) {
 				ie_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
 				fn->file_attributes = ie_fn->file_attributes;
 				ntfs_index_entry_mark_dirty(ictx);
@@ -1536,13 +1535,9 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 			if (!filename)
 				filename = ntfs_attr_name_get(ie_fn->file_name,
 							      ie_fn->file_name_length);
-			check_failed("Directory(%"PRIu64":%s) has non-zero "
-					"length(ie:%"PRIu64",%"PRIu64", "
-					"ni:%"PRIu64",%"PRIu64"). Fix it.",
-					ni->mft_no, filename, ie_fn->allocated_size,
-					ie_fn->data_size, ni->allocated_size,
-					ni->data_size);
-			if (ntfs_ask_repair(vol)) {
+			pctx.filename = filename;
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_DIR_NONZERO_SIZE, &pctx)) {
 				ni->allocated_size = 0;
 				ni->data_size = 0;
 				ie_fn->allocated_size = cpu_to_sle64(0);
@@ -1569,11 +1564,10 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	if (ni->allocated_size != sle64_to_cpu(ie_fn->allocated_size)) {
 		filename = ntfs_attr_name_get(ie_fn->file_name,
 					      ie_fn->file_name_length);
-		check_failed("Allocated size is different "
-				"(IDX/$FN:%"PRIu64" MFT/$DATA:%"PRIu64") "
-				"on inode(%"PRIu64", %s). Fix it.",
-				sle64_to_cpu(ie_fn->allocated_size),
-				ni->allocated_size, ni->mft_no, filename);
+		pctx.filename = filename;
+		fsck_err_found();
+		ntfs_print_problem(vol, PR_MFT_ALLOCATED_SIZE_MISMATCH, &pctx);
+
 		need_fix = TRUE;
 		goto fix_index;
 	}
@@ -1584,11 +1578,10 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	if (ni->data_size != sle64_to_cpu(ie_fn->data_size)) {
 		filename = ntfs_attr_name_get(ie_fn->file_name,
 					      ie_fn->file_name_length);
-		check_failed("Data size is different "
-				"(IDX/$FN:%"PRIu64" MFT/$DATA:%"PRIu64") "
-				"on inode(%"PRIu64", %s). Fix it.",
-				sle64_to_cpu(ie_fn->data_size),
-				ni->data_size, ni->mft_no, filename);
+		pctx.filename = filename;
+		fsck_err_found();
+		ntfs_print_problem(vol, PR_MFT_DATA_SIZE_MISMATCH, &pctx);
+
 		need_fix = TRUE;
 		goto fix_index;
 	}
@@ -1700,7 +1693,9 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 	FILE_ATTR_FLAGS ie_flags; /* index key $FILE_NAME flags */
 	ntfs_volume *vol = ni->vol;
 	BOOL check_ir = FALSE;	/* flag about checking index root */
+	problem_context_t pctx = {0, };
 
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, ictx, NULL, NULL, ie_fn);
 	ie_flags = ie_fn->file_attributes;
 
 	if (ie_flags & FILE_ATTR_VIEW_INDEX_PRESENT)
@@ -1710,12 +1705,11 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		/* mft record flags is set to directory */
 		if (ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4)) {
 			if (!(ie_flags & FILE_ATTR_I30_INDEX_PRESENT)) {
-				check_failed("MFT(%"PRIu64") flag is set to directory, "
-						"but IDX/$FN is not set.",
-						ni->mft_no);
 				ie_flags |= FILE_ATTR_I30_INDEX_PRESENT;
 				ie_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
-				if (ntfs_ask_repair(vol)) {
+
+				fsck_err_found();
+				if (ntfs_fix_problem(vol, PR_DIR_FLAG_MISMATCH_IDX_FN, &pctx)) {
 					ntfs_index_entry_mark_dirty(ictx);
 					fsck_err_fixed();
 				}
@@ -1729,22 +1723,21 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 				return STATUS_ERROR;
 
 			/* not found $INDEX_ROOT, check failed */
-			check_failed("MFT(%"PRIu64") flag is set to directory, "
-					"but there's no MFT/$IR attr.", ni->mft_no);
 			ie_flags &= ~FILE_ATTR_I30_INDEX_PRESENT;
 			ni->mrec->flags &= ~MFT_RECORD_IS_DIRECTORY;
-			if (ntfs_ask_repair(vol)) {
+
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_DIR_FLAG_MISMATCH_MFT_FN, &pctx)) {
 				ntfs_inode_mark_dirty(ni);
 				fsck_err_fixed();
 			}
 
 			if (ie_flags & FILE_ATTR_I30_INDEX_PRESENT) {
-				check_failed("MFT(%"PRIu64") $IR does not exist, "
-						"but Index/$FILE_NAME flag is set to "
-						"directory.", ni->mft_no);
 				ie_flags &= ~FILE_ATTR_I30_INDEX_PRESENT;
 				ie_fn->file_attributes &= ~FILE_ATTR_I30_INDEX_PRESENT;
-				if (ntfs_ask_repair(vol)) {
+
+				fsck_err_found();
+				if (ntfs_fix_problem(vol, PR_DIR_IR_NOT_EXIST, &pctx)) {
 					ntfs_index_entry_mark_dirty(ictx);
 					fsck_err_fixed();
 				}
@@ -1758,12 +1751,11 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		/* mft record flags is not set to directory */
 		if (ntfs_attr_exist(ni, AT_DATA, AT_UNNAMED, 0)) {
 			if (ie_flags & FILE_ATTR_I30_INDEX_PRESENT) {
-				check_failed("MFT(%"PRIu64") flag is set to file, "
-						"but IDX/$FN is set to directory.",
-						ni->mft_no);
 				ie_flags &= ~FILE_ATTR_I30_INDEX_PRESENT;
 				ie_fn->file_attributes &= ~FILE_ATTR_I30_INDEX_PRESENT;
-				if (ntfs_ask_repair(vol)) {
+
+				fsck_err_found();
+				if (ntfs_fix_problem(vol, PR_MFT_FLAG_MISMATCH_IDX_FN, &pctx)) {
 					ntfs_index_entry_mark_dirty(ictx);
 					fsck_err_fixed();
 				}
@@ -1782,13 +1774,12 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 				return STATUS_ERROR;
 			}
 
-			check_failed("MFT(%"PRIu64") flag is set to file, "
-					"but there's no MFT/$DATA, but MFT/$IR.",
-					ni->mft_no);
 			/* found $INDEX_ROOT */
 			ie_flags |= FILE_ATTR_I30_INDEX_PRESENT;
 			ie_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
-			if (ntfs_ask_repair(vol)) {
+
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_FILE_HAVE_IR, &pctx)) {
 				ntfs_index_entry_mark_dirty(ictx);
 				fsck_err_fixed();
 			}
@@ -1833,6 +1824,7 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 	runlist *rl = NULL;
 	int not_mapped;
 	int err;
+	problem_context_t pctx = {0, };
 
 	if (!na || !na->ni)
 		return NULL;
@@ -1843,6 +1835,8 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 	actx = ntfs_attr_get_search_ctx(ni, NULL);
 	if (!actx)
 		return NULL;
+
+	ntfs_init_problem_ctx(&pctx, ni, na, NULL, NULL, NULL, NULL, NULL);
 
 	next_vcn = last_vcn = highest_vcn = 0;
 	/* There can be multiple attributes in a inode */
@@ -1896,11 +1890,13 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 
 		if (!next_vcn) {
 			if (attr->lowest_vcn) {
-				check_failed("inode(%"PRIu64")'s first $DATA"
-						" lowest_vcn is not zero", ni->mft_no);
 				err = EIO;
 				/* should fix attribute's lowest_vcn */
-				if (ntfs_ask_repair(vol)) {
+
+				pctx.ctx = actx;
+				pctx.vcn = attr->lowest_vcn;
+				fsck_err_found();
+				if (ntfs_fix_problem(vol, PR_ATTR_LOWEST_VCN_IS_NOT_ZERO, &pctx)) {
 					attr->lowest_vcn = 0;
 					NInoSetDirty(ni);
 					fsck_err_fixed();
@@ -2331,6 +2327,7 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 	s64 aligned_data_size;
 	s64 lowest_vcn;
 	struct rl_size rls = {0, };
+	problem_context_t pctx = {0, };
 
 	if (!na || !na->ni || !na->ni->vol)
 		return STATUS_ERROR;
@@ -2342,6 +2339,8 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 	vol = na->ni->vol;
 	a =  actx->attr;
 
+	ntfs_init_problem_ctx(&pctx, ni, na, actx, NULL, NULL, a, NULL);
+
 	/* check whole cluster runlist and set cluster bitmap of fsck */
 	if (ntfsck_check_attr_runlist(na, &rls, &need_fix, set_bit)) {
 		ntfs_log_error("Failed to get non-resident attribute(%d) "
@@ -2351,8 +2350,8 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 
 	/* if need_fix is set to TRUE, apply modified runlist to cluster runs */
 	if (need_fix == TRUE) {
-		check_failed("Repaired runlist should be applied to disk");
-		if (ntfs_ask_repair(vol)) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_LOG_APPLY_RUNLIST_TO_DISK, &pctx)) {
 			/*
 			 * keep a valid runlist as long as possible.
 			 * if truncate zero, call with second parameter to 0
@@ -2400,19 +2399,14 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 		new_size = alloc_size;
 	}
 
-	check_failed("Size of non resident(%"PRIu64":%d) are corrupted, "
-			"(new size:%"PRIu64", allocated:%"PRIu64", aligned:%"PRIu64" "
-			"data:%"PRIu64", init:%"PRIu64", rls(%"PRIu64":%"PRIu64")",
-			ni->mft_no, a->type, new_size, alloc_size, aligned_data_size,
-			data_size, init_size, rls.real_size, rls.alloc_size);
-
 	/*
 	 * ntfsck_update_runlist will set appropriate flag
 	 * and fields of attribute structure at ntfs_attr_update_meta(),
 	 * that is also including compressed_size and flags.
 	 */
 
-	if (!ntfs_ask_repair(vol))
+	fsck_err_found();
+	if (!ntfs_fix_problem(vol, PR_ATTR_NON_RESIDENT_SIZES_MISMATCH, &pctx))
 		goto out;
 
 	if (na->type == AT_INDEX_ALLOCATION)
@@ -2434,6 +2428,7 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 	ntfs_attr *ia_na = NULL;
 	ntfs_attr *bm_na = NULL;
 	int ret = STATUS_OK;
+	problem_context_t pctx = {0, };
 
 	if (!ni)
 		return -EINVAL;
@@ -2522,8 +2517,9 @@ init_all:
 	if (ia_na)
 		ntfs_attr_close(ia_na);
 
-	check_failed("Directory has non-resident $INDEX_ALLOCATION");
-	if (ntfs_ask_repair(ni->vol)) {
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, NULL, NULL, NULL);
+	fsck_err_found();
+	if (ntfs_fix_problem(ni->vol, PR_DIR_HAVE_RESIDENT_IA, &pctx)) {
 		ntfsck_initialize_index_attr(ni);
 		fsck_err_fixed();
 	}
@@ -2710,11 +2706,13 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 	u8 *al_end;
 	u8 *next_al_end = 0;
 	int ret = STATUS_OK;
+	problem_context_t pctx = {0, };
 
 	ni = ctx->ntfs_ino;
 	if (ctx->base_ntfs_ino && ni != ctx->base_ntfs_ino)
 		return STATUS_ERROR;
 
+	ntfs_init_problem_ctx(&pctx, ni, NULL, ctx, NULL, ctx->mrec, ctx->attr, NULL);
 	al_start = ni->attr_list;
 	al_end = al_start + ni->attr_list_size;
 	al_entry = (ATTR_LIST_ENTRY *)ni->attr_list;
@@ -2765,9 +2763,8 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 
 out:
 	if (ni->attr_list_size != al_real_length) {
-		check_failed("Attr_list length(%x:%x) of inode(%"PRIu64") is corrupted",
-				ni->attr_list_size, al_real_length, ni->mft_no);
-		if (ntfs_ask_repair(ni->vol)) {
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_ATTRLIST_LENGTH_CORRUPTED, &pctx)) {
 			ntfs_set_attribute_value_length(ctx->attr, al_real_length);
 			ni->attr_list_size = al_real_length;
 			if (!errno) {
@@ -2945,6 +2942,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	u64 mft_no;
 	int ret = STATUS_OK;
 	FILE_NAME_ATTR *ie_fn = &ie->key.file_name;
+	problem_context_t pctx = {0, };
 
 	if (!ie)
 		return STATUS_ERROR;
@@ -2954,6 +2952,8 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	if ((ntfsck_opened_ni_vol(MREF(mref)) == TRUE) || mft_no == FILE_root)
 		return STATUS_OK;
 
+	ntfs_init_problem_ctx(&pctx, NULL, NULL, NULL, ictx, NULL, NULL, ie_fn);
+	pctx.inum = mft_no;
 #ifdef DEBUG
 	char *filename;
 	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
@@ -3041,12 +3041,9 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 
 remove_index:
 		crtname = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
-		check_failed("Index entry(%"PRIu64":%s) "
-				"is corrupted, Removing index entry from parent(%"PRIu64":%"PRIu64")",
-				mft_no, crtname,
-				MREF_LE(ie_fn->parent_directory), ictx->ni->mft_no);
-
-		if (ntfs_ask_repair(vol)) {
+		fsck_err_found();
+		pctx.filename = crtname;
+		if (ntfs_fix_problem(vol, PR_IDX_ENTRY_CORRUPTED, &pctx)) {
 			ictx->entry = ie;
 			ret = ntfs_index_rm(ictx);
 			if (ret) {
@@ -3122,11 +3119,14 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 	s64 wcnt = 0;
 	u8 *ni_ibm = NULL;	/* for index bitmap reading from disk: $BITMAP */
 	ntfs_volume *vol;
+	problem_context_t pctx = {0, };
 
 	if (!ni || !ni->fsck_ibm)
 		return STATUS_ERROR;
 
 	vol = ni->vol;
+
+	ntfs_init_problem_ctx(&pctx, ni, bm_na, NULL, NULL, ni->mrec, NULL, NULL);
 
 	/* read index bitmap from disk */
 	ni_ibm = ntfs_attr_readall(ni, AT_BITMAP, NTFS_INDEX_I30, 4, &ibm_size);
@@ -3140,8 +3140,8 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 		/* FIXME: if ni->fsck_ibm_size is larger than ibm_size,
 		 * it could allocate cluster in ntfs_attr_pwrite() */
 		ntfs_log_info("\n\nBitmap changed during check_inodes\n");
-		check_failed("Inode(%"PRIu64") $IA bitmap size are different. Fix it", ni->mft_no);
-		if (ntfs_ask_repair(vol)) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_IDX_BITMAP_SIZE_MISMATCH, &pctx)) {
 			wcnt = ntfs_attr_pwrite(bm_na, 0, ni->fsck_ibm_size, ni->fsck_ibm);
 			if (wcnt == ni->fsck_ibm_size)
 				fsck_err_fixed();
@@ -3168,8 +3168,8 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 			pos += sizeof(unsigned long long);
 		}
 #endif
-		check_failed("Inode(%"PRIu64") $IA bitmap different. Fix it", ni->mft_no);
-		if (ntfs_ask_repair(vol)) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_IDX_BITMAP_MISMATCH, &pctx)) {
 			wcnt = ntfs_attr_pwrite(bm_na, 0, ibm_size, ni->fsck_ibm);
 			if (wcnt == ibm_size)
 				fsck_err_fixed();
@@ -3200,6 +3200,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	u32 vcn_step;
 	VCN max_vcn;
 	int ret = STATUS_OK;
+	problem_context_t pctx = {0, };
 
 	ictx->ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION,
 			ictx->name, ictx->name_len);
@@ -3388,8 +3389,9 @@ out:
 
 initialize_index:
 
-	check_failed("Initialize all index structure of inode(%"PRIu64")", ni->mft_no);
-	if (!ntfs_ask_repair(vol))
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec, NULL, NULL);
+	fsck_err_found();
+	if (!ntfs_fix_problem(vol, PR_DIR_IDX_INITIALIZE, &pctx))
 		goto out;
 
 	if (ni->mft_no == FILE_root)
@@ -3706,9 +3708,11 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			 * this value, Try to resize it!.
 			 */
 			if (ctx->attr->value_length != 48) {
-				check_failed("The value length of empty $IR(mft no : %lld) is invalid,"
-						"Resize it", (unsigned long long)dir_ni->mft_no);
-				if (ntfs_ask_repair(vol)) {
+				problem_context_t pctx = {0, };
+				pctx.ni = dir_ni;
+
+				fsck_err_found();
+				if (ntfs_fix_problem(vol, PR_DIR_EMPTY_IE_LENGTH_CORRUPTED, &pctx)) {
 					ntfs_resident_attr_value_resize(ctx->mrec, ctx->attr, 48);
 					fsck_err_fixed();
 				}
@@ -3797,7 +3801,7 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
 
-	fsck_start_step("Check mft entries in volume...");
+	fsck_start_step("Scan orphaned MFTs candidiates...");
 
 	// For each mft record, verify that it contains a valid file record.
 	nr_mft_records = vol->mft_na->initialized_size >>
@@ -3849,8 +3853,7 @@ static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 	/*
 	 * For now, Just reset logfile.
 	 */
-	ntfs_log_info("Reset logfile");
-	if (ntfs_ask_repair(vol)) {
+	if (ntfs_fix_problem(vol, PR_RESET_LOG_FILE, NULL)) {
 		if (ntfs_logfile_reset(vol)) {
 			check_failed("ntfs logfile reset failed, errno : %d\n", errno);
 			return STATUS_ERROR;
@@ -3904,6 +3907,9 @@ static ntfs_inode *ntfsck_get_opened_ni_vol(ntfs_volume *vol, s64 mft_num)
 static int ntfsck_validate_system_file(ntfs_inode *ni)
 {
 	ntfs_volume *vol = ni->vol;
+	problem_context_t pctx;
+
+	pctx.ni = ni;
 
 	switch (ni->mft_no) {
 	case FILE_MFT:
@@ -3943,11 +3949,11 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 			s64 zero_bm_size =
 				max_lcnbmp_size - vol->lcnbmp_na->data_size;
 
-			check_failed("$Bitmap size is smaller than expected "
-					"(%"PRId64"< %"PRId64")",
-					max_lcnbmp_size, vol->lcnbmp_na->data_size);
-
-			if (ntfs_ask_repair(vol)) {
+			pctx.ni = vol->lcnbmp_na->ni;
+			pctx.na = vol->lcnbmp_na;
+			pctx.dsize = max_lcnbmp_size;
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_BITMAP_MFT_SIZE_MISMATCH, &pctx)) {
 				zero_bm = ntfs_calloc(max_lcnbmp_size -
 						vol->lcnbmp_na->data_size);
 				if (!zero_bm) {
@@ -4144,6 +4150,7 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 	unsigned long i;
 	unsigned long *dbml;
 	unsigned long *fbml;
+	problem_context_t pctx = {0, };
 
 	if (na != vol->lcnbmp_na && na != vol->mftbmp_na)
 		return STATUS_ERROR;
@@ -4160,6 +4167,7 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 	if (total < count)
 		count = total;
 
+	ntfs_init_problem_ctx(&pctx, na->ni, na, NULL, NULL, na->ni->mrec, NULL, NULL);
 	/* apply btimap(fsck OR lcnbmp) to disk */
 	while (1) {
 		/* read bitmap from disk */
@@ -4201,14 +4209,10 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 			}
 		}
 
-		ntfs_log_error("fsck/disk bitmap are different."
-				"inode(%"PRIu64":%02x), pos(%"PRIu64":%"PRIu64") Apply to disk?",
-				na->ni->mft_no, na->type, pos, count);
-
 		if (direction != 1)
 			fsck_err_found();
 
-		if (ntfs_ask_repair(vol)) {
+		if (ntfs_fix_problem(vol, PR_CLUSTER_BITMAP_MISMATCH, &pctx)) {
 			if (direction == 1)
 				wcnt = ntfs_attr_pwrite(na, pos, count, disk_bm);
 			else {
@@ -4244,6 +4248,7 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 	struct orphan_mft *entry = NULL;
 	ntfs_inode *root_ni;
 	u64 cnt = 1;
+	problem_context_t pctx = {0, };
 
 	fsck_start_step("Check orphaned mft...");
 
@@ -4269,11 +4274,11 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 	while (!ntfs_list_empty(&oc_list_head)) {
 		entry = ntfs_list_entry(oc_list_head.next, struct orphan_mft, oc_list);
 
-		check_failed("Found an orphaned file(mft no: %"PRId64"). "
-				"Try to add index entry", entry->mft_no);
-
 		cnt++;
-		if (ntfs_ask_repair(vol)) {
+
+		pctx.inum = entry->mft_no;
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_REPAIR, &pctx)) {
 			if (ntfsck_add_index_entry_orphaned_file(vol, entry)) {
 				/*
 				 * error returned.
@@ -4414,8 +4419,7 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 			vol->mft_record_size_bits;
 	ntfs_log_verbose("Scanning maximum %"PRId64" MFT records.\n", nr_mft_records);
 
-	ntfs_log_error("Scan all mft entries and apply those lcnbitmap to disk?");
-	if (!ntfs_ask_repair(vol)) {
+	if (!ntfs_fix_problem(vol, PR_PRE_SCAN_MFT, NULL)) {
 		fsck_end_step();
 		return;
 	}
@@ -4604,8 +4608,10 @@ conflict_option:
 
 	ntfsck_check_backup_boot(vol);
 
+	/* pass 1 */
 	ntfsck_scan_mft_records(vol);
 
+	/* pass 2 */
 	if (ntfsck_check_system_files(vol))
 		goto err_out;
 
@@ -4618,14 +4624,17 @@ conflict_option:
 		goto err_out;
 	}
 
+	/* pass 3 */
 	if (ntfsck_scan_index_entries(vol)) {
 		ntfs_log_error("Stop processing fsck due to critical problems\n");
 		goto err_out;
 	}
 
+	/* pass 4 */
 	/* apply mft bitmap & cluster bitmap to disk */
 	ntfsck_check_mft_records(vol);
 
+	/* pass 5 */
 	ntfsck_check_orphaned_mft(vol);
 
 	free(mrec_temp_buf);

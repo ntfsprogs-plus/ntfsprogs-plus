@@ -77,14 +77,13 @@ static struct options {
  */
 static void version(void)
 {
-	ntfs_log_info("\n%s v%s (libntfs-3g) - Display, or set, the label for an "
+	ntfs_log_info("\n%s v%s - Display, or set, the label for an "
 			"NTFS Volume.\n\n", EXEC_NAME, VERSION);
 	ntfs_log_info("Copyright (c)\n");
 	ntfs_log_info("    2002      Matthew J. Fanto\n");
 	ntfs_log_info("    2002-2005 Anton Altaparmakov\n");
 	ntfs_log_info("    2002-2003 Richard Russon\n");
 	ntfs_log_info("    2012-2014 Jean-Pierre Andre\n");
-	ntfs_log_info("\n%s\n%s%s\n", ntfs_gpl, ntfs_bugs, ntfs_home);
 }
 
 /**
@@ -106,7 +105,6 @@ static void usage(void)
 	       "    -V, --version      Display version information\n"
 	       "    -h, --help         Display this help\n\n",
 	       EXEC_NAME);
-	ntfs_log_info("%s%s\n", ntfs_bugs, ntfs_home);
 }
 
 /**

@@ -110,7 +110,7 @@ struct RUNCOUNT {
  */
 static void version(void)
 {
-	printf("\n%s v%s (libntfs-3g) - Display information about an NTFS "
+	printf("\n%s v%s - Display information about an NTFS "
 			"Volume.\n\n", EXEC_NAME, VERSION);
 	printf("Copyright (c)\n");
 	printf("    2002-2004 Matthew J. Fanto\n");
@@ -121,7 +121,6 @@ static void version(void)
 	printf("    2004-2005 Yuval Fledel\n");
 	printf("    2004-2007 Yura Pakhuchiy\n");
 	printf("    2011-2018 Jean-Pierre Andre\n");
-	printf("\n%s\n%s%s\n", ntfs_gpl, ntfs_bugs, ntfs_home);
 }
 
 /**
@@ -146,7 +145,6 @@ static void usage(void)
 		"    -h, --help       Display this help\n"
 	        "\n",
 		EXEC_NAME);
-	printf("%s%s\n", ntfs_bugs, ntfs_home);
 }
 
 /**

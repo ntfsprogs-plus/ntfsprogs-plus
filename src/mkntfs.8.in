@@ -3,7 +3,7 @@
 .\" Copyright (c) 2005\-2006 Szabolcs Szakacsits.
 .\" This file may be copied under the terms of the GNU Public License.
 .\"
-.TH MKNTFS 8 "January 2006" "ntfs-3g @VERSION@"
+.TH MKNTFS 8
 .SH NAME
 mkntfs \- create an NTFS file system
 .SH SYNOPSIS
@@ -267,26 +267,13 @@ Currently, mkntfs creates the uppercase table so that no warning is thrown
 by Windows Vista, Windows 7 or Windows 8. A warning may be thrown by
 other Windows versions, or if chkdsk is applied in succession on different
 Windows versions.
-.SH BUGS
-If you find a bug please send an email describing the problem to the
-development team:
-.br
-.nh
-ntfs\-3g\-devel@lists.sf.net
-.hy
 .SH AUTHORS
 .B mkntfs
 was written by Anton Altaparmakov, Richard Russon, Erik Sornes and Szabolcs Szakacsits.
 It was ported to ntfs-3g by Erik Larsson and Jean-Pierre Andre.
-.SH AVAILABILITY
-.B mkntfs
-is part of the
-.B ntfs-3g
-package and is available from:
 .br
-.nh
-https://github.com/tuxera/ntfs-3g/wiki/
-.hy
+.B mkntfs
+of ntfs-3g was ported to ntfsprogs-plus by Namjae Jeon and Jay Sim.
 .SH SEE ALSO
 .BR badblocks (8),
-.BR ntfsprogs (8)
+.BR ntfsprogs-plus (8)

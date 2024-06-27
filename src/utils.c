@@ -949,22 +949,18 @@ int mft_next_record(struct mft_search_ctx *ctx)
 			if (ctx->inode == NULL) {
 				MFT_RECORD *mrec;
 				int r;
-				MFT_REF base_inode;
 
 				mrec = (MFT_RECORD*)NULL;
-				r = ntfs_file_record_read(ctx->vol,
-					(MFT_REF) ctx->mft_num, &mrec, NULL);
+				r = ntfs_file_record_read(ctx->vol, (MFT_REF) ctx->mft_num, &mrec, NULL);
 				if (r || !mrec || !mrec->base_mft_record)
 					ntfs_log_error(
 						"Error reading inode %lld.\n",
 						(long long)ctx->mft_num);
 				else {
-					base_inode = le64_to_cpu(
-						mrec->base_mft_record);
-					ntfs_log_error("Inode %lld is an "
+					ntfs_log_debug("Inode %lld is an "
 						"extent of inode %lld.\n",
 						(long long)ctx->mft_num,
-						(long long)MREF(base_inode));
+						(long long)MREF(le64_to_cpu(mrec->base_mft_record)));
 				}
 				free (mrec);
 				continue;

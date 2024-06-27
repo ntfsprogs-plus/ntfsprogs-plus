@@ -64,12 +64,11 @@ static struct options opts;
  */
 static void version(void)
 {
-	ntfs_log_info("\n%s v%s (libntfs-3g) - Find the owner of any given sector or "
+	ntfs_log_info("\n%s v%s - Find the owner of any given sector or "
 			"cluster.\n\n", EXEC_NAME, VERSION);
 	ntfs_log_info("Copyright (c) 2002-2003 Richard Russon\n");
 	ntfs_log_info("Copyright (c) 2005 Anton Altaparmakov\n");
 	ntfs_log_info("Copyright (c) 2005-2006 Szabolcs Szakacsits\n");
-	ntfs_log_info("\n%s\n%s%s\n", ntfs_gpl, ntfs_bugs, ntfs_home);
 }
 
 /**
@@ -96,7 +95,6 @@ static void usage(void)
 		"    -V, --version        Version information\n"
 		"    -h, --help           Print this help\n\n",
 		EXEC_NAME);
-	ntfs_log_info("%s%s\n", ntfs_bugs, ntfs_home);
 }
 
 /**

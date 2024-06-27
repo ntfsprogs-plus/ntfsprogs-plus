@@ -3,7 +3,7 @@
 .\" Copyright (c) 2012 Jean-Pierre Andre.
 .\" This file may be copied under the terms of the GNU Public License.
 .\"
-.TH NTFSLABEL 8 "January 2012" "ntfs-3g @VERSION@"
+.TH NTFSLABEL 8
 .SH NAME
 ntfslabel \- display/change the label on an ntfs file system
 .SH SYNOPSIS
@@ -91,29 +91,14 @@ prints. The label and the serial number are displayed.
 \fB\-V\fR, \fB\-\-version\fR
 Show the version number, copyright and license for
 .BR ntfslabel .
-.SH BUGS
-There are no known problems with
-.BR ntfslabel .
-If you find a bug please send an email describing the problem to the
-development team:
-.br
-.nh
-ntfs\-3g\-devel@lists.sf.net
-.hy
 .SH AUTHORS
 .B ntfslabel
 was written by Matthew J. Fanto, with contributions from Anton Altaparmakov and
 Richard Russon.
 It was ported to ntfs-3g by Erik Larsson.
-.SH AVAILABILITY
-.B ntfslabel
-is part of the
-.B ntfs-3g
-package and is available from:
 .br
-.nh
-https://github.com/tuxera/ntfs-3g/wiki/
-.hy
+.B ntfslabel
+of ntfs-3g was ported to ntfsprogs-plus by Namjae Jeon.
 .SH SEE ALSO
 .BR mkntfs (8),
-.BR ntfsprogs (8)
+.BR ntfsprogs-plus (8)

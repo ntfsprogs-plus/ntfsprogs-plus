@@ -1,4 +1,5 @@
-#
+#                                               -*- Autoconf -*-
+# Process this file with autoconf to produce a configure script.
 # configure.ac - Source file to generate "./configure" to prepare package for
 #		 compilation.
 #
@@ -6,6 +7,7 @@
 # Copyright (c) 2003 Jan Kratochvil
 # Copyright (c) 2005-2009 Szabolcs Szakacsits
 # Copyright (C) 2007-2008 Alon Bar-Lev
+# Copyright (C) 2023-2024 LG Electronics
 #
 # This program/include file is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License as published
@@ -18,15 +20,15 @@
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
-# along with this program (in the main directory of the NTFS-3G
+# along with this program (in the main directory of the ntfsprogs-plus
 # distribution in the file COPYING); if not, write to the Free Software
 # Foundation,Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 # Autoconf
-AC_PREREQ(2.59)
-AC_INIT([ntfsprogs],[0.9.12],[ntfsprogs-devel@lists.sf.net])
-LIBNTFS_3G_VERSION="89"
-AC_CONFIG_SRCDIR([src/ntfsck.c])
+AC_PREREQ([2.71])
+AC_INIT([ntfsprogs-plus],[0.9.12],[linkinjeon@kernel.org])
+AC_CONFIG_SRCDIR([config.h.in])
+LIBNTFS_VERSION="90"
 
 # Environment
 AC_CANONICAL_HOST
@@ -83,7 +85,7 @@ AC_ARG_ENABLE(
 
 AC_ARG_ENABLE(
 	[library],
-	[AS_HELP_STRING([--disable-library],[do not install libntfs-3g but link it into ntfs-3g])],
+	[AS_HELP_STRING([--disable-library],[do not install libntfs but link it into ntfs])],
 	,
 	[enable_library="yes"]
 )
@@ -110,40 +112,10 @@ AC_ARG_ENABLE(
 )
 
 AC_ARG_ENABLE(
-	[plugins],
-	[AS_HELP_STRING([--disable-plugins], [Disable external reparse point
-	 plugins for the ntfs-3g FUSE driver])],
-	[if test x${enableval} = "xyes"; then disable_plugins="no"; fi],
-	[disable_plugins="no"]
-)
-
-AC_ARG_ENABLE(
 	[device-default-io-ops],
 	[AS_HELP_STRING([--disable-device-default-io-ops],[install default IO ops])],
 	,
 	[enable_device_default_io_ops="yes"]
-)
-
-AC_ARG_ENABLE(crypto,
-	AS_HELP_STRING(--enable-crypto,enable crypto related code and utilities
-		       (default=no)), ,
-	enable_crypto=no
-)
-
-AC_ARG_ENABLE(
-	[extras],
-	[AS_HELP_STRING([--enable-extras],[enable extra ntfsprogs utilities
-		       (default=no)])],
-	,
-	[enable_extras="no"]
-)
-
-AC_ARG_ENABLE(
-	[quarantined],
-	[AS_HELP_STRING([--enable-quarantined],[enable quarantined ntfsprogs utilities
-		       (default=no)])],
-	,
-	[enable_quarantined="no"]
 )
 
 AC_ARG_ENABLE(
@@ -159,7 +131,7 @@ AC_ARG_ENABLE(
 )
 
 # pthread_rwlock_t requires _GNU_SOURCE
-AC_GNU_SOURCE
+#AC_GNU_SOURCE
 
 # Programs
 AC_PROG_CC(gcc cc)
@@ -172,7 +144,16 @@ ifdef(
 	[AC_PROG_LIBTOOL]
 )
 
+# Checks for programs.
+#AC_PROG_CXX
+#AC_PROG_AWK
+#AC_PROG_CC
+#AC_PROG_CPP
 AC_PROG_INSTALL
+#AC_PROG_LN_S
+#AC_PROG_MAKE_SET
+#AC_PROG_RANLIB
+
 PKG_PROG_PKG_CONFIG
 
 AC_PATH_PROG([MV], [mv])
@@ -218,17 +199,17 @@ if test "$enable_crypto" != "no"; then
 	AM_PATH_LIBGCRYPT(1.2.2, [ have_libgcrypt=true ],
 	[
 		if test "$enable_crypto" = "yes"; then
-			AC_MSG_ERROR([ntfsprogs crypto code requires the gcrypt library.])
+			AC_MSG_ERROR([ntfsprogs-plus crypto code requires the gcrypt library.])
 		else
-			AC_MSG_WARN([ntfsprogs crypto code requires the gcrypt library.])
+			AC_MSG_WARN([ntfsprogs-plus crypto code requires the gcrypt library.])
 		fi
 	])
 	have_libgnutls=false
 	PKG_CHECK_MODULES(GNUTLS, gnutls >= 1.4.4, [ have_libgnutls=true ],
 		if test "$enable_crypto" = "yes"; then
-			AC_MSG_ERROR([ntfsprogs crypto code requires the gnutls library.])
+			AC_MSG_ERROR([ntfsprogs-plus crypto code requires the gnutls library.])
 		else
-			AC_MSG_WARN([ntfsprogs crypto code requires the gnutls library.])
+			AC_MSG_WARN([ntfsprogs-plus crypto code requires the gnutls library.])
 		fi
 	)
 	if test "$have_libgcrypt" = "true"; then
@@ -277,7 +258,7 @@ if test "x$extrapath" != "x"; then
 	AC_CHECK_HEADER([uuid/uuid.h],
 		[],
 		[
-			AC_MSG_WARN([ntfsprogs DCE compliant UUID generation code requires the uuid library.])
+			AC_MSG_WARN([ntfsprogs-plus DCE compliant UUID generation code requires the uuid library.])
 			search_for_luuid="no"
 		],
 	)
@@ -310,7 +291,7 @@ if test "x$extrapath" != "x"; then
 	fi
 
 	if test "x$search_for_luuid" != "xno"; then
-		AC_MSG_WARN([ntfsprogs DCE compliant UUID generation code requires the uuid library.])
+		AC_MSG_WARN([ntfsprogs-plus DCE compliant UUID generation code requires the uuid library.])
 	fi
 fi
 
@@ -346,14 +327,13 @@ if test "x$extrapath2" != "x"; then
 			compliant disk geometry.])
 			LIBNTFS_LIBS="$LIBNTFS_LIBS -lhd"
 			NTFSPROGS_STATIC_LIBS="$NTFSPROGS_STATIC_LIBS -lhd",
-			AC_MSG_WARN([ntfsprogs Windows compliant geometry code requires the hd library.]),
+			AC_MSG_WARN([ntfsprogs-plus Windows compliant geometry code requires the hd library.]),
 		),
-		AC_MSG_WARN([ntfsprogs Windows compliant geometry code requires the hd library.]),
+		AC_MSG_WARN([ntfsprogs-plus Windows compliant geometry code requires the hd library.]),
 	)
 fi
 
 # Checks for header files.
-AC_HEADER_STDC
 AC_HEADER_MAJOR
 AC_CHECK_HEADERS([ctype.h fcntl.h libgen.h libintl.h limits.h locale.h \
 	mntent.h stddef.h stdint.h stdlib.h stdio.h stdarg.h string.h \
@@ -366,6 +346,7 @@ AC_CHECK_HEADERS([ctype.h fcntl.h libgen.h libintl.h limits.h locale.h \
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_HEADER_STDBOOL
+AC_TYPE_UID_T
 AC_C_BIGENDIAN(
 	,
 	[
@@ -380,13 +361,22 @@ AC_C_BIGENDIAN(
 )
 AC_C_CONST
 AC_C_INLINE
+AC_TYPE_INT16_T
+AC_TYPE_INT32_T
+AC_TYPE_INT64_T
+AC_TYPE_INT8_T
+AC_TYPE_MODE_T
 AC_TYPE_OFF_T
+AC_TYPE_PID_T
 AC_TYPE_SIZE_T
+AC_TYPE_SSIZE_T
 AC_STRUCT_ST_BLOCKS
 AC_CHECK_MEMBERS([struct stat.st_rdev])
-AC_CHECK_MEMBERS([struct stat.st_atim])
-AC_CHECK_MEMBERS([struct stat.st_atimespec])
-AC_CHECK_MEMBERS([struct stat.st_atimensec])
+AC_TYPE_UINT16_T
+AC_TYPE_UINT32_T
+AC_TYPE_UINT64_T
+AC_TYPE_UINT8_T
+AC_CHECK_TYPES([ptrdiff_t])
 
 # For the 'nfconv' patch (Mac OS X only):
 case "${target_os}" in
@@ -408,14 +398,20 @@ darwin*)
 	;;
 esac
 
+
 # Checks for library functions.
+#AC_FUNC_FORK
 AC_FUNC_GETMNTENT
+#AC_FUNC_LSTAT_FOLLOWS_SLASHED_SYMLINK
+#AC_FUNC_MALLOC
 AC_FUNC_MBRTOWC
 AC_FUNC_MEMCMP
 AC_FUNC_STAT
 AC_FUNC_STRFTIME
 AC_FUNC_UTIME_NULL
 AC_FUNC_VPRINTF
+#AC_FUNC_REALLOC
+#AC_FUNC_STRNLEN
 AC_CHECK_FUNCS([ \
 	atexit basename daemon dup2 fdatasync ffs getopt_long hasmntopt \
 	mbsinit memmove memset realpath regcomp setlocale setxattr \
@@ -478,9 +474,9 @@ fi
 
 # Settings
 pkgconfigdir="\$(libdir)/pkgconfig"
-ntfs3gincludedir="\$(includedir)/ntfs-3g"
-# Executables should be installed to the root filesystem, otherwise 
-# automounting NTFS volumes can fail during boot if the driver binaries 
+ntfsincludedir="\$(includedir)"
+# Executables should be installed to the root filesystem, otherwise
+# automounting NTFS volumes can fail during boot if the driver binaries
 # and their dependencies are on an unmounted partition. Use --exec-prefix
 # to override this.
 if test "x${exec_prefix}" = "xNONE"; then
@@ -493,11 +489,11 @@ else
 	rootlibdir="\$(libdir)"
 fi
 AC_SUBST([pkgconfigdir])
-AC_SUBST([ntfs3gincludedir])
+AC_SUBST([ntfsincludedir])
 AC_SUBST([rootbindir])
 AC_SUBST([rootsbindir])
 AC_SUBST([rootlibdir])
-AC_SUBST([LIBNTFS_3G_VERSION])
+AC_SUBST([LIBNTFS_VERSION])
 AC_SUBST([MKNTFS_CPPFLAGS])
 AC_SUBST([MKNTFS_LIBS])
 AC_SUBST([LIBNTFS_CPPFLAGS])
@@ -529,48 +525,14 @@ fi
 AC_CONFIG_FILES([
 	Makefile
 	include/Makefile
-	include/ntfs-3g/Makefile
-	libntfs-3g/Makefile
-	libntfs-3g/libntfs-3g.pc
-	libntfs-3g/libntfs-3g.script.so
+	libntfs/Makefile
 	src/Makefile
 	src/mkntfs.8
-	src/ntfscat.8
 	src/ntfsclone.8
 	src/ntfscluster.8
-	src/ntfscmp.8
-	src/ntfscp.8
 	src/ntfsinfo.8
 	src/ntfslabel.8
-	src/ntfsls.8
-	src/ntfsprogs.8
-	src/ntfsresize.8
-	src/ntfsundelete.8
-	src/ntfsdecrypt.8
-	src/ntfswipe.8
-	src/ntfstruncate.8
-	src/ntfsfallocate.8
-	src/ntfsusermap.8
-	src/ntfssecaudit.8
 ])
 AC_OUTPUT
 
-if test "${with_fuse}" = "external"; then
-	if ! echo "x$FUSE_LIB_PATH" | grep -- "x-L/lib" > /dev/null; then
-		cat <<EOF
-****************************************************************************
-* WARNING  WARNING  WARNING  WARNING  WARNING  WARNING  WARNING  WARNING   *
-* The FUSE user space binaries were NOT installed with root directory      *
-* executable prefix. This means that automounting NTFS volumes during boot *
-* could fail. This can be fixed the below way by reinstalling FUSE using   *
-* the right 'configure' option during FUSE compilation:                    *
-* 	./configure --exec-prefix=/                                        *
-* 	make && sudo make install                                          *
-* WARNING  WARNING  WARNING  WARNING  WARNING  WARNING  WARNING  WARNING   *
-****************************************************************************
-EOF
-	fi
-fi
-
-echo "You can type now 'make' to build ntfsprogs."
-
+echo "You can type now 'make' to build ntfsprogs-plus."

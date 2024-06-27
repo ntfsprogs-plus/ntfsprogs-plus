@@ -2,7 +2,7 @@
 .\" Copyright (c) 2005 Richard Russon.
 .\" This file may be copied under the terms of the GNU Public License.
 .\"
-.TH NTFSINFO 8 "April 2006" "ntfs-3g @VERSION@"
+.TH NTFSINFO 8
 .SH NAME
 ntfsinfo \- dump a file's attributes
 .SH SYNOPSIS
@@ -62,28 +62,12 @@ prints.
 .TP
 \fB\-V\fR, \fB\-\-version\fR
 Show the version number, copyright and license.
-.SH BUGS
-There are no known problems with
-.BR ntfsinfo .
-If you find a bug please send an email describing the problem to the
-development team:
-.br
-.nh
-ntfs\-3g\-devel@lists.sf.net
-.hy
 .SH AUTHORS
 .B ntfsinfo
 was written by Matthew J. Fanto, Anton Altaparmakov, Richard Russon, Szabolcs
 Szakacsits, Yuval Fledel, Yura Pakhuchiy and Cristian Klein.
 It was ported to ntfs-3g by Erik Larsson and Jean-Pierre Andre.
-.SH AVAILABILITY
 .B ntfsinfo
-is part of the
-.B ntfs-3g
-package and is available from:
-.br
-.nh
-https://github.com/tuxera/ntfs-3g/wiki/
-.hy
+of ntfs-3g was ported to ntfsprogs-plus by Namjae Jeon.
 .SH SEE ALSO
-.BR ntfsprogs (8)
+.BR ntfsprogs-plus (8)

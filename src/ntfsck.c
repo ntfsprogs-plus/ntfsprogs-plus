@@ -171,7 +171,7 @@ u64 orphan_cnt;
 __attribute__((noreturn))
 static void usage(int error)
 {
-	ntfs_log_info("%s v%s (libntfs-3g)\n\n"
+	ntfs_log_info("%s v%s\n\n"
 		      "Usage: %s [options] device\n"
 		      "-a, --repair-auto	auto-repair. no questions\n"
 		      "-p,			auto-repair. no questions\n"
@@ -197,7 +197,6 @@ __attribute__((noreturn))
 static void version(void)
 {
 	ntfs_log_info("%s v%s\n\n", NTFS_PROGS, VERSION);
-	ntfs_log_info("%s\n%s%s", ntfs_gpl, ntfs_bugs, ntfs_home);
 	exit(0);
 }
 
@@ -1236,6 +1235,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 				ntfs_log_debug("Different sequence number of parent(%"PRIu64
 						") and inode(%"PRIu64")\n",
 						parent_ni->mft_no, ni->mft_no);
+				/* FIXME: is it need to call ntfs_fix_problem()? */
 				ntfsck_remove_filename(ni, fn);
 				ntfsck_close_inode(parent_ni);
 				continue;
@@ -2049,6 +2049,7 @@ out:
 
 	return ret;
 }
+
 static int ntfsck_add_index_fn(ntfs_inode *parent_ni, ntfs_inode *ni)
 {
 	ntfs_attr_search_ctx *ctx = NULL;
@@ -2322,7 +2323,6 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 
 	s64 data_size;
 	s64 alloc_size;
-	s64 init_size;
 	s64 new_size;
 	s64 aligned_data_size;
 	s64 lowest_vcn;
@@ -2380,7 +2380,6 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 		goto out;
 
 	data_size = le64_to_cpu(a->data_size);
-	init_size = le64_to_cpu(a->initialized_size);
 	alloc_size = le64_to_cpu(a->allocated_size);
 	aligned_data_size = (data_size + vol->cluster_size - 1) & ~(vol->cluster_size - 1);
 
@@ -3520,10 +3519,8 @@ create_lf:
 			ntfs_log_error("Failed to open/check '%s'\n", FILENAME_LOST_FOUND);
 	} else {
 		vol->lost_found = lf_ni->mft_no;
-		/*
-		 * If lost+found is not exist, fsck will create it forcely.
-		 * So also mft bitmap for lost+found should be set.
-		 */
+
+		/* FIXME: is it need to call ntfs_fix_problem()? */
 		ntfsck_set_mft_record_bitmap(lf_ni, TRUE);
 		ntfsck_close_inode(lf_ni);
 	}
@@ -4447,8 +4444,8 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
  */
 int main(int argc, char **argv)
 {
-	ntfs_volume *vol;
-	const char *path;
+	ntfs_volume *vol = NULL;
+	const char *path = NULL;
 	int c, errors = 0, ret;
 	unsigned long mnt_flags;
 	BOOL check_dirty_only = FALSE;

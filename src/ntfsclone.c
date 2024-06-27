@@ -372,7 +372,6 @@ static void usage(int ret)
 		"    If FILE is '-' then send the image to the standard output. If SOURCE is '-'\n"
 		"    and --restore-image is used then read the image from the standard input.\n"
 		"\n", EXEC_NAME);
-	fprintf(stderr, "%s%s", ntfs_bugs, ntfs_home);
 	exit(ret);
 }
 
@@ -387,7 +386,6 @@ static void version(void)
 		   "Copyright (c) 2003-2006 Szabolcs Szakacsits\n"
 		   "Copyright (c) 2004-2006 Anton Altaparmakov\n"
 		   "Copyright (c) 2010-2018 Jean-Pierre Andre\n\n");
-	fprintf(stderr, "%s\n%s%s", ntfs_gpl, ntfs_bugs, ntfs_home);
 	exit(0);
 }
 
@@ -2580,7 +2578,7 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 	/* print to stderr, stdout can be an NTFS image ... */
-	fprintf(stderr, "%s v%s (libntfs-3g)\n", EXEC_NAME, VERSION);
+	fprintf(stderr, "%s v%s\n", EXEC_NAME, VERSION);
 	msg_out = stderr;
 
 	parse_options(argc, argv);

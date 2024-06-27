@@ -1,7 +1,7 @@
 .\" Copyright (c) 2003\-2005 Richard Russon.
 .\" This file may be copied under the terms of the GNU Public License.
 .\"
-.TH NTFSCLUSTER 8 "November 2005" "ntfs-3g @VERSION@"
+.TH NTFSCLUSTER 8
 .SH NAME
 ntfscluster \- identify files in a specified region of an NTFS volume.
 .SH SYNOPSIS
@@ -95,30 +95,19 @@ Look for files in the first 500 clusters of /dev/hda1.
 .B ntfscluster \-c 0\-500 /dev/hda1
 .sp
 .RE
-.SH BUGS
+.SH TODO
 The
 .I info
 mode isn't implemented yet.
 .B ntfscluster
-is quite limited, but it has no known bugs.  If you find a bug please send an
-email describing the problem to the development team:
-.br
-.nh
-ntfs\-3g\-devel@lists.sf.net
-.hy
+is quite limited, but it has no known bugs.
 .SH AUTHORS
 .B ntfscluster
 was written by Richard Russon, with contributions from Anton Altaparmakov.
 It was ported to ntfs-3g by Erik Larsson.
-.SH AVAILABILITY
-.B ntfscluster
-is part of the
-.B ntfs-3g
-package and is available from:
 .br
-.nh
-https://github.com/tuxera/ntfs-3g/wiki/
-.hy
+.B ntfscluster
+of ntfs-3g was ported to ntfsprogs-plus by Namjae Jeon.
 .SH SEE ALSO
 .BR ntfsinfo (8),
-.BR ntfsprogs (8)
+.BR ntfsprogs-plus (8)

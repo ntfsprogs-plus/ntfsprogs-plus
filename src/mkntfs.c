@@ -272,7 +272,6 @@ static void mkntfs_usage(void)
 "    -l, --license                   Display licensing information\n"
 "    -h, --help                      Display this help\n"
 "\n", basename(EXEC_NAME));
-	ntfs_log_info("%s%s\n", ntfs_bugs, ntfs_home);
 }
 
 /**
@@ -280,7 +279,7 @@ static void mkntfs_usage(void)
  */
 static void mkntfs_version(void)
 {
-	ntfs_log_info("\n%s v%s (libntfs-3g)\n\n", EXEC_NAME, VERSION);
+	ntfs_log_info("\n%s v%s\n\n", EXEC_NAME, VERSION);
 	ntfs_log_info("Create an NTFS volume on a user specified (block) "
 			"device.\n\n");
 	ntfs_log_info("Copyright (c) 2000-2007 Anton Altaparmakov\n");
@@ -289,7 +288,6 @@ static void mkntfs_version(void)
 	ntfs_log_info("Copyright (c) 2005      Erik Sornes\n");
 	ntfs_log_info("Copyright (c) 2007      Yura Pakhuchiy\n");
 	ntfs_log_info("Copyright (c) 2010-2018 Jean-Pierre Andre\n");
-	ntfs_log_info("\n%s\n%s%s\n", ntfs_gpl, ntfs_bugs, ntfs_home);
 }
 
 /*

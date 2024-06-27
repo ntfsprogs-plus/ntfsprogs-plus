@@ -4,7 +4,7 @@
 .\" Copyright (c) 2010\-2013 Jean-Pierre Andre.
 .\" This file may be copied under the terms of the GNU Public License.
 .\"
-.TH NTFSCLONE 8 "February 2013" "ntfs-3g @VERSION@"
+.TH NTFSCLONE 8
 .SH NAME
 ntfsclone \- Efficiently clone, image, restore or rescue an NTFS
 .SH SYNOPSIS
@@ -360,13 +360,6 @@ Unpacking NTFS metadata into a sparse file:
 .sp
 .RE
 .SH KNOWN ISSUES
-There are no known problems with
-.BR ntfsclone .
-If you think you have found a problem then please send an email describing it
-to the development team:
-.nh
-ntfs\-3g\-devel@lists.sf.net
-.hy
 .sp
 Sometimes it might appear ntfsclone froze if the clone is on ReiserFS
 and even CTRL\-C won't stop it. This is not a bug in ntfsclone, however
@@ -374,24 +367,16 @@ it's due to ReiserFS being extremely inefficient creating large
 sparse files and not handling signals during this operation. This
 ReiserFS problem was improved in kernel 2.4.22.
 XFS, JFS and ext3 don't have this problem.
-.hy
 .SH AUTHORS
 .B ntfsclone
-was written by Szabolcs Szakacsits with contributions from Per Olofsson 
+was written by Szabolcs Szakacsits with contributions from Per Olofsson
 (special image format support) and Anton Altaparmakov.
 It was ported to ntfs-3g by Erik Larsson and Jean-Pierre Andre.
-.SH AVAILABILITY
-.B ntfsclone
-is part of the
-.B ntfs-3g
-package and is available at:
 .br
-.nh
-https://github.com/tuxera/ntfs-3g/wiki/
-.hy
+.B ntfsclone
+of ntfs-3g was ported to ntfsprogs-plus by Namjae Jeon and Jay Sim.
 .SH SEE ALSO
-.BR ntfsresize (8)
-.BR ntfsprogs (8)
+.BR ntfsprogs-plus (8)
 .BR xfs_copy (8)
 .BR debugreiserfs (8)
 .BR e2image (8)

@@ -622,7 +622,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 		}
 
 		if (data_size > ictx->ia_na->data_size) {
-			ntfs_log_error("VCN(%llu) in INDEX NODE exceed data_size of ia attr",
+			ntfs_log_error("VCN(%llu) in INDEX NODE exceed data_size of ia attr\n",
 					(unsigned long long)vcn);
 			return -1;
 		}

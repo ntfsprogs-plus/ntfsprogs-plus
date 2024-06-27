@@ -24,7 +24,7 @@ MAINTAINERCLEANFILES=\
 	$(srcdir)/m4/lt~obsolete.m4 \
 	$(srcdir)/m4/ltoptions.m4
 
-SUBDIRS = include libntfs-3g src
+SUBDIRS = include libntfs src
 
 doc_DATA = README
 
@@ -35,10 +35,10 @@ libtool: $(LIBTOOL_DEPS)
 	$(SHELL) ./config.status --recheck
 
 libs:
-	(cd libntfs-3g && $(MAKE) libs) || exit 1;
+	(cd libntfs && $(MAKE) libs) || exit 1;
 
 libntfs:
-	(cd libntfs-3g && $(MAKE) libs) || exit 1;
+	(cd libntfs && $(MAKE) libs) || exit 1;
 
 ntfsprogs: libntfs
 	(cd src && $(MAKE)) || exit 1;

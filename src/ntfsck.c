@@ -3714,6 +3714,10 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		while ((next = ntfs_index_next(next, ictx)) != NULL) {
 check_index:
+			if (!ntfs_fsck_mftbmp_get(vol,
+					MREF(le64_to_cpu(next->indexed_file))))
+				progress_update(&prog, ++checked_cnt);
+
 			ret = ntfsck_check_index(vol, next, ictx);
 			if (ret) {
 				next = ictx->entry;
@@ -3722,8 +3726,6 @@ check_index:
 				if (!(next->ie_flags & INDEX_ENTRY_END))
 					goto check_index;
 			}
-
-			progress_update(&prog, ++checked_cnt);
 
 			/* check bitmap */
 			if (bm_na && ictx->ib)
@@ -3980,7 +3982,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 
 	fsck_start_step("Check system files...");
 
-	progress_init(&prog, 0, FILE_first_user + 1, 1, pb_flags);
+	progress_init(&prog, 0, FILE_first_user, 1, pb_flags);
 
 	root_ni = ntfsck_check_root_inode(vol);
 	if (!root_ni) {
@@ -4405,6 +4407,7 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 	ntfs_log_verbose("Scanning maximum %"PRId64" MFT records.\n", nr_mft_records);
 
 	if (!ntfs_fix_problem(vol, PR_PRE_SCAN_MFT, &pctx)) {
+		total_cnt = nr_mft_records;
 		fsck_end_step();
 		return;
 	}

@@ -3832,11 +3832,12 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 {
 	fsck_start_step("Replay logfile...");
+	problem_context_t pctx = {0, };
 
 	/*
 	 * For now, Just reset logfile.
 	 */
-	if (ntfs_fix_problem(vol, PR_RESET_LOG_FILE, NULL)) {
+	if (ntfs_fix_problem(vol, PR_RESET_LOG_FILE, &pctx)) {
 		if (ntfs_logfile_reset(vol)) {
 			check_failed("ntfs logfile reset failed, errno : %d\n", errno);
 			return STATUS_ERROR;
@@ -3890,7 +3891,7 @@ static ntfs_inode *ntfsck_get_opened_ni_vol(ntfs_volume *vol, s64 mft_num)
 static int ntfsck_validate_system_file(ntfs_inode *ni)
 {
 	ntfs_volume *vol = ni->vol;
-	problem_context_t pctx;
+	problem_context_t pctx = {0, };
 
 	pctx.ni = ni;
 
@@ -4394,6 +4395,7 @@ err_check_inode:
 static void ntfsck_scan_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
+	problem_context_t pctx = {0, };
 
 	fsck_start_step("Scan mft entries in volume...");
 
@@ -4402,7 +4404,7 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 			vol->mft_record_size_bits;
 	ntfs_log_verbose("Scanning maximum %"PRId64" MFT records.\n", nr_mft_records);
 
-	if (!ntfs_fix_problem(vol, PR_PRE_SCAN_MFT, NULL)) {
+	if (!ntfs_fix_problem(vol, PR_PRE_SCAN_MFT, &pctx)) {
 		fsck_end_step();
 		return;
 	}

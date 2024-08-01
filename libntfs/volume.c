@@ -668,8 +668,10 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 		goto out;
 
 	if (NVolFsck(vol)) {
+		problem_context_t pctx = {0, };
+
 		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_BOOT_SECTOR_INVALID, NULL)) {
+		if (ntfs_fix_problem(vol, PR_BOOT_SECTOR_INVALID, &pctx)) {
 			s64 actual_sectors, shown_sectors;
 
 			actual_sectors = ntfs_device_size_get(dev, sector_size) - 1;
@@ -830,6 +832,7 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 	ntfs_volume *vol;
 	int eo;
 	BOOL try_recover_mft = FALSE;
+	problem_context_t pctx = {0, };
 
 	if (!dev || !dev->d_ops || !dev->d_name) {
 		errno = EINVAL;
@@ -970,7 +973,7 @@ reload_mft:
 	if (ntfs_mft_load(vol) < 0) {
 		if (try_recover_mft == FALSE) {
 			fsck_err_found();
-			if (ntfs_fix_problem(vol, PR_MOUNT_LOAD_MFT_FAILURE, NULL)) {
+			if (ntfs_fix_problem(vol, PR_MOUNT_LOAD_MFT_FAILURE, &pctx)) {
 				if (!ntfs_recover_mft_from_mftmirr(vol, 0)) {
 					ntfs_log_info("Try to reload $MFT after updating it using $MFTMirr\n");
 					try_recover_mft = TRUE;
@@ -989,7 +992,7 @@ reload_mft_mirr:
 	if (ntfs_mftmirr_load(vol) < 0) {
 		if (try_recover_mft == FALSE) {
 		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_MOUNT_LOAD_MFTMIRR_FAILURE, NULL)) {
+		if (ntfs_fix_problem(vol, PR_MOUNT_LOAD_MFTMIRR_FAILURE, &pctx)) {
 				if (!ntfs_recover_mft_from_mftmirr(vol, 1)) {
 					ntfs_log_info("Try to reload $MFTMirr after updating it using $MFT\n");
 					try_recover_mft = TRUE;
@@ -1291,6 +1294,7 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 	unsigned int k;
 	u32 u;
 	BOOL need_fallback_ro;
+	problem_context_t pctx = {0, };
 
 	need_fallback_ro = FALSE;
 	vol = ntfs_volume_startup(dev, flags);
@@ -1357,7 +1361,7 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 			if (!memcmp(mrec, mrec2, vol->mft_record_size))
 				continue;
 		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_MOUNT_MFT_MFTMIRR_MISMATCH, NULL)) {
+		if (ntfs_fix_problem(vol, PR_MOUNT_MFT_MFTMIRR_MISMATCH, &pctx)) {
 				if (ntfs_recover_mft(vol, mrec, vol->mftmirr_lcn, FILE_MFT + i)) {
 					ntfs_log_perror("Error correcting $MFTMirror record : %d", i);
 					goto io_error_exit;
@@ -1378,7 +1382,7 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 			goto io_error_exit;
 		}
 		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_MOUNT_REPAIRED_MFTMIRR_CORRUPTED, NULL)) {
+		if (ntfs_fix_problem(vol, PR_MOUNT_REPAIRED_MFTMIRR_CORRUPTED, &pctx)) {
 			if (ntfs_recover_mft(vol, mrec2, vol->mft_lcn, FILE_MFT + i)) {
 				ntfs_log_perror("Error correcting $MFT record : %d", i);
 				goto io_error_exit;

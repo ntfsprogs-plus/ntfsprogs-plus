@@ -776,10 +776,33 @@ int utils_mftrec_in_use(ntfs_volume *vol, MFT_REF mref)
  */
 void progress_init(struct progress_bar *p, u64 start, u64 stop, int res, int flags)
 {
+	u64 total;
+
 	p->start = start;
 	p->stop = stop;
-	p->unit = 100.0 / (stop - start);
-	p->resolution = res;
+
+	total = stop - start + 1;
+	if (total <= 0)
+		total = 1;
+
+#ifdef PROG_CALC_FLOAT
+	p->unit = 100.0 / total;
+
+	if (((res * 100 * 100) / total) == 0) {
+		p->resolution = (int)(total / (100 * 100.0));	// 0.01 resolution
+	} else
+		p->resolution = res;
+#else
+	p->total = total;
+
+	if (((res * 100) / p->total) == 0) {
+		p->resolution = p->total / 100;
+		if (!p->resolution)
+			p->resolution = 1;
+	} else
+		p->resolution = res;
+#endif
+
 	p->flags = flags;
 }
 
@@ -790,7 +813,11 @@ void progress_init(struct progress_bar *p, u64 start, u64 stop, int res, int fla
  */
 void progress_update(struct progress_bar *p, u64 current)
 {
+#ifdef PROG_CALC_FLOAT
 	float percent;
+#else
+	u64 percent;
+#endif
 
 	if (!(p->flags & NTFS_PROGBAR))
 		return;
@@ -798,11 +825,16 @@ void progress_update(struct progress_bar *p, u64 current)
 		return;
 
 	/* WARNING: don't modify the texts, external tools grep for them */
-	percent = p->unit * current;
 	if (current != p->stop) {
 		if ((current - p->start) % p->resolution)
 			return;
+#ifdef PROG_CALC_FLOAT
+		percent = p->unit * current;
 		printf("%6.2f percent completed\r", percent);
+#else
+		percent = (current * 100) / p->total;
+		printf("%" PRIu64 ".00 percent completed\r", percent);
+#endif
 	} else
 		printf("100.00 percent completed\n");
 	fflush(stdout);

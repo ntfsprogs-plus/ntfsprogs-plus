@@ -73,12 +73,18 @@ ntfs_volume * utils_mount_volume(const char *device, unsigned long flags);
 #define NTFS_PROGBAR            0x0001
 #define NTFS_PROGBAR_SUPPRESS   0x0002
 
+#define PROG_CALC_FLOAT
+
 struct progress_bar {
 	u64 start;
 	u64 stop;
 	int resolution;
 	int flags;
+#ifdef PROG_CALC_FLOAT
 	float unit;
+#else
+	u64 total;
+#endif
 };
 
 /**

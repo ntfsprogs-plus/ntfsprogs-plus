@@ -3714,6 +3714,10 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		while ((next = ntfs_index_next(next, ictx)) != NULL) {
 check_index:
+			if (!ntfs_fsck_mftbmp_get(vol,
+					MREF(le64_to_cpu(next->indexed_file))))
+				progress_update(&prog, ++checked_cnt);
+
 			ret = ntfsck_check_index(vol, next, ictx);
 			if (ret) {
 				next = ictx->entry;
@@ -3722,8 +3726,6 @@ check_index:
 				if (!(next->ie_flags & INDEX_ENTRY_END))
 					goto check_index;
 			}
-
-			progress_update(&prog, ++checked_cnt);
 
 			/* check bitmap */
 			if (bm_na && ictx->ib)
@@ -3832,11 +3834,12 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 {
 	fsck_start_step("Replay logfile...");
+	problem_context_t pctx = {0, };
 
 	/*
 	 * For now, Just reset logfile.
 	 */
-	if (ntfs_fix_problem(vol, PR_RESET_LOG_FILE, NULL)) {
+	if (ntfs_fix_problem(vol, PR_RESET_LOG_FILE, &pctx)) {
 		if (ntfs_logfile_reset(vol)) {
 			check_failed("ntfs logfile reset failed, errno : %d\n", errno);
 			return STATUS_ERROR;
@@ -3890,7 +3893,7 @@ static ntfs_inode *ntfsck_get_opened_ni_vol(ntfs_volume *vol, s64 mft_num)
 static int ntfsck_validate_system_file(ntfs_inode *ni)
 {
 	ntfs_volume *vol = ni->vol;
-	problem_context_t pctx;
+	problem_context_t pctx = {0, };
 
 	pctx.ni = ni;
 
@@ -3979,7 +3982,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 
 	fsck_start_step("Check system files...");
 
-	progress_init(&prog, 0, FILE_first_user + 1, 1, pb_flags);
+	progress_init(&prog, 0, FILE_first_user, 1, pb_flags);
 
 	root_ni = ntfsck_check_root_inode(vol);
 	if (!root_ni) {
@@ -4394,6 +4397,7 @@ err_check_inode:
 static void ntfsck_scan_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
+	problem_context_t pctx = {0, };
 
 	fsck_start_step("Scan mft entries in volume...");
 
@@ -4402,7 +4406,8 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 			vol->mft_record_size_bits;
 	ntfs_log_verbose("Scanning maximum %"PRId64" MFT records.\n", nr_mft_records);
 
-	if (!ntfs_fix_problem(vol, PR_PRE_SCAN_MFT, NULL)) {
+	if (!ntfs_fix_problem(vol, PR_PRE_SCAN_MFT, &pctx)) {
+		total_cnt = nr_mft_records;
 		fsck_end_step();
 		return;
 	}

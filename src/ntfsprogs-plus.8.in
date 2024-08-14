@@ -26,6 +26,9 @@ essential utilities include making, checking and repairing dumping and viewing f
 .BR ntfsclone (8)
 \- Efficiently clone, backup, restore or rescue NTFS.
 .PP
+.BR ntfsresize (8)
+\- Resize an NTFS filesystem without data loss.
+.PP
 .BR ntfscluster (8)
 \- Locate the files which use the given sectors or clusters.
 .PP

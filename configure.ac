@@ -530,6 +530,7 @@ AC_CONFIG_FILES([
 	src/mkntfs.8
 	src/ntfsclone.8
 	src/ntfscluster.8
+	src/ntfsresize.8
 	src/ntfsinfo.8
 	src/ntfslabel.8
 	src/ntfsprogs-plus.8

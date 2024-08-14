@@ -13,10 +13,11 @@ endif
 LINK=$(STATIC_LINK) $(LIBTOOL_LINK)
 
 bin_PROGRAMS		= ntfsinfo ntfscluster
-sbin_PROGRAMS		= mkntfs ntfslabel ntfsclone ntfsck
+sbin_PROGRAMS		= mkntfs ntfslabel ntfsclone ntfsck ntfsresize
 
 man_MANS		= mkntfs.8 ntfslabel.8 ntfsinfo.8 ntfsck.8 \
-			  ntfsprogs-plus.8 ntfsclone.8 ntfscluster.8
+			  ntfsprogs-plus.8 ntfsclone.8 ntfscluster.8 \
+			  ntfsresize.8
 
 EXTRA_MANS		=
 
@@ -37,6 +38,10 @@ ntfslabel_LDFLAGS	= $(AM_LFLAGS)
 ntfsinfo_SOURCES	= ntfsinfo.c utils.c utils.h
 ntfsinfo_LDADD		= $(AM_LIBS)
 ntfsinfo_LDFLAGS	= $(AM_LFLAGS)
+
+ntfsresize_SOURCES	= ntfsresize.c utils.c utils.h
+ntfsresize_LDADD	= $(AM_LIBS)
+ntfsresize_LDFLAGS	= $(AM_LFLAGS)
 
 ntfsclone_SOURCES	= ntfsclone.c utils.c utils.h
 ntfsclone_LDADD		= $(AM_LIBS)

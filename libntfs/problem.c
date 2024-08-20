@@ -142,7 +142,7 @@ static struct ntfs_problem problem_table[] = {
 		"Directory(@In): Length of empty entry of $INDEX_ROOT is not valid. Fix it",
 	},
 	{ PR_CLUSTER_DUPLICATION_FOUND,
-		"Inode(@In:@At): Found cluster duplication",
+		"Inode(@In:@At): Found cluster duplication. Fix it",
 	},
 	{ PR_ORPHANED_MFT_OPEN_FAILURE,
 		"Inode(@In) open failed. Clear MFT bitmap of inode",
@@ -179,18 +179,18 @@ static void expand_inode_expression(problem_context_t *pctx, char ch)
 
 	switch (ch) {
 		case 'n':	/* inode number */
-			fprintf(stdout, "%" PRIu64 "", ni ? ni->mft_no : pctx->inum);
+			fprintf(stderr, "%" PRIu64 "", ni ? ni->mft_no : pctx->inum);
 			break;
 		case 's':	/* inode allocated size ($FN allocated size) */
-			fprintf(stdout, "%" PRIu64 "", ni ? ni->allocated_size :
+			fprintf(stderr, "%" PRIu64 "", ni ? ni->allocated_size :
 					m ? le32_to_cpu(m->bytes_allocated) :
 					pctx->asize);
 			break;
 		case 'd':	/* inode data size ($FN data size) */
-			fprintf(stdout, "%" PRIu64 "", ni ? ni->data_size : pctx->dsize);
+			fprintf(stderr, "%" PRIu64 "", ni ? ni->data_size : pctx->dsize);
 			break;
 		case 'N':
-			fprintf(stdout, "%s", pctx->filename);
+			fprintf(stderr, "%s", pctx->filename);
 			break;
 		default:
 			break;
@@ -212,16 +212,16 @@ static void expand_attr_expression(problem_context_t *pctx, char ch)
 
 	switch (ch) {
 		case 't':	/* attribute type */
-			fprintf(stdout, "%d", na ? na->type: (int)le32_to_cpu(a->type));
+			fprintf(stderr, "%d", na ? na->type: (int)le32_to_cpu(a->type));
 			break;
 		case 's':	/* attribute allocated size */
-			fprintf(stdout, "%" PRIu64 "",
+			fprintf(stderr, "%" PRIu64 "",
 					na ?
 					na->allocated_size :
 					sle64_to_cpu(a->allocated_size));
 			break;
 		case 'd':	/* attribute data size */
-			fprintf(stdout, "%" PRIu64 "",
+			fprintf(stderr, "%" PRIu64 "",
 					na ?
 					na->data_size :
 					sle64_to_cpu(a->data_size));
@@ -241,10 +241,10 @@ static void expand_fn_expression(problem_context_t *pctx, char ch)
 
 	switch (ch) {
 		case 's':	/* index key ($FN) allocated size */
-			fprintf(stdout, "%" PRIu64 "", le64_to_cpu(fn->allocated_size));
+			fprintf(stderr, "%" PRIu64 "", le64_to_cpu(fn->allocated_size));
 			break;
 		case 'd':	/* index key ($FN) data size */
-			fprintf(stdout, "%" PRIu64 "", le64_to_cpu(fn->data_size));
+			fprintf(stderr, "%" PRIu64 "", le64_to_cpu(fn->data_size));
 			break;
 		default:
 			break;
@@ -261,7 +261,7 @@ static void expand_pinode_expression(problem_context_t *pctx, char ch)
 
 	switch (ch) {
 		case 'n':	/* parent inode number */
-			fprintf(stdout, "%" PRIu64 "", ictx->ni->mft_no);
+			fprintf(stderr, "%" PRIu64 "", ictx->ni->mft_no);
 			break;
 		default:
 			break;
@@ -272,7 +272,7 @@ static void expand_ib_expression(problem_context_t *pctx, char ch)
 {
 	switch (ch) {
 		case 'v':	/* index block vcn */
-			fprintf(stdout, "%" PRIu64 "", pctx->vcn);
+			fprintf(stderr, "%" PRIu64 "", pctx->vcn);
 			break;
 		default:
 			break;
@@ -283,7 +283,7 @@ static void expand_sp_expression(problem_context_t *pctx, char ch)
 {
 	switch (ch) {
 		case 'd':	/* related data */
-			fprintf(stdout, "%" PRIu64 "", pctx->dsize);
+			fprintf(stderr, "%" PRIu64 "", pctx->dsize);
 			break;
 		default:
 			break;
@@ -303,7 +303,7 @@ static void print_param_message(problem_context_t *pctx, const char *param)
 			for (i = 1; cp[i]; i++)
 				if (cp[i] == '@')
 					break;
-			fprintf(stdout, "%.*s", i, cp);
+			fprintf(stderr, "%.*s", i, cp);
 			cp += (i - 1);
 			continue;
 		}
@@ -343,7 +343,7 @@ static void print_message(problem_context_t *pctx, const char *message)
 	if (message && *message)
 		print_param_message(pctx, message);
 
-	fflush(stdout);
+	fflush(stderr);
 }
 
 BOOL ntfs_ask_repair(const ntfs_volume *vol)
@@ -360,7 +360,7 @@ BOOL ntfs_ask_repair(const ntfs_volume *vol)
 	} else if (NVolFsAskRepair(vol)) {
 		do {
 			ntfs_log_error(" (y/N)? ");
-			fflush(stdout);
+			fflush(stderr);
 
 			if (fgets(answer, sizeof(answer), stdin)) {
 				if (strcasecmp(answer, "Y\n") == 0)

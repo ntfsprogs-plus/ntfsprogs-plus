@@ -3176,6 +3176,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	ntfs_attr *bmp_na = NULL;
 	INDEX_ALLOCATION *ia;
 	INDEX_ENTRY *ie;
+	INDEX_HEADER *ih;
 	INDEX_ROOT *ir = ictx->ir;
 	ntfs_inode *ni = ictx->ni;
 	VCN vcn;
@@ -3219,8 +3220,10 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		       ir_size);
 
 	/* check entries in INDEX_ROOT */
-	index_end = ir_buf + ir_size;
+//	index_end = ir_buf + ir_size;
 	ie = (INDEX_ENTRY *)ir_buf;
+	ih = &ir->index;
+	index_end = (u8 *)ie + le32_to_cpu(ih->index_length);
 	for (; (u8 *)ie < index_end;
 			ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
 		/* check length bound */
@@ -3300,7 +3303,9 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 		/* check index entries in a INDEX_ALLOCATION block */
 		ia = (INDEX_ALLOCATION *)ia_buf;
-		index_end = (u8 *)ia + ictx->block_size;
+		ih = &ia->index;
+//		index_end = (u8 *)ia + ictx->block_size;
+		index_end = (u8 *)ih + le32_to_cpu(ih->index_length);
 		ie = (INDEX_ENTRY *)((u8 *)&ia->index +
 				le32_to_cpu(ia->index.entries_offset));
 

@@ -2132,10 +2132,10 @@ int ntfs_index_rm(ntfs_index_context *icx)
 	ie_end = (u8 *)ih + le32_to_cpu(ih->index_length);
 
 	if (ie_start > (u8 *)icx->entry ||
-			ie_end <= ((u8 *)icx->entry + icx->entry->length) ||
+			ie_end < ((u8 *)icx->entry + icx->entry->length) ||
 			icx->entry->length > le32_to_cpu(ih->allocated_size) ||
 			icx->entry->length > icx->block_size) {
-		ntfs_log_error("Index entry(0x%p) is out of range from %s\n",
+		ntfs_log_error("Index entry(%p) is out of range from %s\n",
 				(u8 *)icx->entry,
 				icx->is_in_root ? "index root" : "index block");
 		errno = EINVAL;

@@ -3997,7 +3997,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 
 	/* find 'lost+found' directory in root directory */
 	lf_mftno = ntfs_inode_lookup_by_mbsname(root_ni, FILENAME_LOST_FOUND);
-	vol->lost_found = lf_mftno;	/* if not found, lf_mftno = -1 */
+	vol->lost_found = (lf_mftno == -1) ? 0 : lf_mftno;
 
 	root_ctx = ntfs_attr_get_search_ctx(root_ni, NULL);
 	if (!root_ctx)

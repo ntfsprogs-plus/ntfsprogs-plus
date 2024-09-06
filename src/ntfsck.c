@@ -527,6 +527,12 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 			}
 		}
 	} else {
+		if (ntfsck_check_inode(ni, ictx->entry, ictx)) {
+			ntfs_log_error("Failed to check inode(%"PRIu64") "
+					"for repairing orphan inode\n", ni->mft_no);
+			ntfs_index_ctx_put(ictx);
+			return STATUS_ERROR;
+		}
 		ntfs_index_ctx_put(ictx);
 		return STATUS_NOT_FOUND;
 	}
@@ -2794,6 +2800,10 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	int32_t flags;
 	int ret;
 
+	ret = ntfsck_check_inode_non_resident(ni, 1);
+	if (ret)
+		goto err_out;
+
 	if (ni->attr_list) {
 		if (ntfsck_check_attr_list(ni))
 			goto err_out;
@@ -2803,10 +2813,6 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	}
 
 	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
-		goto err_out;
-
-	ret = ntfsck_check_inode_non_resident(ni, 1);
-	if (ret)
 		goto err_out;
 
 	/* Check file type */

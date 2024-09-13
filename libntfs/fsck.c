@@ -234,6 +234,32 @@ runlist *ntfs_fsck_make_dup_runlist(runlist *orig_dup_rl, runlist *new_dup_rl)
 	return dup_rl;
 }
 
+static void ntfs_fsck_fill_unused_lcnbmp(ntfs_volume *vol, s64 last_idx)
+{
+	u8 *last_bm;
+	s64 start_pos;
+	s64 last_bit;
+	s64 last_bit_offset;
+	s64 last_byte_offset;
+
+	last_bm = vol->fsck_lcn_bitmap[last_idx];
+
+	start_pos = last_idx * NTFS_BUF_SIZE;
+	last_bit_offset = vol->nr_clusters - (start_pos << 3);
+	last_byte_offset = last_bit_offset >> 3;
+
+	/* fill all unused lcnbmp bytes by 1 (bytes over the maximum cluster number) */
+	if ((last_byte_offset + 1) < NTFS_BUF_SIZE)
+		memset(last_bm + last_byte_offset + 1, 0xff,
+				NTFS_BUF_SIZE - (last_byte_offset + 1));
+
+	/* fill all unused lcnbmp bit by 1 (bits over the maximu cluster number) */
+	last_bit = last_bit_offset - (last_byte_offset << 3);
+	last_bm[last_byte_offset] |= (0xff << last_bit);
+	ntfs_log_trace("last idx %llu, last_bit_offset %llu, last_byte_offset %llu, "
+			"last_bit %llu\n", last_idx, last_bit_offset, last_byte_offset, last_bit);
+}
+
 /*
  * for a entry of runlists (lcn, length), set/clear lcn bitmap
  *                          ^^^  ^^^^^^
@@ -274,9 +300,14 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
 	remain_length = length;
 	for (idx = s_idx; idx <= e_idx; idx++) {
 		if (!vol->fsck_lcn_bitmap[idx]) {
+			s64 last_idx = FB_ROUND_DOWN(vol->nr_clusters >> NTFSCK_BYTE_TO_BITS);
+
 			vol->fsck_lcn_bitmap[idx] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
 			if (!vol->fsck_lcn_bitmap[idx])
 				return -ENOMEM;
+
+			if (last_idx == idx)
+				ntfs_fsck_fill_unused_lcnbmp(vol, last_idx);
 		}
 
 		buf = vol->fsck_lcn_bitmap[idx];
@@ -358,9 +389,14 @@ runlist *ntfs_fsck_check_and_set_lcnbmp(ntfs_volume *vol, ntfs_attr *na, int rl_
 	checked_vcn = 0;
 	for (idx = s_idx; idx <= e_idx; idx++) {
 		if (!vol->fsck_lcn_bitmap[idx]) {
+			s64 last_idx = FB_ROUND_DOWN(vol->nr_clusters >> NTFSCK_BYTE_TO_BITS);
+
 			vol->fsck_lcn_bitmap[idx] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
 			if (!vol->fsck_lcn_bitmap[idx])
 				return NULL;
+
+			if (last_idx == idx)
+				ntfs_fsck_fill_unused_lcnbmp(vol, last_idx);
 		}
 
 		buf = vol->fsck_lcn_bitmap[idx];

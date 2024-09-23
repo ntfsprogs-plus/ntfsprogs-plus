@@ -4138,7 +4138,7 @@ close_inode:
 
 typedef u8 *(*get_bmp_func)(ntfs_volume *, s64);
 
-static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func func, int direction)
+static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func func, int wtype)
 {
 	s64 count, pos, total, remain;
 	s64 rcnt, wcnt;
@@ -4192,7 +4192,7 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 			if (*dbml != *fbml) {
 #ifdef DEBUG
 				ntfs_log_info("%s bitmap(%d):\n",
-						na->type == 0xb0 ? "MFT" : "LCN", direction);
+						na->type == 0xb0 ? "MFT" : "LCN", wtype);
 				ntfs_log_info("1:difference pos(%"PRIu64":%lu:%"PRIu64
 						"): %0lx:%0lx\n", pos, i,
 						(pos + (i * sizeof(unsigned long))) << 3, *dbml, *fbml);
@@ -4206,13 +4206,13 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 			}
 		}
 
-		if (direction != 1)
+		if (wtype == FSCK_BMP_FINAL)
 			fsck_err_found();
 
 		if (ntfs_fix_problem(vol, PR_CLUSTER_BITMAP_MISMATCH, &pctx)) {
-			if (direction == 1)
+			if (wtype == FSCK_BMP_INITIAL)
 				wcnt = ntfs_attr_pwrite(na, pos, count, disk_bm);
-			else {
+			else if (wtype == FSCK_BMP_FINAL) {
 				wcnt = ntfs_attr_pwrite(na, pos, count, fsck_bm);
 				fsck_err_fixed();
 			}
@@ -4249,8 +4249,10 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 
 	fsck_start_step("Check orphaned mft...");
 
-	ntfsck_apply_bitmap(vol, vol->lcnbmp_na, ntfs_fsck_find_lcnbmp_block, 1);
-	ntfsck_apply_bitmap(vol, vol->mftbmp_na, ntfs_fsck_find_mftbmp_block, 1);
+	ntfsck_apply_bitmap(vol, vol->lcnbmp_na,
+			ntfs_fsck_find_lcnbmp_block, FSCK_BMP_INITIAL);
+	ntfsck_apply_bitmap(vol, vol->mftbmp_na,
+			ntfs_fsck_find_mftbmp_block, FSCK_BMP_INITIAL);
 
 	progress_init(&prog, 0, orphan_cnt + 1, 1000, pb_flags);
 
@@ -4281,7 +4283,8 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 				 * error returned.
 				 * inode is already freed and closed in that function,
 				 */
-				ntfs_log_error("failed to add entry(%"PRIu64") orphaned file\n",
+				ntfs_log_error("failed to add entry(%"PRIu64
+						") orphaned file\n",
 						entry->mft_no);
 				return STATUS_ERROR;
 			}
@@ -4293,8 +4296,10 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 		}
 	}
 
-	ntfsck_apply_bitmap(vol, vol->lcnbmp_na, ntfs_fsck_find_lcnbmp_block, 0);
-	ntfsck_apply_bitmap(vol, vol->mftbmp_na, ntfs_fsck_find_mftbmp_block, 0);
+	ntfsck_apply_bitmap(vol, vol->lcnbmp_na,
+			ntfs_fsck_find_lcnbmp_block, FSCK_BMP_FINAL);
+	ntfsck_apply_bitmap(vol, vol->mftbmp_na,
+			ntfs_fsck_find_mftbmp_block, FSCK_BMP_FINAL);
 
 	fsck_end_step();
 	return STATUS_OK;

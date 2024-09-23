@@ -26,6 +26,11 @@
 #define FB_ROUND_UP(x)		(((x) + ((NTFS_BUF_SIZE << 3) - 1)) & ~((NTFS_BUF_SIZE << 3) - 1))
 #define FB_ROUND_DOWN(x)	(((x) & ~(NTFS_BUF_SIZE - 1)) >> NTFS_BUF_SIZE_BITS)
 
+enum {
+	FSCK_BMP_INITIAL = 1,
+	FSCK_BMP_FINAL = 0,
+};
+
 int ntfs_fsck_set_mftbmp_value(ntfs_volume *vol, u64 mft_no, int value);
 char ntfs_fsck_mftbmp_get(ntfs_volume *vol, const u64 bit);
 int ntfs_fsck_mftbmp_clear(ntfs_volume *vol, u64 mft_no);
@@ -39,6 +44,7 @@ runlist *ntfs_fsck_check_and_set_lcnbmp(ntfs_volume *vol, ntfs_attr *na, int rl_
 runlist_element *ntfs_rl_append(runlist_element *dst, int dsize,
 				       runlist_element *src, int ssize, int loc);
 int ntfs_fsck_repair_cluster_dup(ntfs_attr *na, runlist *dup_rl);
+void ntfs_fsck_fill_unused_lcnbmp(ntfs_volume *vol, s64 last_idx, u8 *buf);
 
 ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 		ntfs_mount_flags flags __attribute__((unused)));

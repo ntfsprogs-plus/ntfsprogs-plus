@@ -106,8 +106,13 @@ u8 *ntfs_fsck_find_mftbmp_block(ntfs_volume *vol, s64 pos)
 {
 	u32 bm_i = FB_ROUND_DOWN(pos);
 
-	if (bm_i >= vol->max_fmb_cnt || !vol->fsck_mft_bitmap[bm_i])
+	/* mftbmp does not need to consider un-allocated mft bitmap,
+	 * cause mft bitmap can be expaned more than initialized_size
+	 * of mft_na */
+	if (bm_i >= vol->max_fmb_cnt || !vol->fsck_mft_bitmap[bm_i]) {
+		memset(zero_bm, 0, NTFS_BUF_SIZE);
 		return zero_bm;
+	}
 
 	return vol->fsck_mft_bitmap[bm_i];
 }
@@ -121,9 +126,22 @@ void ntfs_fsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit)
 u8 *ntfs_fsck_find_lcnbmp_block(ntfs_volume *vol, s64 pos)
 {
 	u32 bm_i = FB_ROUND_DOWN(pos);
+	u32 last_idx = FB_ROUND_DOWN((vol->nr_clusters - 1) >> NTFSCK_BYTE_TO_BITS);
 
-	if (bm_i >= vol->max_flb_cnt || !vol->fsck_lcn_bitmap[bm_i])
+	if (bm_i >= vol->max_flb_cnt || !vol->fsck_lcn_bitmap[bm_i]) {
+		memset(zero_bm, 0, NTFS_BUF_SIZE);
+
+		/* consider last unused bitmap */
+		if (bm_i == last_idx)
+			ntfs_fsck_fill_unused_lcnbmp(vol, last_idx, zero_bm);
+
 		return zero_bm;
+	}
+
+	/* consider last unused bitmap */
+	if (bm_i == last_idx)
+		ntfs_fsck_fill_unused_lcnbmp(vol, last_idx,
+				vol->fsck_lcn_bitmap[bm_i]);
 
 	return vol->fsck_lcn_bitmap[bm_i];
 }
@@ -234,15 +252,12 @@ runlist *ntfs_fsck_make_dup_runlist(runlist *orig_dup_rl, runlist *new_dup_rl)
 	return dup_rl;
 }
 
-static void ntfs_fsck_fill_unused_lcnbmp(ntfs_volume *vol, s64 last_idx)
+void ntfs_fsck_fill_unused_lcnbmp(ntfs_volume *vol, s64 last_idx, u8 *last_bm)
 {
-	u8 *last_bm;
 	s64 start_pos;
 	s64 last_bit;
 	s64 last_bit_offset;
 	s64 last_byte_offset;
-
-	last_bm = vol->fsck_lcn_bitmap[last_idx];
 
 	start_pos = last_idx * NTFS_BUF_SIZE;
 	last_bit_offset = vol->nr_clusters - (start_pos << 3);
@@ -300,14 +315,9 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
 	remain_length = length;
 	for (idx = s_idx; idx <= e_idx; idx++) {
 		if (!vol->fsck_lcn_bitmap[idx]) {
-			s64 last_idx = FB_ROUND_DOWN(vol->nr_clusters >> NTFSCK_BYTE_TO_BITS);
-
 			vol->fsck_lcn_bitmap[idx] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
 			if (!vol->fsck_lcn_bitmap[idx])
 				return -ENOMEM;
-
-			if (last_idx == idx)
-				ntfs_fsck_fill_unused_lcnbmp(vol, last_idx);
 		}
 
 		buf = vol->fsck_lcn_bitmap[idx];
@@ -389,14 +399,9 @@ runlist *ntfs_fsck_check_and_set_lcnbmp(ntfs_volume *vol, ntfs_attr *na, int rl_
 	checked_vcn = 0;
 	for (idx = s_idx; idx <= e_idx; idx++) {
 		if (!vol->fsck_lcn_bitmap[idx]) {
-			s64 last_idx = FB_ROUND_DOWN(vol->nr_clusters >> NTFSCK_BYTE_TO_BITS);
-
 			vol->fsck_lcn_bitmap[idx] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
 			if (!vol->fsck_lcn_bitmap[idx])
 				return NULL;
-
-			if (last_idx == idx)
-				ntfs_fsck_fill_unused_lcnbmp(vol, last_idx);
 		}
 
 		buf = vol->fsck_lcn_bitmap[idx];
@@ -479,7 +484,8 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 		return NULL;
 
 	/* Initialize fsck lcn bitmap buffer array */
-	vol->max_flb_cnt = FB_ROUND_DOWN((vol->nr_clusters + 7)) + 1;
+	vol->max_flb_cnt = FB_ROUND_DOWN((vol->nr_clusters - 1) >>
+			NTFSCK_BYTE_TO_BITS) + 1;
 	vol->fsck_lcn_bitmap = (u8 **)ntfs_calloc(sizeof(u8 *) * vol->max_flb_cnt);
 	if (!vol->fsck_lcn_bitmap) {
 		ntfs_umount(vol, FALSE);
@@ -487,8 +493,8 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 	}
 
 	/* Initialize fsck mft bitmap buffer array */
-	vol->max_fmb_cnt = FB_ROUND_DOWN(vol->mft_na->initialized_size >>
-				      vol->mft_record_size_bits) + 1;
+	vol->max_fmb_cnt = FB_ROUND_DOWN((vol->mft_na->initialized_size >>
+			      vol->mft_record_size_bits) >> NTFSCK_BYTE_TO_BITS) + 1;
 	vol->fsck_mft_bitmap = (u8 **)ntfs_calloc(sizeof(u8 *) * vol->max_fmb_cnt);
 	if (!vol->fsck_mft_bitmap) {
 		free(vol->fsck_lcn_bitmap);

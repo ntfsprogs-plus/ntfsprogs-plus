@@ -2851,7 +2851,8 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 {
 	int ret;
 
-	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
+	ret = ntfsck_check_inode_non_resident(ni, 1);
+	if (ret)
 		goto err_out;
 
 	if (ni->attr_list) {
@@ -2859,8 +2860,7 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_inode_attach_all_extents(ni);
 	}
 
-	ret = ntfsck_check_inode_non_resident(ni, 1);
-	if (ret)
+	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
 		goto err_out;
 
 	/*

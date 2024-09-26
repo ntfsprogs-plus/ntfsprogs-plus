@@ -282,7 +282,8 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 
 		rl = ntfs_decompress_cluster_run(ni->vol, actx->attr, NULL, &part_rl);
 		if (!rl) {
-			ntfs_log_error("Failed to decompress runlist(mft_no:%"PRIu64", type:0x%x). "
+			ntfs_log_error("Failed to decompress runlist(mft_no:%"PRIu64
+					", type:0x%x). "
 					"Leaving inconsistent metadata.\n",
 					ni->mft_no, actx->attr->type);
 			continue;
@@ -430,7 +431,8 @@ static void ntfsck_free_mft_records(ntfs_volume *vol, ntfs_inode *ni)
 		free_mftno = free_inode->mft_no;
 
 		if (ntfs_mft_record_free(vol, free_inode))
-			ntfs_log_error("Failed to free extent MFT record(%"PRIu64":%"PRIu64"). "
+			ntfs_log_error("Failed to free extent MFT record(%"PRIu64
+					":%"PRIu64"). "
 					"Leaving inconsistent metadata.\n",
 					free_mftno, ni->mft_no);
 		else
@@ -475,7 +477,8 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 					le16_to_cpu(ni->mrec->sequence_number)) ||
 				(MREF(mft_no) != ni->mft_no)) {
 			/* found index and orphaned inode is different */
-			ntfs_log_error("mft number of inode(%"PRIu64") and parent index(%"PRIu64") "
+			ntfs_log_error("mft number of inode(%"PRIu64
+					") and parent index(%"PRIu64") "
 					"are different\n", MREF(mft_no), ni->mft_no);
 			ntfs_index_ctx_put(ictx);
 			return STATUS_ERROR;
@@ -1444,7 +1447,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		mft_pdir != ictx->ni->mft_no) {
 			filename = ntfs_attr_name_get(ie_fn->file_name,
 						      ie_fn->file_name_length);
-			ntfs_log_error("Parent MFT reference is differnt "
+			ntfs_log_error("Parent MFT reference is different "
 					"(IDX/$FN:%"PRIu64"-%u MFT/$FN:%"PRIu64"-%u) "
 					"on inode(%"PRIu64", %s), parent(%"PRIu64")\n",
 					idx_pdir, idx_pdir_seq, mft_pdir, mft_pdir_seq,
@@ -3248,7 +3251,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 			sub_bmp_pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
 			if (!ntfs_bit_get(bmp_buf, sub_bmp_pos)) {
 				ntfs_log_error("Index allocation subnode of inode(%"PRIu64
-						" is in not allocated bitmap cluster\n",
+						") is in not allocated bitmap cluster\n",
 						ni->mft_no);
 				goto initialize_index;
 			}
@@ -3258,7 +3261,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		if (ntfs_index_entry_inconsistent(vol, ie, COLLATION_FILE_NAME,
 				ni->mft_no, NULL) < 0) {
 			ntfs_log_error("Index entry(%p) of inode(%"PRIu64
-					" is inconsistent\n", ie, ni->mft_no);
+					") is inconsistent\n", ie, ni->mft_no);
 			goto initialize_index;
 		}
 
@@ -3302,7 +3305,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		if (ntfs_index_block_inconsistent(vol, ictx->ia_na,
 					(INDEX_ALLOCATION *)ia_buf,
 					ictx->block_size, ni->mft_no, vcn)) {
-			ntfs_log_error("Index block of inode(%"PRIu64" is inconsistent\n",
+			ntfs_log_error("Index block of inode(%"PRIu64") is inconsistent\n",
 					ni->mft_no);
 			goto initialize_index;
 		}
@@ -3324,14 +3327,14 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 				sub_bmp_pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
 				if (max_vcn_bits <= vcn) {
 					ntfs_log_error("Subnode of inode(%"PRIu64
-							"is larger than max vcn\n",
+							") is larger than max vcn\n",
 							ni->mft_no);
 					goto initialize_index;
 				}
 
 				if (!ntfs_bit_get(bmp_buf, sub_bmp_pos)) {
 					ntfs_log_error("Subnode of inode(%"PRIu64
-							"is not set on $BITMAP\n",
+							") is not set on $BITMAP\n",
 							ni->mft_no);
 					goto initialize_index;
 				}
@@ -3342,7 +3345,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 					((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end) ||
 					((u8 *)ie + le16_to_cpu(ie->length) > index_end)) {
 				ntfs_log_error("Index entry out of bounds in directory inode "
-						"%"PRId64"\n", ni->mft_no);
+						"(%"PRId64")\n", ni->mft_no);
 				goto initialize_index;
 			}
 
@@ -3350,7 +3353,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 			if (ntfs_index_entry_inconsistent(vol, ie,
 						COLLATION_FILE_NAME, ni->mft_no, NULL)) {
 				ntfs_log_error("Index entry(%p) of inode(%"PRIu64
-						"is inconsistent\n", ie, ni->mft_no);
+						") is inconsistent\n", ie, ni->mft_no);
 				goto initialize_index;
 			}
 
@@ -4314,7 +4317,9 @@ static int _ntfsck_check_backup_boot(ntfs_volume *vol, s64 sector, u8 *buf)
 	backup_boot_pos = sector << vol->sector_size_bits;
 	if (ntfs_pread(vol->dev, backup_boot_pos, vol->sector_size, buf) !=
 			vol->sector_size) {
-		ntfs_log_error("Failed to read boot sector.\n");
+		ntfs_log_error("Failed to read backup boot sector on %s.\n",
+				(sector == vol->nr_sectors) ?
+				"last sector" : "middle sector");
 		return STATUS_ERROR;
 	}
 
@@ -4349,7 +4354,7 @@ static int ntfsck_check_backup_boot(ntfs_volume *vol)
 	bb_sector = (vol->nr_clusters / 2) << spc_bits;
 	if (!_ntfsck_check_backup_boot(vol, bb_sector, bb_buf)) {
 		ntfs_log_verbose("Found backup boot sector in the middle of the volume"
-				"(cl_pos:%"PRId64").\n", bb_sector >> spc_bits);
+				"(pos:%"PRId64").\n", bb_sector >> spc_bits);
 		free(bb_buf);
 		return STATUS_OK;
 	}

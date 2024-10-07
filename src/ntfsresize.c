@@ -345,9 +345,7 @@ static void usage(int ret)
 		"    -v, --verbose          More output\n"
 		"    -V, --version          Display version information\n"
 		"    -h, --help             Display this help\n"
-#ifdef DEBUG
 		"    -d, --debug            Show debug information\n"
-#endif
 		"\n"
 		"    The options -i and -x are exclusive of option -s, and -m is exclusive\n"
 		"    of option -x. If options -i, -m, -s and -x are are all omitted\n"
@@ -471,9 +469,7 @@ static int parse_options(int argc, char **argv)
 	static const struct option lopt[] = {
 		{ "bad-sectors",no_argument,		NULL, 'b' },
 		{ "check",	no_argument,		NULL, 'c' },
-#ifdef DEBUG
 		{ "debug",	no_argument,		NULL, 'd' },
-#endif
 		{ "force",	no_argument,		NULL, 'f' },
 		{ "help",	no_argument,		NULL, 'h' },
 		{ "info",	no_argument,		NULL, 'i' },
@@ -588,11 +584,9 @@ static int parse_options(int argc, char **argv)
 	fflush(stdout);
 	fflush(stderr);
 
-#ifdef DEBUG
 	if (!opt.debug)
 		if (!freopen("/dev/null", "w", stderr))
 			perr_exit("Failed to redirect stderr to /dev/null");
-#endif
 
 	if (ver)
 		version();
@@ -1731,8 +1725,9 @@ static runlist *alloc_cluster(struct bitmap *bm,
 			      s64 nr_vol_clusters,
 			      int hint)
 {
-	runlist_element rle;
+	runlist_element rle = {0, };
 	runlist *rl = NULL;
+	runlist *prev_rl = NULL;
 	int rl_size, runs = 0;
 	s64 vcn = 0;
 
@@ -1749,9 +1744,13 @@ static runlist *alloc_cluster(struct bitmap *bm,
 		if (find_free_cluster(bm, &rle, nr_vol_clusters, hint) == -1)
 			return NULL;
 
+		prev_rl = rl;
+
 		rl_size = (runs + 2) * sizeof(runlist_element);
-		if (!(rl = (runlist *)realloc(rl, rl_size)))
+		if (!(rl = (runlist *)realloc(rl, rl_size))) {
+			free(prev_rl);
 			return NULL;
+		}
 
 		rl_set(rl + runs, vcn, rle.lcn, rle.length);
 
@@ -3851,7 +3850,7 @@ static int expand_index_sizes(expand_t *expand)
 static int update_runlist(expand_t *expand, s64 inum,
 				ATTR_RECORD *a, runlist_element *rl)
 {
-	ntfs_resize_t resize;
+	ntfs_resize_t resize = {0, };
 	ntfs_attr_search_ctx ctx;
 	ntfs_volume *vol;
 	MFT_RECORD *mrec;

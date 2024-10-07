@@ -3008,8 +3008,9 @@ static int ntfs_attr_find(const ATTR_TYPES type, const ntfschar *name,
 		}
 	}
 	errno = EIO;
-	ntfs_log_perror("%s: Corrupt inode (%lld)", __FUNCTION__,
-			ctx->ntfs_ino ? (long long)ctx->ntfs_ino->mft_no : -1);
+	ntfs_log_perror("%s: Corrupt inode (%lld:%d)", __FUNCTION__,
+			ctx->ntfs_ino ? (long long)ctx->ntfs_ino->mft_no : -1,
+			type);
 	return -1;
 }
 
@@ -3953,6 +3954,9 @@ int ntfs_attr_position(const ATTR_TYPES type, ntfs_attr_search_ctx *ctx)
 static void ntfs_attr_init_search_ctx(ntfs_attr_search_ctx *ctx,
 		ntfs_inode *ni, MFT_RECORD *mrec)
 {
+	if (!ni && !mrec)
+		return;
+
 	if (!mrec)
 		mrec = ni->mrec;
 	ctx->mrec = mrec;

@@ -69,7 +69,7 @@ static struct ntfs_problem problem_table[] = {
 		"Directory(@In): $IR index block size is corrupted. Fix it",
 	},
 	{ PR_IA_MAGIC_CORRUPTED,
-		"Directory(@In): Index block(vcn:@av) signature is corrupted. Fix it",
+		"Directory(@In): Index block(vcn:@av) signature is corrupted.",
 	},
 	{ PR_MFT_MAGIC_CORRUPTED,
 		"Inode(@In): MFT magic signature is corrupted. Fix it",

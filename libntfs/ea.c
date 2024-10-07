@@ -429,18 +429,23 @@ int ntfs_ea_check_wsldev(ntfs_inode *ni, dev_t *rdevp)
 	res = -EOPNOTSUPP;
 	bufsize = 256; /* expected to be enough */
 	buf = (char*)malloc(bufsize);
-	if (buf) {
-		lth = ntfs_get_ntfs_ea(ni, buf, bufsize);
-			/* retry if short buf */
-		if (lth > bufsize) {
-			free(buf);
-			bufsize = lth;
-			buf = (char*)malloc(bufsize);
-			if (buf)
-				lth = ntfs_get_ntfs_ea(ni, buf, bufsize);
-		}
+	if (!buf) {
+		ntfs_log_error("Failed to allocate buffer for ea\n");
+		return -ENOMEM;
 	}
-	if (buf && (lth > 0) && (lth <= bufsize)) {
+
+	lth = ntfs_get_ntfs_ea(ni, buf, bufsize);
+		/* retry if short buf */
+
+	if (lth > bufsize) {
+		free(buf);
+		bufsize = lth;
+		buf = (char*)malloc(bufsize);
+		if (buf)
+			lth = ntfs_get_ntfs_ea(ni, buf, bufsize);
+	}
+
+	if ((lth > 0) && (lth <= bufsize)) {
 		offset = 0;
 		found = FALSE;
 		do {

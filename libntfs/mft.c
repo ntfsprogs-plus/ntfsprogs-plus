@@ -634,9 +634,9 @@ static int ntfs_mft_bitmap_find_free_rec(ntfs_volume *vol, ntfs_inode *base_ni)
 {
 	s64 pass_end, ll, data_pos, pass_start, ofs, bit;
 	ntfs_attr *mftbmp_na;
-	u8 *buf, *byte;
+	u8 *buf, *byte = NULL;
 	unsigned int size;
-	u8 pass, b;
+	u8 pass, b = 0;
 	int ret = -1;
 
 	ntfs_log_enter("Entering\n");
@@ -680,10 +680,7 @@ static int ntfs_mft_bitmap_find_free_rec(ntfs_volume *vol, ntfs_inode *base_ni)
 			"pass_end 0x%llx, data_pos 0x%llx.\n", pass,
 			(long long)pass_start, (long long)pass_end,
 			(long long)data_pos);
-#ifdef DEBUG
-	byte = NULL;
-	b = 0;
-#endif
+
 	/* Loop until a free mft record is found. */
 	for (; pass <= 2; size = MFTBMP_ALLOC_SIZE) {
 		/* Cap size to pass_end. */

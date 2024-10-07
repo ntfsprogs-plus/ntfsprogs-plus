@@ -486,8 +486,9 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 	}
 
 	if (sle64_to_cpu(ib->index_block_vcn) != vcn) {
-		ntfs_log_error("Corrupt index block: VCN (%lld) is different "
+		ntfs_log_error("%sCorrupt index block: VCN (%lld) is different "
 			       "from expected VCN (%lld) in inode %llu\n",
+			       fixed == TRUE ? "\n" : "",
 			       (long long)sle64_to_cpu(ib->index_block_vcn),
 			       (long long)vcn,
 			       (unsigned long long)inum);
@@ -495,36 +496,43 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 	}
 
 	if (ib_size != block_size) {
-		ntfs_log_error("Corrupt index block : VCN (%lld) of inode %llu "
+		ntfs_log_error("%sCorrupt index block : VCN (%lld) of inode %llu "
 			       "has a size (%u) differing from the index "
-			       "specified size (%u)\n", (long long)vcn,
+			       "specified size (%u)\n",
+			       fixed == TRUE ? "\n" : "",
+			       (long long)vcn,
 			       (unsigned long long)inum, ib_size,
 			       (unsigned int)block_size);
 		return -1;
 	}
 
 	if (le32_to_cpu(ih->entries_offset) < sizeof(INDEX_HEADER)) {
-		ntfs_log_error("Invalid index entry offset in inode %lld\n",
+		ntfs_log_error("%sInvalid index entry offset in inode %lld\n",
+				fixed == TRUE ? "\n" : "",
 				(unsigned long long)inum);
 		return -1;
 	}
 
 	if (le32_to_cpu(ih->index_length)
 			<= le32_to_cpu(ih->entries_offset)) {
-		ntfs_log_error("No space for index entries in inode %lld\n",
+		ntfs_log_error("%sNo space for index entries in inode %lld\n",
+				fixed == TRUE ? "\n" : "",
 				(unsigned long long)inum);
 		return -1;
 	}
 
 	if ((le32_to_cpu(ih->index_length) > le32_to_cpu(ih->allocated_size)) ||
 			(le32_to_cpu(ih->index_length) > block_size)) {
-		ntfs_log_error("index length of %lld is too big\n", (unsigned long long)inum);
+		ntfs_log_error("%sindex length of %lld is too big\n",
+				fixed == TRUE ? "\n" : "",
+				(unsigned long long)inum);
 		return -1;
 	}
 
 	if (le32_to_cpu(ih->allocated_size)
 			< le32_to_cpu(ih->index_length)) {
-		ntfs_log_error("Index entries overflow in inode %lld\n",
+		ntfs_log_error("%sIndex entries overflow in inode %lld\n",
+				fixed == TRUE ? "\n" : "",
 				(unsigned long long)inum);
 		return -1;
 	}

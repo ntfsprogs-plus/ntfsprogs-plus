@@ -2077,6 +2077,11 @@ static void setup_lcn_bitmap(void)
 	bitmap_file_data_fixup(vol->nr_clusters, &lcn_bitmap);
 }
 
+static inline void free_lcn_bitmap(void)
+{
+	free(lcn_bitmap.bm);
+}
+
 
 static s64 volume_size(ntfs_volume *volume, s64 nr_clusters)
 {
@@ -2701,8 +2706,8 @@ int main(int argc, char **argv)
 		ntfs_umount(vol,FALSE);
 		mount_volume(0 /*NTFS_MNT_NOATIME*/);
 	}
+	free_lcn_bitmap();
 
-	free(lcn_bitmap.bm);
 	setup_lcn_bitmap();
 	memset(&image, 0, sizeof(image));
 	backup_clusters.image = &image;
@@ -2730,6 +2735,6 @@ int main(int argc, char **argv)
 	else
 		fsync_clone(fd_out);
 	ntfs_umount(vol,FALSE);
-	free(lcn_bitmap.bm);
+	free_lcn_bitmap();
 	return (0);
 }

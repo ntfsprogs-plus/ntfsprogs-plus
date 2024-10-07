@@ -110,8 +110,8 @@ struct RUNCOUNT {
  */
 static void version(void)
 {
-	printf("\n%s v%s - Display information about an NTFS "
-			"Volume.\n\n", EXEC_NAME, VERSION);
+	printf("\n%s v%s - Display information about an NTFS Volume.\n\n",
+			EXEC_NAME, VERSION);
 	printf("Copyright (c)\n");
 	printf("    2002-2004 Matthew J. Fanto\n");
 	printf("    2002-2006 Anton Altaparmakov\n");

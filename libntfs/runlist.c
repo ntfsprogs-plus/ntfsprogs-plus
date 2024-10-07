@@ -2248,6 +2248,7 @@ static int test_rl_read_buffer(const char *file, u8 *buf, int bufsize)
 
 	if (fread(buf, bufsize, 1, fptr) == 99) {
 		printf("read %s\n", file);
+		fclose(fptr);
 		return 0;
 	}
 

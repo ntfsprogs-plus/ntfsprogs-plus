@@ -887,7 +887,8 @@ static int ntfsck_remove_filename(ntfs_inode *ni, FILE_NAME_ATTR *fn)
 
 	nlink = le16_to_cpu(ni->mrec->link_count);
 
-	ni->mrec->link_count = cpu_to_le16(--nlink);
+	--nlink;
+	ni->mrec->link_count = cpu_to_le16(nlink);
 	ntfs_inode_mark_dirty(ni);
 
 	return STATUS_OK;
@@ -2261,7 +2262,7 @@ static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
 static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size, ntfs_attr_search_ctx *actx)
 {
 	ntfs_inode *ni;
-	u32 backup_attr_list_size;
+	u32 backup_attr_list_size = 0;
 
 	if (!na->ni)
 		return STATUS_ERROR;

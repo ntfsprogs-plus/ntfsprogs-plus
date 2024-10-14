@@ -1374,6 +1374,18 @@ static int reload_mft(ntfs_resize_t *resize)
 		}
 	} else
 		r = -1;
+
+	if (r) {
+		if (resize->vol->mftbmp_na) {
+			ntfs_attr_close(resize->vol->mftbmp_na);
+			resize->vol->mftbmp_na = NULL;
+		}
+		if (resize->vol->mft_na) {
+			ntfs_attr_close(resize->vol->mft_na);
+			resize->vol->mft_na = NULL;
+		}
+	}
+
 	return (r);
 }
 
@@ -3197,7 +3209,7 @@ static u8 *get_mft_bitmap(expand_t *expand)
 {
 	ATTR_RECORD *a;
 	ntfs_volume *vol;
-	runlist_element *rl;
+	runlist_element *rl = NULL;
 	runlist_element *prl;
 	u32 bitmap_size;
 	BOOL ok;
@@ -3229,10 +3241,11 @@ static u8 *get_mft_bitmap(expand_t *expand)
 				free(expand->mft_bitmap);
 				expand->mft_bitmap = (u8*)NULL;
 			}
-			free(rl);
 		} else {
 			err_printf("Could not get the MFT bitmap\n");
 		}
+		if (rl)
+			free(rl);
 	} else
 		err_printf("Invalid MFT bitmap\n");
 	return (expand->mft_bitmap);
@@ -4340,11 +4353,15 @@ static ntfs_volume *get_volume_data(expand_t *expand, struct ntfs_device *dev,
 				err_printf("Could not get the old volume parameters "
 					"from the backup bootsector\n");
 		}
-		if (!ok) {
-			free(vol);
-			free(expand->bootsector);
-		}
 	}
+
+	if (!ok) {
+		if (vol)
+			free(vol);
+		if (expand->bootsector)
+			free(expand->bootsector);
+	}
+
 	return (ok ? vol : (ntfs_volume*)NULL);
 }
 

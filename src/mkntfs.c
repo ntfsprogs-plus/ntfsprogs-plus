@@ -1594,7 +1594,8 @@ static int insert_positioned_attr_in_mft_record(MFT_RECORD *m,
 		if (bw != val_len) {
 			ntfs_log_error("Error writing non-resident attribute "
 					"value.\n");
-			return -errno;
+			err = -errno;
+			goto err_out;
 		}
 		err = ntfs_mapping_pairs_build(g_vol, (u8*)a + hdr_size +
 				((name_len + 7) & ~7), mpa_size, rl, 0, NULL);
@@ -1784,7 +1785,8 @@ static int insert_non_resident_attr_in_mft_record(MFT_RECORD *m,
 		if (bw != val_len) {
 			ntfs_log_error("Error writing non-resident attribute "
 					"value.\n");
-			return -errno;
+			err = -errno;
+			goto err_out;
 		}
 		err = ntfs_mapping_pairs_build(g_vol, (u8*)a + hdr_size +
 				((name_len + 7) & ~7), mpa_size, rl, 0, NULL);
@@ -1802,7 +1804,8 @@ err_out:
 	if (ctx)
 		ntfs_attr_put_search_ctx(ctx);
 	ntfs_ucsfree(uname);
-	free(rl);
+	if (rl)
+		free(rl);
 	return err;
 }
 
@@ -2771,8 +2774,10 @@ static int insert_index_entry_in_res_dir_index(INDEX_ENTRY *idx, u32 idx_size,
 			if (idx->key.file_name.file_name_type !=
 					FILE_NAME_POSIX ||
 					idx_entry->key.file_name.file_name_type
-					!= FILE_NAME_POSIX)
-				return -EEXIST;
+					!= FILE_NAME_POSIX) {
+				err = -EEXIST;
+				goto err_out;
+			}
 			/*
 			i = ntfs_file_values_compare(&idx->key.file_name,
 					&idx_entry->key.file_name, 1,
@@ -2783,8 +2788,11 @@ static int insert_index_entry_in_res_dir_index(INDEX_ENTRY *idx, u32 idx_size,
 					idx_entry->key.file_name.file_name, idx_entry->key.file_name.file_name_length,
 					CASE_SENSITIVE, g_vol->upcase,
 					g_vol->upcase_len);
-			if (!i)
-				return -EEXIST;
+			if (!i) {
+				err = -EEXIST;
+				goto err_out;
+			}
+
 			if (i == -1)
 				break;
 do_next:
@@ -2799,15 +2807,21 @@ do_next:
 					le16_to_cpu(idx->key_length),
 					le16_to_cpu(idx_entry->key_length),
 					collation_rule);
-			if (!i)
-				return -EEXIST;
+			if (!i) {
+				err = -EEXIST;
+				goto err_out;
+			}
+
 			if (i == -1)
 				break;
 			idx_entry = (INDEX_ENTRY*)((u8*)idx_entry +
 					le16_to_cpu(idx_entry->length));
 		}
-	} else
-		return -EINVAL;
+	} else {
+		err = -EINVAL;
+		goto err_out;
+	}
+
 	memmove((u8*)idx_entry + idx_size, (u8*)idx_entry,
 			le32_to_cpu(m->bytes_in_use) -
 			((u8*)idx_entry - (u8*)m));

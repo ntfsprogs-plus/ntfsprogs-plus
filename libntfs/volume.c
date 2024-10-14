@@ -495,7 +495,7 @@ error_exit:
 static int ntfs_mftmirr_load(ntfs_volume *vol)
 {
 	int err;
-	char *filename;
+	char *filename = NULL;
 	FILE_NAME_ATTR *fn;
 	ntfs_attr_search_ctx *ctx = NULL;
 
@@ -553,6 +553,8 @@ static int ntfs_mftmirr_load(ntfs_volume *vol)
 
 error_exit:
 	err = errno;
+	if (filename)
+		ntfs_attr_name_free(&filename);
 	if (ctx)
 		ntfs_attr_put_search_ctx(ctx);
 	if (vol->mftmirr_na) {
@@ -1600,6 +1602,7 @@ skip_compare_mft:
 		ntfs_log_error("Attribute definition table is too big (max "
 			       "24-bit allowed).\n");
 		errno = EINVAL;
+		ntfs_attr_close(na);
 		goto error_exit;
 	}
 	vol->attrdef_len = na->data_size;
@@ -1674,8 +1677,10 @@ error_exit:
 	eo = errno;
 	if (ctx)
 		ntfs_attr_put_search_ctx(ctx);
-	free(m);
-	free(m2);
+	if (m)
+		free(m);
+	if (m2)
+		free(m2);
 	__ntfs_volume_release(vol);
 	errno = eo;
 	return NULL;

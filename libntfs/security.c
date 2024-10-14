@@ -1275,6 +1275,10 @@ static BOOL groupmember(struct SECURITY_CONTEXT *scx, uid_t uid, gid_t gid)
 		fd = open(filename,O_RDONLY);
 		if (fd >= 0) {
 			got = read(fd, buf, BUFSZ);
+			if (got <= 0) {
+				close(fd);
+				return FALSE;
+			}
 			buf[got] = 0;
 			state = INKEY;
 			matched = 0;
@@ -1289,6 +1293,10 @@ static BOOL groupmember(struct SECURITY_CONTEXT *scx, uid_t uid, gid_t gid)
 				if (!c) {
 					/* refill buffer */
 					got = read(fd, buf, BUFSZ);
+					if (got <= 0) {
+						close(fd);
+						return FALSE;
+					}
 					buf[got] = 0;
 					p = buf;
 					c = *p++; /* 0 at end of file */
@@ -3443,7 +3451,7 @@ int ntfs_allowed_access(struct SECURITY_CONTEXT *scx,
 	int perm;
 	int res;
 	int allow;
-	struct stat stbuf;
+	struct stat stbuf = {0, };
 
 	/*
 	 * Always allow for root unless execution is requested.
@@ -3523,7 +3531,7 @@ int ntfs_allowed_create(struct SECURITY_CONTEXT *scx,
 	int perm;
 	int res;
 	int allow;
-	struct stat stbuf;
+	struct stat stbuf = {0, };
 
 	/*
 	 * Always allow for root.
@@ -4196,6 +4204,16 @@ static int ntfs_do_default_mapping(struct SECURITY_CONTEXT *scx,
 			}
 		}
 	}
+
+	if (res) {
+		if (sid)
+			free(sid);
+		if (usermapping)
+			free(usermapping);
+		if (groupmapping)
+			free(groupmapping);
+	}
+
 	return (res);
 }
 
@@ -4337,7 +4355,7 @@ int ntfs_build_mapping(struct SECURITY_CONTEXT *scx, const char *usermap_path,
 	if (!usermap_path) usermap_path = MAPPINGFILE;
 	if (usermap_path[0] == '/') {
 		fd = open(usermap_path,O_RDONLY);
-		if (fd > 0) {
+		if (fd >= 0) {
 			firstitem = ntfs_read_mapping(basicread, (void*)&fd);
 			close(fd);
 		} else

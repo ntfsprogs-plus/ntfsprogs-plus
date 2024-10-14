@@ -106,9 +106,16 @@ int cluster_find(ntfs_volume *vol, LCN c_begin, LCN c_end, cluster_cb *cb, void 
 				if ((a_begin > c_end) || (a_end < c_begin))
 					continue;	// before or after search range
 
-				if ((*cb) (m_ctx->inode, a_ctx->attr, runs+j, data))
-					return 1;
+				if ((*cb) (m_ctx->inode, a_ctx->attr, runs+j, data)) {
+					result = 1;
+					goto done;
+				}
 				found = TRUE;
+			}
+
+			if (runs) {
+				runs = NULL;
+				free(runs);
 			}
 		}
 
@@ -124,8 +131,12 @@ int cluster_find(ntfs_volume *vol, LCN c_begin, LCN c_end, cluster_cb *cb, void 
 		ntfs_log_info("* %s inode found\n", (count ? "one" : "no"));
 	result = 0;
 done:
-	ntfs_attr_put_search_ctx(a_ctx);
-	mft_put_search_ctx(m_ctx);
+	if (runs)
+		free(runs);
+	if (a_ctx)
+		ntfs_attr_put_search_ctx(a_ctx);
+	if (m_ctx)
+		mft_put_search_ctx(m_ctx);
 
 	return result;
 }

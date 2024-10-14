@@ -587,9 +587,11 @@ u64 ntfs_inode_lookup_by_mbsname(ntfs_inode *dir_ni, const char *name)
 			{
 				/* Generate unicode name. */
 			uname_len = ntfs_mbstoucs(cached_name, &uname);
-			if (uname_len >= 0)
+			if (uname_len >= 0) {
 				inum = ntfs_inode_lookup_by_name(dir_ni,
 						uname, uname_len);
+				free(uname);
+			}
 			else
 				inum = (s64)-1;
 		}

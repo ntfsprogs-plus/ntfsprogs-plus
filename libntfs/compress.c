@@ -1952,10 +1952,13 @@ int ntfs_compressed_close(ntfs_attr *na, runlist_element *wrl, s64 offs,
 				}
 			} else
 				done = TRUE;
-			free(inbuf);
 		}
 	}
 	if (done && !valid_compressed_run(na,wrl,TRUE,"end compressed close"))
 		done = FALSE;
+
+	if (inbuf)
+		free(inbuf);
+
 	return (!done);
 }

@@ -307,11 +307,15 @@ static int set_new_serial(ntfs_volume *vol)
 				res = 0;
 				}
 		}
-		free(bs);
-		free(oldbs);
 	}
 	if (res)
 		ntfs_log_info("Error setting a new serial number\n");
+
+	if (bs)
+		free(bs);
+	if (oldbs)
+		free(oldbs);
+
 	return (res);
 }
 
@@ -378,6 +382,8 @@ static int change_label(ntfs_volume *vol, char *label)
 
 	label_len = ntfs_mbstoucs(label, &new_label);
 	if (label_len == -1) {
+		if (new_label)
+			free(new_label);
 		ntfs_log_perror("Unable to convert label string to Unicode");
 		return 1;
 	}

@@ -1830,7 +1830,8 @@ out:
 static int ntfs_ih_takeout(ntfs_index_context *icx, INDEX_HEADER *ih,
 			   INDEX_ENTRY *ie, INDEX_BLOCK *ib)
 {
-	INDEX_ENTRY *ie_roam, *ie_dup;
+	INDEX_ENTRY *ie_roam = NULL;
+	INDEX_ENTRY *ie_dup = NULL;
 	int freed_space;
 	BOOL full;
 	int ret = STATUS_ERROR;

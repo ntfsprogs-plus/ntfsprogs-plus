@@ -607,6 +607,7 @@ static char *ntfs_get_fulllink(ntfs_volume *vol, ntfschar *junction,
 				strcat(fulltarget,target);
 			}
 			free(target);
+			target = NULL;
 		}
 	}
 			/*
@@ -641,6 +642,8 @@ static char *ntfs_get_fulllink(ntfs_volume *vol, ntfschar *junction,
 		}
 		if (target)
 			free(target);
+		if (sz)
+			ntfs_attr_name_free(&sz);
 	}
 	return (fulltarget);
 }
@@ -716,6 +719,7 @@ char *ntfs_get_abslink(ntfs_volume *vol, ntfschar *junction, int count,
 				strcat(fulltarget,target);
 			}
 			free(target);
+			target = NULL;
 		}
 	}
 			/*

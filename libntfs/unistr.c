@@ -1453,6 +1453,8 @@ ntfschar *ntfs_str2ucs(const char *s, int *len)
 		return NULL;
 	}
 	if (!ucs || !*len) {
+		if (ucs)
+			free(ucs);
 		ucs  = AT_UNNAMED;
 		*len = 0;
 	}

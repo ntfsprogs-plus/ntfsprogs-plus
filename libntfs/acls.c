@@ -4399,6 +4399,7 @@ struct MAPPING *ntfs_do_user_mapping(struct MAPLIST *firstitem)
 			    && !ntfs_valid_pattern(sid)) {
 				ntfs_log_error("Bad implicit SID pattern %s\n",
 					item->sidstr);
+				free(sid);
 				sid = (SID*)NULL;
 				}
 			if (sid) {
@@ -4416,6 +4417,8 @@ struct MAPPING *ntfs_do_user_mapping(struct MAPLIST *firstitem)
 						firstmapping = mapping;
 					lastmapping = mapping;
 				}
+				free(sid);
+				sid = (SID*)NULL;
 			}
 		}
 	}
@@ -4444,7 +4447,7 @@ struct MAPPING *ntfs_do_group_mapping(struct MAPLIST *firstitem)
 	BOOL secondstep;
 	BOOL ok;
 	int step;
-	SID *sid;
+	SID *sid = NULL;
 	int gid;
 
 	firstmapping = (struct MAPPING*)NULL;
@@ -4475,6 +4478,8 @@ struct MAPPING *ntfs_do_group_mapping(struct MAPLIST *firstitem)
 			if (ok
 			    && (gid
 				 || (!item->uidstr[0] && !item->gidstr[0]))) {
+				if (sid)
+					free(sid);
 				sid = encodesid(item->sidstr);
 				if (sid && !item->uidstr[0] && !item->gidstr[0]
 				    && !ntfs_valid_pattern(sid)) {

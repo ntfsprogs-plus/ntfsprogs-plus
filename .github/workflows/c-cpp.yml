@@ -30,4 +30,4 @@ jobs:
     - name: check ntfs test images
       run: |
         cd tests
-        ./test_fsck.sh
+        ./test_all_images.sh

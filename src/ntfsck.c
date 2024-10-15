@@ -3169,7 +3169,7 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 	if (ibm_size != ni->fsck_ibm_size) {
 		/* FIXME: if ni->fsck_ibm_size is larger than ibm_size,
 		 * it could allocate cluster in ntfs_attr_pwrite() */
-		ntfs_log_info("\n\nBitmap changed during check_inodes\n");
+		ntfs_log_error("\nBitmap changed during check_inodes\n");
 		fsck_err_found();
 		if (ntfs_fix_problem(vol, PR_IDX_BITMAP_SIZE_MISMATCH, &pctx)) {
 			wcnt = ntfs_attr_pwrite(bm_na, 0, ni->fsck_ibm_size, ni->fsck_ibm);

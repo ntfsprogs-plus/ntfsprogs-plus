@@ -338,7 +338,7 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
 		for (i = 0; i < rel_length; i++) {
 			if (ntfs_bit_get_and_set(buf, rel_slcn + i, bit)) {
 				if (bit)
-					ntfs_log_info("Cluster Duplication %"PRIu64" - do not fix\n",
+					ntfs_log_error("Cluster Duplication %"PRIu64" - do not fix\n",
 							(idx_slcn + rel_slcn) + i);
 			}
 		}
@@ -430,7 +430,7 @@ runlist *ntfs_fsck_check_and_set_lcnbmp(ntfs_volume *vol, ntfs_attr *na, int rl_
 				continue;
 
 			/* duplicated */
-			ntfs_log_info("Cluster Duplication %"PRIu64"\n",
+			ntfs_log_error("Cluster Duplication %"PRIu64"\n",
 					(idx_slcn + rel_slcn) + i);
 
 #ifdef TRUNCATE_DATA

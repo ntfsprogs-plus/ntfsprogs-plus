@@ -183,7 +183,7 @@ static ntfs_inode *ntfs_inode_real_open(ntfs_volume *vol, const MFT_REF mref)
 		goto err_out;
 
 	if (MREF_LE(ni->mrec->base_mft_record) != 0) {
-		ntfs_log_error("Inode(%"PRIu64") is not base inode\n",
+		ntfs_log_trace("Inode(%"PRIu64") is not base inode\n",
 				ni->mft_no);
 		goto err_out;
 	}

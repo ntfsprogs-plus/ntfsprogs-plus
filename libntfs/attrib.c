@@ -3511,6 +3511,7 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 	inum = MREF(mref);
 
 	pctx.inum = inum;
+	pctx.a = a;
 
 	if (a->non_resident) {
 		if ((a->non_resident != 1)

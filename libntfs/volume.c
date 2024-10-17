@@ -473,6 +473,7 @@ error_exit:
 		ntfs_attr_close(vol->mft_na);
 		vol->mft_na = NULL;
 	}
+
 	if (vol->mft_ni) {
 		ntfs_inode_close(vol->mft_ni);
 		vol->mft_ni = NULL;
@@ -1444,7 +1445,7 @@ skip_compare_mft:
 		ntfs_log_error("Error: Upcase table is invalid (want size even "
 				"<= 131072).\n");
 		errno = EINVAL;
-		goto bad_upcase;
+		goto error_close;
 	}
 	if (vol->upcase_len != na->data_size >> 1) {
 		vol->upcase_len = na->data_size >> 1;
@@ -1452,7 +1453,7 @@ skip_compare_mft:
 		free(vol->upcase);
 		vol->upcase = ntfs_malloc(na->data_size);
 		if (!vol->upcase)
-			goto bad_upcase;
+			goto error_close;
 	}
 	/* Read in the $DATA attribute value into the buffer. */
 	l = ntfs_attr_pread(na, 0, na->data_size, vol->upcase);
@@ -1461,7 +1462,7 @@ skip_compare_mft:
 			       "(%lld != %lld).\n", (long long)l,
 			       (long long)na->data_size);
 		errno = EIO;
-		goto bad_upcase;
+		goto error_close;
 	}
 	/* Done with the $UpCase mft record. */
 	ntfs_attr_close(na);
@@ -1595,6 +1596,7 @@ skip_compare_mft:
 	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
 	if (!na) {
 		ntfs_log_perror("Failed to open ntfs attribute");
+		ntfs_inode_close(ni);
 		goto error_exit;
 	}
 	/* Check we don't overflow 24-bits. */
@@ -1602,13 +1604,13 @@ skip_compare_mft:
 		ntfs_log_error("Attribute definition table is too big (max "
 			       "24-bit allowed).\n");
 		errno = EINVAL;
-		ntfs_attr_close(na);
-		goto error_exit;
+		goto error_close;
 	}
 	vol->attrdef_len = na->data_size;
 	vol->attrdef = ntfs_malloc(na->data_size);
-	if (!vol->attrdef)
-		goto error_exit;
+	if (!vol->attrdef) {
+		goto error_close;
+	}
 	/* Read in the $DATA attribute value into the buffer. */
 	l = ntfs_attr_pread(na, 0, na->data_size, vol->attrdef);
 	if (l != na->data_size) {
@@ -1616,7 +1618,7 @@ skip_compare_mft:
 			       "(%lld != %lld).\n", (long long)l,
 			       (long long)na->data_size);
 		errno = EIO;
-		goto error_exit;
+		goto error_close;
 	}
 	/* Done with the $AttrDef mft record. */
 	ntfs_attr_close(na);
@@ -1667,7 +1669,7 @@ skip_compare_mft:
 	}
 
 	return vol;
-bad_upcase :
+error_close :
 	ntfs_attr_close(na);
 	ntfs_inode_close(ni);
 	goto error_exit;

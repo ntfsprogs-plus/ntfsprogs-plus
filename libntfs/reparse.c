@@ -642,7 +642,7 @@ static char *ntfs_get_fulllink(ntfs_volume *vol, ntfschar *junction,
 		}
 		if (target)
 			free(target);
-		if (sz)
+		if (sz > 0)
 			ntfs_attr_name_free(&sz);
 	}
 	return (fulltarget);

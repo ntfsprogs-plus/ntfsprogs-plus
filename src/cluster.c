@@ -114,8 +114,8 @@ int cluster_find(ntfs_volume *vol, LCN c_begin, LCN c_end, cluster_cb *cb, void 
 			}
 
 			if (runs) {
-				runs = NULL;
 				free(runs);
+				runs = NULL;
 			}
 		}
 

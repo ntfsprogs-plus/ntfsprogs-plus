@@ -1358,8 +1358,11 @@ static int reload_mft(ntfs_resize_t *resize)
 			if (na && !ntfs_attr_map_whole_runlist(na)) {
 				ntfs_attr_close(resize->vol->mftbmp_na);
 				resize->vol->mftbmp_na = na;
-			} else
+			} else {
+				if (na)
+					ntfs_attr_close(na);
 				r = -1;
+			}
 		}
 
 		if (!r) {
@@ -1369,8 +1372,11 @@ static int reload_mft(ntfs_resize_t *resize)
 			if (na && !ntfs_attr_map_whole_runlist(na)) {
 				ntfs_attr_close(resize->vol->mft_na);
 				resize->vol->mft_na = na;
-			} else
+			} else {
+				if (na)
+					ntfs_attr_close(na);
 				r = -1;
+			}
 		}
 	} else
 		r = -1;

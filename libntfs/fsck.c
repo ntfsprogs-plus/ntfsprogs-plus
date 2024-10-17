@@ -174,6 +174,11 @@ int ntfs_fsck_repair_cluster_dup(ntfs_attr *na, runlist *dup_rl)
 
 		alloc_rl = ntfs_cluster_alloc(vol, dup_rl[i].vcn, dup_rl[i].length,
 				dup_rl[i].lcn + dup_rl[i].length, DATA_ZONE);
+		if (!alloc_rl) {
+			ntfs_log_error("Can' allocated new cluster\n");
+			return -ENOMEM;
+		}
+
 		ntfs_log_debug("alloc_rl : allocated new rl\n");
 		ntfs_debug_runlist_dump(alloc_rl);
 
@@ -400,8 +405,10 @@ runlist *ntfs_fsck_check_and_set_lcnbmp(ntfs_volume *vol, ntfs_attr *na, int rl_
 	for (idx = s_idx; idx <= e_idx; idx++) {
 		if (!vol->fsck_lcn_bitmap[idx]) {
 			vol->fsck_lcn_bitmap[idx] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
-			if (!vol->fsck_lcn_bitmap[idx])
-				return NULL;
+			if (!vol->fsck_lcn_bitmap[idx]) {
+				ntfs_log_error("Can't allocate lcn_bitmap buffer\n");
+				return dup_rl;
+			}
 		}
 
 		buf = vol->fsck_lcn_bitmap[idx];

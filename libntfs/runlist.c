@@ -1968,8 +1968,10 @@ runlist_element *ntfs_rl_punch_hole(runlist_element *dst_rl, int dst_cnt,
 
 	if (punch_rl) {
 		*punch_rl = ntfs_rl_malloc(punch_cnt + 1);
-		if (!*punch_rl)
+		if (!*punch_rl) {
+			free(new_rl);
 			return NULL;
+		}
 
 		ntfs_rl_mc(*punch_rl, 0, dst_rl, new_1st_cnt - 1, punch_cnt);
 

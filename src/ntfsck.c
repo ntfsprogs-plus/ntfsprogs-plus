@@ -2056,7 +2056,7 @@ static int ntfsck_init_root(ntfs_volume *vol, ntfs_inode *ni, ntfs_index_context
 		goto out;
 
 	r_size = ntfs_attr_pread(bm_na, 0, bm_na->data_size, bm);
-	if (r_size != bm_na->data_size) {
+	if (r_size != bm_na->data_size || r_size < 0) {
 		ntfs_log_perror("Failed to read $BITMAP of root\n");
 		goto out;
 	}
@@ -2104,10 +2104,11 @@ static int ntfsck_add_index_fn(ntfs_inode *parent_ni, ntfs_inode *ni)
 	if (ret) {
 		goto out;
 	}
-	ntfs_attr_put_search_ctx(ctx);
-	ctx = NULL;
 	ret = STATUS_OK;
 out:
+	if (ctx)
+		ntfs_attr_put_search_ctx(ctx);
+
 	return ret;
 }
 

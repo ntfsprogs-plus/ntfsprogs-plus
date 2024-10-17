@@ -1,5 +1,21 @@
 CHANGE NOTES for ntfsprogs-plus
 
+v0.9.13
+Fix checking fsck lcnbmp over the maximum cluster number.
+Adjust maximum fsck bitmap buffer index count.
+Add checking cluster number of runlist which exceeds maximum cluster number.
+Add checking base mft record when open inode.
+Fix checking index entry length boundary condition.
+Do not delete system files when initialize root directory.
+
+ETC
+  Fix static analysis issues.
+  Restore ntfsresize utility.
+  Rename ntfs-3g to ntfs
+  Add progress bar and related option.
+  Change output of error message to standard out(STDOUT) stream.
+  Fix print condition on interactive mode.
+
 v0.9.12
 Check and repair duplicate clusters problem.
 Fix some bugs.

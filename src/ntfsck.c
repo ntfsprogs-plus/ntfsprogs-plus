@@ -3813,9 +3813,10 @@ err_continue:
 
 	progress_update(&prog, total_cnt);
 
-	total_cnt -= checked_cnt;
-	if (total_cnt < 0)
+	if (total_cnt < checked_cnt)
 		total_cnt = 0;
+	else
+		total_cnt -= checked_cnt;
 
 	return 0;
 }

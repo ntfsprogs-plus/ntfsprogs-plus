@@ -264,10 +264,8 @@ static char *search_absolute(ntfs_volume *vol, ntfschar *path,
 	    && ((ni->mrec->flags & MFT_RECORD_IS_DIRECTORY ? isdir : !isdir)
 		|| (ni->flags & FILE_ATTR_REPARSE_POINT)))
 		if (ntfs_ucstombs(path, count, &target, 0) < 0) {
-			if (target) {
-				free(target);
-				target = (char*)NULL;
-			}
+			if (target)
+				ntfs_attr_name_free(&target);
 		}
 	if (ni)
 		ntfs_inode_close(ni);
@@ -375,10 +373,9 @@ static char *search_relative(ntfs_inode *ni, ntfschar *path, int count)
 		}
 	}
 
-	if (ok && (ntfs_ucstombs(path, count, &target, 0) < 0)) {
-		free(target); // needed ?
-		target = (char*)NULL;
-	}
+	if (ok && (ntfs_ucstombs(path, count, &target, 0) < 0))
+		ntfs_attr_name_free(&target);
+
 	return (target);
 }
 
@@ -420,7 +417,7 @@ static int ntfs_drive_letter(ntfs_volume *vol, ntfschar letter)
 			}
 	}
 	if (drive)
-		free(drive);
+		ntfs_attr_name_free(&drive);
 	return (ret);
 }
 
@@ -606,8 +603,7 @@ static char *ntfs_get_fulllink(ntfs_volume *vol, ntfschar *junction,
 				strcat(fulltarget,"/");
 				strcat(fulltarget,target);
 			}
-			free(target);
-			target = NULL;
+			ntfs_attr_name_free(&target);
 		}
 	}
 			/*
@@ -641,9 +637,7 @@ static char *ntfs_get_fulllink(ntfs_volume *vol, ntfschar *junction,
 			}
 		}
 		if (target)
-			free(target);
-		if (sz > 0)
-			ntfs_attr_name_free(&sz);
+			ntfs_attr_name_free(&target);
 	}
 	return (fulltarget);
 }
@@ -718,8 +712,7 @@ char *ntfs_get_abslink(ntfs_volume *vol, ntfschar *junction, int count,
 				strcat(fulltarget,"/");
 				strcat(fulltarget,target);
 			}
-			free(target);
-			target = NULL;
+			ntfs_attr_name_free(&target);
 		}
 	}
 			/*
@@ -751,7 +744,7 @@ char *ntfs_get_abslink(ntfs_volume *vol, ntfschar *junction, int count,
 			}
 		}
 		if (target)
-			free(target);
+			ntfs_attr_name_free(&target);
 	}
 	return (fulltarget);
 }
@@ -1369,7 +1362,7 @@ int ntfs_reparse_set_wsl_symlink(ntfs_inode *ni,
 			free(reparse);
 		}
 	}
-	free(utarget);
+	ntfs_attr_name_free(&utarget);
 	return (res);
 }
 

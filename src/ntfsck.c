@@ -3227,7 +3227,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	VCN vcn;
 	u32 ir_size = le32_to_cpu(ir->index.index_length);
 	u8 *ir_buf = NULL, *ia_buf = NULL, *bmp_buf = NULL, *index_end;
-	u64 max_vcn_bits;
+	u64 max_ib_bits;
 	u32 vcn_step;
 	VCN max_vcn;
 	int ret = STATUS_OK;
@@ -3265,7 +3265,6 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		       ir_size);
 
 	/* check entries in INDEX_ROOT */
-//	index_end = ir_buf + ir_size;
 	ie = (INDEX_ENTRY *)ir_buf;
 	ih = &ir->index;
 	index_end = (u8 *)ie + le32_to_cpu(ih->index_length);
@@ -3315,7 +3314,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		goto out;
 	}
 
-	max_vcn_bits = bmp_na->data_size << NTFSCK_BYTE_TO_BITS;
+	max_ib_bits = bmp_na->data_size << NTFSCK_BYTE_TO_BITS;
 	max_vcn = ictx->ia_na->data_size >> ictx->vcn_size_bits;
 	vcn_step = ictx->block_size >> ictx->vcn_size_bits;
 
@@ -3323,7 +3322,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	for (vcn = 0; vcn < max_vcn; vcn += vcn_step) {
 		u32 bmp_pos;
 
-		if (max_vcn_bits <= vcn)
+		if (max_ib_bits <= vcn)
 			break;
 
 		bmp_pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
@@ -3349,7 +3348,6 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		/* check index entries in a INDEX_ALLOCATION block */
 		ia = (INDEX_ALLOCATION *)ia_buf;
 		ih = &ia->index;
-//		index_end = (u8 *)ia + ictx->block_size;
 		index_end = (u8 *)ih + le32_to_cpu(ih->index_length);
 		ie = (INDEX_ENTRY *)((u8 *)&ia->index +
 				le32_to_cpu(ia->index.entries_offset));
@@ -3361,7 +3359,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 				u32 sub_bmp_pos;
 
 				sub_bmp_pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
-				if (max_vcn_bits <= vcn) {
+				if (max_ib_bits <= sub_bmp_pos) {
 					ntfs_log_error("Subnode of inode(%"PRIu64
 							") is larger than max vcn\n",
 							ni->mft_no);

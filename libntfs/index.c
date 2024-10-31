@@ -1134,15 +1134,19 @@ static int ntfs_ibm_add(ntfs_index_context *icx)
 int ntfs_ibm_modify(ntfs_index_context *icx, VCN vcn, int set)
 {
 	u8 byte;
+
+	/* ib index for vcn */
 	s64 pos = ntfs_ibm_vcn_to_pos(icx, vcn);
-	u32 bpos = pos / 8;
-	u32 bit = 1 << (pos % 8);
+	/* byte position in bitmap for ib index of vcn */
+	u32 bpos = pos / BITS_PER_BYTE;
+	/* bit position in byte for ib index of vcn */
+	u32 bit = 1 << (pos % BITS_PER_BYTE);
 	ntfs_attr *na;
 	int ret = STATUS_ERROR;
 
 	ntfs_log_trace("%s vcn: %lld\n", set ? "set" : "clear", (long long)vcn);
 
-	na = ntfs_attr_open(icx->ni, AT_BITMAP,  icx->name, icx->name_len);
+	na = ntfs_attr_open(icx->ni, AT_BITMAP, icx->name, icx->name_len);
 	if (!na) {
 		ntfs_log_perror("Failed to open $BITMAP attribute");
 		return -1;

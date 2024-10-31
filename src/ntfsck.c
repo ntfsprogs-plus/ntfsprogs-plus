@@ -3103,8 +3103,8 @@ static int ntfsck_set_index_bitmap(ntfs_inode *ni, ntfs_index_context *ictx,
 {
 	INDEX_HEADER *ih;
 	s64 vcn = -1;
-	s64 pos;
-	u32 bpos;
+	s64 pos;	/* ib index of vcn */
+	u32 bpos;	/* byte position in bitmap for ib index of vcn */
 	int i;
 
 	if (!ictx->ib)
@@ -3228,7 +3228,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	u32 ir_size = le32_to_cpu(ir->index.index_length);
 	u8 *ir_buf = NULL, *ia_buf = NULL, *bmp_buf = NULL, *index_end;
 	u64 max_ib_bits;
-	u32 vcn_step;
+	u32 vcn_per_ib;
 	VCN max_vcn;
 	int ret = STATUS_OK;
 	problem_context_t pctx = {0, };
@@ -3316,17 +3316,20 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 	max_ib_bits = bmp_na->data_size << NTFSCK_BYTE_TO_BITS;
 	max_vcn = ictx->ia_na->data_size >> ictx->vcn_size_bits;
-	vcn_step = ictx->block_size >> ictx->vcn_size_bits;
+	vcn_per_ib = ictx->block_size >> ictx->vcn_size_bits;
 
 	/* check index block and entries in INDEX_ALLOCATION */
-	for (vcn = 0; vcn < max_vcn; vcn += vcn_step) {
-		u32 bmp_pos;
+	for (vcn = 0; vcn < max_vcn; vcn += vcn_per_ib) {
+		u32 bmp_bit;	/* bit location in $BITMAP for vcn */
 
-		if (max_ib_bits <= vcn)
+		/* one bit of $Bitmap represents one index block,
+		 * so if vcn size is smaller than ib, one bit represent
+		 * the multiple number of vcn.(vcn_per_ib) */
+		bmp_bit = (vcn << ictx->vcn_size_bits) / ictx->block_size;
+		if (max_ib_bits <= bmp_bit)
 			break;
 
-		bmp_pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
-		if (!ntfs_bit_get(bmp_buf, bmp_pos))
+		if (!ntfs_bit_get(bmp_buf, bmp_bit))
 			continue;
 
 		if (ntfs_attr_mst_pread(ictx->ia_na,
@@ -3356,17 +3359,17 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 			/* check bitmap for sub-node */
 			if (ie->ie_flags & INDEX_ENTRY_NODE) {
 				VCN vcn = ntfs_ie_get_vcn(ie);
-				u32 sub_bmp_pos;
 
-				sub_bmp_pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
-				if (max_ib_bits <= sub_bmp_pos) {
+				/* calculate bit location in $Bitmap for vcn */
+				bmp_bit = (vcn << ictx->vcn_size_bits) / ictx->block_size;
+				if (max_ib_bits <= bmp_bit) {
 					ntfs_log_error("Subnode of inode(%"PRIu64
 							") is larger than max vcn\n",
 							ni->mft_no);
 					goto initialize_index;
 				}
 
-				if (!ntfs_bit_get(bmp_buf, sub_bmp_pos)) {
+				if (!ntfs_bit_get(bmp_buf, bmp_bit)) {
 					ntfs_log_error("Subnode of inode(%"PRIu64
 							") is not set on $BITMAP\n",
 							ni->mft_no);
@@ -3698,7 +3701,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 				le16_to_cpu(ctx->attr->value_offset));
 
 		/* The first index entry. */
-		next = (INDEX_ENTRY*)((u8*)&ir->index +
+		next = (INDEX_ENTRY *)((u8 *)&ir->index +
 				le32_to_cpu(ir->index.entries_offset));
 
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
@@ -3721,12 +3724,12 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 			/* allocate for $IA bitmap */
 			if (!dir_ni->fsck_ibm) {
-				dir_ni->fsck_ibm = ntfs_calloc(bm_na->allocated_size);
+				dir_ni->fsck_ibm = ntfs_calloc(bm_na->data_size);
 				if (!dir_ni->fsck_ibm) {
 					ntfs_log_perror("Failed to allocate fsck_ibm memory\n");
 					goto err_continue;
 				}
-				dir_ni->fsck_ibm_size = bm_na->allocated_size;
+				dir_ni->fsck_ibm_size = bm_na->data_size;
 			}
 		}
 
@@ -3956,6 +3959,7 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 	case FILE_Secure:
 	case FILE_UpCase:
 	case FILE_Extend:
+		/* TODO: check sub-directory */
 		ntfsck_check_inode_non_resident(ni, 1);
 		break;
 	case FILE_Bitmap: {

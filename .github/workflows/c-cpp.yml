@@ -2,9 +2,13 @@ name: ntfsprogs test CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - master
+      - next
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - master
+      - next
 
 jobs:
   build:

@@ -215,7 +215,6 @@ static inline BOOL ntfsck_opened_ni_vol(s64 mft_num);
 static ntfs_inode *ntfsck_get_opened_ni_vol(ntfs_volume *vol, s64 mft_num);
 static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit);
 static void ntfsck_check_mft_records(ntfs_volume *vol);
-static void ntfsck_free_mft_records(ntfs_volume *vol, ntfs_inode *ni);
 static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num);
 static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no);
 static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size, ntfs_attr_search_ctx *actx);
@@ -442,44 +441,6 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 	}
 
 	return STATUS_OK;
-}
-
-/*
- * do not call ntfs_inode_close() after this function called,
- * because ntfs_inode_close() is called in ntfs_mft_record_free().
- * */
-static void ntfsck_free_mft_records(ntfs_volume *vol, ntfs_inode *ni)
-{
-	ntfs_inode *free_inode;
-	u64 free_mftno;
-
-	if (utils_is_metadata(ni) == 1) {
-		ntfs_log_info("Try to free system file(%"PRIu64")\n",
-				ni->mft_no);
-		return;
-	}
-
-	ntfs_inode_attach_all_extents(ni);
-	while (ni->nr_extents) {
-		free_inode = *(ni->extent_nis);
-		free_mftno = free_inode->mft_no;
-
-		if (ntfs_mft_record_free(vol, free_inode))
-			ntfs_log_error("Failed to free extent MFT record(%"PRIu64
-					":%"PRIu64"). "
-					"Leaving inconsistent metadata.\n",
-					free_mftno, ni->mft_no);
-		else
-			ntfs_fsck_mftbmp_clear(vol, free_mftno);
-	}
-
-	free_mftno = ni->mft_no;
-	if (ntfs_mft_record_free(vol, ni))
-		ntfs_log_error("Failed to free MFT record(%"PRIu64"). "
-				"Leaving inconsistent metadata. Run chkdsk.\n",
-				ni->mft_no);
-	else
-		ntfs_fsck_mftbmp_clear(vol, free_mftno);
 }
 
 /* only called from repairing orphaned file in auto fsck mode */
@@ -989,16 +950,6 @@ stack_of:
 					le16_to_cpu(ctx->attr->value_offset));
 
 			parent_no = le64_to_cpu(fn->parent_directory);
-
-			/*
-			 * when root index is initialized
-			 * in ntfsck_validate_index_blocks(),
-			 * root inode can be a orphaned inode
-			 */
-			if (ni->mft_no == FILE_root) {
-				ntfs_fsck_mftbmp_set(vol, FILE_root);
-				goto next_inode;
-			}
 
 			/*
 			 * Consider that the parent could be orphaned.
@@ -3446,121 +3397,143 @@ initialize_index:
 	goto out;
 }
 
-static int ntfsck_remove_index(ntfs_inode *parent_ni, ntfs_inode *ni)
+static int ntfsck_remove_index(ntfs_inode *parent_ni, ntfs_index_context *ictx,
+		INDEX_ENTRY *ie)
 {
-	ntfs_attr_search_ctx *actx;
-	ntfs_index_context *ictx;
-	FILE_NAME_ATTR *fn;
+	void *key;
+	int key_len;
 
-	actx = ntfs_attr_get_search_ctx(ni, NULL);
-	if (!actx) {
-		ntfs_log_perror("Failed to get search ctx of inode(%"PRIu64") "
-				"in removing index.\n", ni->mft_no);
+	if (!parent_ni || !ie || !ictx)
 		return STATUS_ERROR;
-	}
 
-	if (ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, CASE_SENSITIVE,
-			0, NULL, 0, actx)) {
-		ntfs_log_perror("Failed to lookup $FN of inode(%"PRIu64") "
-				"in removing index.\n", ni->mft_no);
-		ntfs_attr_put_search_ctx(actx);
-		return STATUS_ERROR;
-	}
+	key = &ie->key;
+	key_len = le16_to_cpu(ie->key_length);
 
-	fn = (FILE_NAME_ATTR *)((u8 *)actx->attr +
-			le16_to_cpu(actx->attr->value_offset));
-
-	ictx = ntfs_index_ctx_get(parent_ni, NTFS_INDEX_I30, 4);
-	if (!ictx) {
-		ntfs_log_perror("Failed to get index ctx of inode(%"PRIu64") "
-				"in removing index.\n", parent_ni->mft_no);
-		ntfs_attr_put_search_ctx(actx);
-		return STATUS_ERROR;
-	}
-
-	if (ntfs_index_lookup(fn, sizeof(FILE_NAME_ATTR), ictx)) {
+	if (ntfs_index_lookup(key, key_len, ictx)) {
 		ntfs_log_error("Failed to find index entry of inode(%"PRIu64").\n",
 				parent_ni->mft_no);
-		ntfs_attr_put_search_ctx(actx);
-		ntfs_index_ctx_put(ictx);
 		return STATUS_ERROR;
 	}
 
-	if (ntfs_index_rm(ictx)) {
-		ntfs_log_error("Failed to remove index entry of inode(%"PRIu64")\n",
-				parent_ni->mft_no);
-		ntfs_attr_put_search_ctx(actx);
-		ntfs_index_ctx_put(ictx);
+	if (ntfs_index_rm(ictx))
 		return STATUS_ERROR;
-	}
-	ntfs_inode_mark_dirty(ictx->ni);
 
-	ntfs_attr_put_search_ctx(actx);
-	ntfs_index_ctx_put(ictx);
 	return STATUS_OK;
 }
 
-static void ntfsck_check_lost_found(ntfs_volume *vol, ntfs_inode *ni)
+static int ntfsck_check_lostfound_filename(ntfs_inode *ni, ntfs_index_context *ictx)
 {
-	ntfs_inode *lf_ni = NULL; /* lost+found inode */
-	u64 lf_mftno = (u64)-1; /* lost+found mft record number */
+	FILE_NAME_ATTR *fn;
+	ATTR_RECORD *attr;
+	ntfs_attr_search_ctx *actx = NULL;
+	ntfs_inode *root_ni = NULL;
+	int ret;
 
-	/* find 'lost+found' directory in root directory */
-	lf_mftno = ntfs_inode_lookup_by_mbsname(ni, FILENAME_LOST_FOUND);
-	if (lf_mftno == (u64)-1) {
-		/* create 'lost+found' directory */
-create_lf:
-		if (!NVolReadOnly(vol)) {
-			ntfschar *ucs_name = (ntfschar *)NULL;
-			int ucs_namelen;
+	if (!ni || !ictx || !ictx->ni)
+		return STATUS_ERROR;
 
-			ucs_namelen = ntfs_mbstoucs(FILENAME_LOST_FOUND, &ucs_name);
-			if (ucs_namelen != -1) {
-				lf_ni = ntfs_create(ni, 0, ucs_name, ucs_namelen, S_IFDIR);
-				if (!lf_ni) {
-					free(ucs_name);
-					return;
-				}
+	root_ni = ictx->ni;
 
-				ntfs_log_debug("%s(%"PRIu64") created\n", FILENAME_LOST_FOUND,
-						lf_ni->mft_no);
-			}
-			free(ucs_name);
-		}
-	} else {
-		lf_ni = ntfsck_open_inode(vol, lf_mftno);
-		if (!lf_ni)
-			ntfs_log_verbose("Failed to open %s(%"PRIu64").\n",
-					FILENAME_LOST_FOUND, lf_mftno);
+	actx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!actx)
+		return STATUS_ERROR;
 
-		if (lf_ni && !(lf_ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)) {
-			int ret = STATUS_OK;
-
-			ntfs_log_error("%s(%"PRIu64") is not a directory, delete it\n",
-					FILENAME_LOST_FOUND, lf_ni->mft_no);
-			ret = ntfsck_remove_index(ni, lf_ni);
-			if (!ret) {
-				ntfsck_free_mft_records(vol, lf_ni);
-				goto create_lf;
-			}
-
-			ntfs_log_error("Failed to remove index of %s(%"PRIu64")\n",
-					FILENAME_LOST_FOUND, lf_ni->mft_no);
-			ntfsck_close_inode(lf_ni);
-			lf_ni = NULL;
-		}
+	ret = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, CASE_SENSITIVE,
+			0, NULL, 0, actx);
+	if (ret) {
+		ntfs_attr_put_search_ctx(actx);
+		return STATUS_ERROR;
 	}
 
-	if (!lf_ni) {
-		if (!NVolReadOnly(vol))
-			ntfs_log_error("Failed to open/check '%s'\n", FILENAME_LOST_FOUND);
-	} else {
-		vol->lost_found = lf_ni->mft_no;
+	attr = actx->attr;
+	fn = (FILE_NAME_ATTR *)((u8 *)attr + le16_to_cpu(attr->value_offset));
 
-		/* FIXME: is it need to call ntfs_fix_problem()? */
+	if (ntfs_index_lookup(fn, sizeof(FILE_NAME_ATTR), ictx)) {
+		ntfs_attr_put_search_ctx(actx);
+		return STATUS_ERROR;
+	}
+
+	if (MREF_LE(fn->parent_directory) != FILE_root) {
+		fn->parent_directory = MK_LE_MREF(FILE_root,
+				le16_to_cpu(root_ni->mrec->sequence_number));
+		ntfs_inode_mark_dirty(ni);
+	}
+	ntfs_attr_put_search_ctx(actx);
+	return STATUS_OK;
+}
+
+static void ntfsck_create_lost_found(ntfs_volume *vol, ntfs_inode *root_ni)
+{
+	ntfs_inode *lf_ni = NULL; /* lost+found inode */
+	int ucs_namelen;
+	ntfschar *ucs_name = (ntfschar *)NULL;
+
+	ucs_namelen = ntfs_mbstoucs(FILENAME_LOST_FOUND, &ucs_name);
+	if (ucs_namelen < 0)
+		return;
+
+	if (!NVolReadOnly(vol)) {
+		lf_ni = ntfs_create(root_ni, 0, ucs_name, ucs_namelen, S_IFDIR);
+		if (!lf_ni) {
+			ntfs_log_error("Failed to create 'lost+found'\n");
+			free(ucs_name);
+			return;
+		}
+		ntfs_log_info("%s(%"PRIu64") created\n",
+				FILENAME_LOST_FOUND, lf_ni->mft_no);
+		vol->lost_found = lf_ni->mft_no;
 		ntfsck_set_mft_record_bitmap(lf_ni, TRUE);
 		ntfsck_close_inode(lf_ni);
 	}
+
+	free(ucs_name);
+}
+
+static void ntfsck_check_lost_found(ntfs_volume *vol, ntfs_inode *root_ni,
+		ntfs_index_context *ictx)
+{
+	ntfs_inode *lf_ni = NULL;	/* lost+found inode */
+	u64 lf_mftno = (u64)-1;		/* lost+found mft record number */
+	INDEX_ENTRY *ie = NULL;
+	int ucs_namelen;
+	ntfschar *ucs_name = (ntfschar *)NULL;
+
+	ucs_namelen = ntfs_mbstoucs(FILENAME_LOST_FOUND, &ucs_name);
+	if (ucs_namelen < 0)
+		return;
+
+	ie = __ntfs_inode_lookup_by_name(root_ni, ucs_name, ucs_namelen);
+	if (ie) {
+		lf_mftno = le64_to_cpu(ie->indexed_file);
+		lf_ni = ntfsck_open_inode(vol, MREF(lf_mftno));
+		if (!lf_ni) {
+			ntfs_log_verbose("Failed to open %s(%"PRIu64").\n",
+					FILENAME_LOST_FOUND, MREF(lf_mftno));
+			goto err_out;
+		}
+
+		/* inode check and parent mft check */
+		if (ntfsck_check_lostfound_filename(lf_ni, ictx))
+			goto err_out;
+
+		vol->lost_found = lf_ni->mft_no;
+		free(ie);
+	}
+
+	free(ucs_name);
+
+	if (lf_ni)
+		ntfsck_close_inode(lf_ni);
+	return;
+
+err_out:
+	if (lf_ni)
+		ntfsck_close_inode(lf_ni);
+	ntfsck_remove_index(root_ni, ictx, ie);
+	vol->lost_found = 0;
+	if (ie)
+		free(ie);
+	free(ucs_name);
 }
 
 static ntfs_inode *ntfsck_check_root_inode(ntfs_volume *vol)
@@ -4028,7 +4001,6 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	ntfs_index_context *ictx;
 	FILE_NAME_ATTR *fn;
 	s64 mft_num;
-	u64 lf_mftno = (u64)-1; /* lost+found mft record number */
 	int ret = STATUS_ERROR;
 	int is_used;
 	BOOL trivial;	/* represent system file is trivial or not */
@@ -4043,10 +4015,6 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 		return ret;
 	}
 
-	/* find 'lost+found' directory in root directory */
-	lf_mftno = ntfs_inode_lookup_by_mbsname(root_ni, FILENAME_LOST_FOUND);
-	vol->lost_found = (lf_mftno == -1) ? 0 : lf_mftno;
-
 	root_ctx = ntfs_attr_get_search_ctx(root_ni, NULL);
 	if (!root_ctx)
 		goto close_inode;
@@ -4054,6 +4022,10 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	ictx = ntfs_index_ctx_get(root_ni, NTFS_INDEX_I30, 4);
 	if (!ictx)
 		goto put_attr_ctx;
+
+	/* check lost found here */
+	ntfsck_check_lost_found(vol, root_ni, ictx);
+	ntfs_index_ctx_reinit(ictx);
 
 	progress_update(&prog, 1);
 
@@ -4305,8 +4277,7 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 			ntfs_log_error("Failed to open root inode\n");
 			return STATUS_ERROR;
 		}
-
-		ntfsck_check_lost_found(vol, root_ni);
+		ntfsck_create_lost_found(vol, root_ni);
 		ntfsck_close_inode(root_ni);
 	}
 	progress_update(&prog, cnt);

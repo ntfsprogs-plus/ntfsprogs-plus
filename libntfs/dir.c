@@ -221,41 +221,23 @@ int ntfs_dir_lookup_hash(const struct CACHED_GENERIC *cached)
 
 #endif
 
-/**
- * ntfs_inode_lookup_by_name - find an inode in a directory given its name
- * @dir_ni:	ntfs inode of the directory in which to search for the name
- * @uname:	Unicode name for which to search in the directory
- * @uname_len:	length of the name @uname in Unicode characters
+/*
+ * main implementation part of ntfs_inode_lookup_by_name().
+ * If lookup is success, then return INDEX_ENTRY pointer which is
+ * duplicated memory of found INDEX_ENTRY.
  *
- * Look for an inode with name @uname in the directory with inode @dir_ni.
- * ntfs_inode_lookup_by_name() walks the contents of the directory looking for
- * the Unicode name. If the name is found in the directory, the corresponding
- * inode number (>= 0) is returned as a mft reference in cpu format, i.e. it
- * is a 64-bit number containing the sequence number.
- *
- * On error, return -1 with errno set to the error code. If the inode is is not
- * found errno is ENOENT.
- *
- * Note, @uname_len does not include the (optional) terminating NULL character.
- *
- * Note, we look for a case sensitive match first but we also look for a case
- * insensitive match at the same time. If we find a case insensitive match, we
- * save that for the case that we don't find an exact match, where we return
- * the mft reference of the case insensitive match.
- *
- * If the volume is mounted with the case sensitive flag set, then we only
- * allow exact matches.
+ * NOTE: Caller should free returned ie memory after use it.
  */
-u64 ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
+INDEX_ENTRY * __ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
 		const ntfschar *uname, const int uname_len)
 {
 	VCN vcn;
-	u64 mref = 0;
 	s64 br;
 	ntfs_volume *vol = dir_ni->vol;
 	ntfs_attr_search_ctx *ctx;
 	INDEX_ROOT *ir;
 	INDEX_ENTRY *ie;
+	INDEX_ENTRY *dup_ie;
 	INDEX_ALLOCATION *ia;
 	IGNORE_CASE_BOOL case_sensitivity;
 	u8 *index_end;
@@ -268,12 +250,12 @@ u64 ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
 
 	if (!dir_ni || !dir_ni->mrec || !uname || uname_len <= 0) {
 		errno = EINVAL;
-		return -1;
+		return NULL;
 	}
 
 	ctx = ntfs_attr_get_search_ctx(dir_ni, NULL);
 	if (!ctx)
-		return -1;
+		return NULL;
 
 	/* Find the index root attribute in the mft record. */
 	if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4, CASE_SENSITIVE, 0, NULL,
@@ -283,6 +265,7 @@ u64 ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
 		goto put_err_out;
 	}
 	case_sensitivity = (NVolCaseSensitive(vol) ? CASE_SENSITIVE : IGNORE_CASE);
+
 	/* Get to the index root value. */
 	ir = (INDEX_ROOT*)((u8*)ctx->attr +
 			le16_to_cpu(ctx->attr->value_offset));
@@ -293,11 +276,14 @@ u64 ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
 				(unsigned)index_block_size);
 		goto put_err_out;
 	}
-		/* Consistency check of ir done while fetching attribute */
+
+	/* Consistency check of ir done while fetching attribute */
 	index_end = (u8*)&ir->index + le32_to_cpu(ir->index.index_length);
+
 	/* The first index entry. */
 	ie = (INDEX_ENTRY*)((u8*)&ir->index +
 			le32_to_cpu(ir->index.entries_offset));
+
 	/*
 	 * Loop until we exceed valid memory (corruption case) or until we
 	 * reach the last entry.
@@ -350,9 +336,9 @@ u64 ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
 		 * ntfs_are_names_equal() call will have gotten a match but we
 		 * still treat it correctly.
 		 */
-		mref = le64_to_cpu(ie->indexed_file);
+		dup_ie = ntfs_ie_dup(ie);
 		ntfs_attr_put_search_ctx(ctx);
-		return mref;
+		return dup_ie;
 	}
 	/*
 	 * We have finished with this index without success. Check for the
@@ -362,11 +348,9 @@ u64 ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
 	 */
 	if (!(ie->ie_flags & INDEX_ENTRY_NODE)) {
 		ntfs_attr_put_search_ctx(ctx);
-		if (mref)
-			return mref;
 		ntfs_log_debug("Entry not found - between root entries.\n");
 		errno = ENOENT;
-		return -1;
+		return NULL;
 	} /* Child node present, descend into it. */
 
 	/* Open the index allocation attribute. */
@@ -403,7 +387,7 @@ descend_into_child_node:
 		if (br != -1)
 			errno = EIO;
 		ntfs_log_perror("Failed to read vcn 0x%llx from inode %lld",
-			       	(unsigned long long)vcn,
+				(unsigned long long)vcn,
 				(unsigned long long)ia_na->ni->mft_no);
 		goto close_err_out;
 	}
@@ -467,11 +451,11 @@ descend_into_child_node:
 		/* The names are not equal, continue the search. */
 		if (rc)
 			continue;
-		mref = le64_to_cpu(ie->indexed_file);
+		dup_ie = ntfs_ie_dup(ie);
 		free(ia);
 		ntfs_attr_close(ia_na);
 		ntfs_attr_put_search_ctx(ctx);
-		return mref;
+		return dup_ie;
 	}
 	/*
 	 * We have finished with this index buffer without success. Check for
@@ -502,23 +486,68 @@ descend_into_child_node:
 	 * the mft reference of a matching name cached in mref in which case
 	 * return mref.
 	 */
-	if (mref)
-		return mref;
 	ntfs_log_debug("Entry not found.\n");
 	errno = ENOENT;
-	return -1;
+	return NULL;
 put_err_out:
 	eo = EIO;
 	ntfs_log_debug("Corrupt directory. Aborting lookup.\n");
 eo_put_err_out:
 	ntfs_attr_put_search_ctx(ctx);
 	errno = eo;
-	return -1;
+	return NULL;
 close_err_out:
 	eo = errno;
 	free(ia);
 	ntfs_attr_close(ia_na);
 	goto eo_put_err_out;
+}
+
+/**
+ * ntfs_inode_lookup_by_name - find an inode in a directory given its name
+ * @dir_ni:	ntfs inode of the directory in which to search for the name
+ * @uname:	Unicode name for which to search in the directory
+ * @uname_len:	length of the name @uname in Unicode characters
+ *
+ * Look for an inode with name @uname in the directory with inode @dir_ni.
+ * ntfs_inode_lookup_by_name() walks the contents of the directory looking for
+ * the Unicode name. If the name is found in the directory, the corresponding
+ * inode number (>= 0) is returned as a mft reference in cpu format, i.e. it
+ * is a 64-bit number containing the sequence number.
+ *
+ * On error, return -1 with errno set to the error code. If the inode is is not
+ * found errno is ENOENT.
+ *
+ * Note, @uname_len does not include the (optional) terminating NULL character.
+ *
+ * Note, we look for a case sensitive match first but we also look for a case
+ * insensitive match at the same time. If we find a case insensitive match, we
+ * save that for the case that we don't find an exact match, where we return
+ * the mft reference of the case insensitive match.
+ *
+ * If the volume is mounted with the case sensitive flag set, then we only
+ * allow exact matches.
+ */
+u64 ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
+		const ntfschar *uname, const int uname_len)
+{
+	u64 mref = 0;
+	INDEX_ENTRY *ie;
+
+	ntfs_log_trace("Entering\n");
+
+	if (!dir_ni || !dir_ni->mrec || !uname || uname_len <= 0) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	ie = __ntfs_inode_lookup_by_name(dir_ni, uname, uname_len);
+	if (!ie)
+		return -1;
+
+	mref = le64_to_cpu(ie->indexed_file);
+	free(ie);
+	return mref;
 }
 
 /*

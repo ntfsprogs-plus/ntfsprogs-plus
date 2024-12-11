@@ -368,7 +368,7 @@ static void ntfs_ie_insert(INDEX_HEADER *ih, INDEX_ENTRY *ie, INDEX_ENTRY *pos)
 	memcpy(pos, ie, ie_size);
 }
 
-static INDEX_ENTRY *ntfs_ie_dup(INDEX_ENTRY *ie)
+INDEX_ENTRY *ntfs_ie_dup(INDEX_ENTRY *ie)
 {
 	INDEX_ENTRY *dup;
 

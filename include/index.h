@@ -182,5 +182,7 @@ INDEX_ROOT *ntfs_ir_lookup(ntfs_inode *ni, ntfschar *name,
 INDEX_ROOT *ntfs_ir_lookup2(ntfs_inode *ni, ntfschar *name, u32 len);
 s64 ntfs_ib_vcn_to_pos(ntfs_index_context *icx, VCN vcn);
 
+INDEX_ENTRY *ntfs_ie_dup(INDEX_ENTRY *ie);
+
 #endif /* _NTFS_INDEX_H */
 

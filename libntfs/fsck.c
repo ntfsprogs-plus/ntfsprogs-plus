@@ -510,6 +510,7 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 	}
 
 	vol->option_flags = flags;
+	vol->lost_found = 0;
 
 	return vol;
 }

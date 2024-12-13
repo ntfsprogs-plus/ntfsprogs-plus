@@ -204,9 +204,12 @@ static int ntfsck_check_file(ntfs_inode *ni);
 static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, BOOL *need_fix);
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx);
+static int ntfsck_check_orphan_inode(ntfs_inode *parent_ni, ntfs_inode *ni);
 static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		ntfs_index_context *ictx);
 static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
+		FILE_NAME_ATTR *ie_fn);
+static int ntfsck_check_orphan_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		FILE_NAME_ATTR *ie_fn);
 static int ntfsck_initialize_index_attr(ntfs_inode *ni);
 static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set);
@@ -218,6 +221,10 @@ static void ntfsck_check_mft_records(ntfs_volume *vol);
 static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num);
 static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no);
 static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size, ntfs_attr_search_ctx *actx);
+static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
+		BOOL *need_fix, int set_bit);
+static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
+		ntfs_attr_search_ctx *actx, struct rl_size *rls, int set_bit);
 
 #define ntfsck_delete_mft	ntfsck_delete_orphaned_mft
 
@@ -324,13 +331,84 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 
 	ntfs_attr_put_search_ctx(actx);
 
-	return 0;
+	return STATUS_OK;
+}
+
+static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
+		ntfs_attr_search_ctx *actx, struct rl_size *rls, int set_bit)
+{
+	BOOL need_fix = FALSE;
+	problem_context_t pctx = {0, };
+
+	ntfs_volume *vol;
+	ntfs_inode *ni;
+	ATTR_RECORD *a;
+
+	ni = na->ni;
+	vol = na->ni->vol;
+	a =  actx->attr;
+
+	ntfs_init_problem_ctx(&pctx, ni, na, actx, NULL, NULL, a, NULL);
+
+	/* check whole cluster runlist and set cluster bitmap of fsck */
+	if (ntfsck_check_attr_runlist(na, rls, &need_fix, set_bit)) {
+		ntfs_log_error("Failed to get non-resident attribute(%d) "
+				"in directory(%"PRId64")", na->type, ni->mft_no);
+		return STATUS_ERROR;
+	}
+
+	/* if need_fix is set to TRUE, apply modified runlist to cluster runs */
+	if (need_fix == TRUE) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_LOG_APPLY_RUNLIST_TO_DISK, &pctx)) {
+			/*
+			 * keep a valid runlist as long as possible.
+			 * if truncate zero, call with second parameter to 0
+			 */
+			if (ntfsck_update_runlist(na, rls->alloc_size, actx)) {
+				/* FIXME: why ntfsck_update_runlist failed? and
+				 * what should it do? */
+				fsck_err_fixed();
+				return STATUS_ERROR;
+			}
+			fsck_err_fixed();
+		}
+	}
+	return STATUS_OK;
+}
+
+static void ntfsck_set_attr_lcnbmp(ntfs_attr *na)
+{
+	ntfs_attr_search_ctx *actx;
+	struct rl_size rls = {0, };
+
+	actx = ntfs_attr_get_search_ctx(na->ni, NULL);
+	if (!actx)
+		return;
+	if (ntfs_attr_lookup(na->type, na->name, na->name_len, 0,
+				0, NULL, 0, actx)) {
+		ntfs_attr_put_search_ctx(actx);
+		return;
+	}
+	__ntfsck_check_non_resident_attr(na, actx, &rls, 1);
+	ntfs_attr_put_search_ctx(actx);
 }
 
 static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
 {
-	ntfs_attr_map_whole_runlist(na);
-	ntfsck_check_runlist(na, 0, NULL, NULL);
+	ntfs_attr_search_ctx *actx;
+	struct rl_size rls = {0, };
+
+	actx = ntfs_attr_get_search_ctx(na->ni, NULL);
+	if (!actx)
+		return;
+	if (ntfs_attr_lookup(na->type, na->name, na->name_len, 0,
+				0, NULL, 0, actx)) {
+		ntfs_attr_put_search_ctx(actx);
+		return;
+	}
+	__ntfsck_check_non_resident_attr(na, actx, &rls, 0);
+	ntfs_attr_put_search_ctx(actx);
 }
 
 /*
@@ -508,7 +586,11 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 				return STATUS_ERROR;
 			}
 		} else {
-			if (ntfsck_check_inode(ni, ictx->entry, ictx)) {
+			INDEX_ENTRY *ie = ictx->entry;
+			FILE_NAME_ATTR *ie_fn = (FILE_NAME_ATTR *)&ie->key.file_name;
+
+			if (ntfsck_check_orphan_inode(parent_ni, ni) ||
+					ntfsck_check_orphan_file_type(ni, ictx, ie_fn)) {
 				/* Inode check failed, remove index and inode */
 				ntfs_log_error("Failed to check inode(%"PRId64") "
 						"for repairing orphan inode\n", ni->mft_no);
@@ -525,11 +607,13 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 			}
 		}
 	} else {
-		if (ntfsck_check_inode(ni, ictx->entry, ictx)) {
-			ntfs_log_error("Failed to check inode(%"PRIu64") "
-					"for repairing orphan inode\n", ni->mft_no);
-			ntfs_index_ctx_put(ictx);
-			return STATUS_ERROR;
+		if (check_flag == TRUE) {
+			if (ntfsck_check_orphan_inode(parent_ni, ni)) {
+				ntfs_log_error("Failed to check inode(%"PRIu64") "
+						"for repairing orphan inode\n", ni->mft_no);
+				ntfs_index_ctx_put(ictx);
+				return STATUS_ERROR;
+			}
 		}
 		ntfs_index_ctx_put(ictx);
 		return STATUS_NOT_FOUND;
@@ -566,6 +650,14 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 
 	memcpy(tfn, fn, tfn_len);
 	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
+		ntfs_attr *ia_na = NULL;
+
+		/* check runlist for cluster duplication */
+		ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4);
+		if (ia_na)
+			ntfsck_set_attr_lcnbmp(ia_na);
+		ntfs_attr_close(ia_na);
+
 		ntfsck_initialize_index_attr(ni);
 
 		tfn->allocated_size = 0;
@@ -871,6 +963,26 @@ static int ntfsck_check_inode_fields(ntfs_inode *parent_ni,
 	return STATUS_OK;
 }
 
+static int ntfsck_check_orphan_inode_fields(ntfs_inode *parent_ni, ntfs_inode *ni)
+{
+	if (!parent_ni || !ni)
+		return STATUS_ERROR;
+
+	if (le16_to_cpu(ni->mrec->link_count) == 0) {
+		ntfs_log_error("Link count of inode(%"PRIu64") is zero\n",
+				ni->mft_no);
+		return STATUS_ERROR;
+	}
+
+	if (MREF_LE(ni->mrec->base_mft_record) != 0) {
+		ntfs_log_error("Inode(%"PRIu64") is not base inode\n",
+				ni->mft_no);
+		return STATUS_ERROR;
+	}
+
+	return STATUS_OK;
+}
+
 static int ntfsck_remove_filename(ntfs_inode *ni, FILE_NAME_ATTR *fn)
 {
 	int ret = STATUS_OK;
@@ -972,7 +1084,7 @@ stack_of:
 					goto stack_of;
 				}
 
-				ntfs_log_debug("Not found parent inode(%"PRIu64")"
+				ntfs_log_info("Not found parent inode(%"PRIu64")"
 						"of inode(%"PRIu64") in orphaned list\n",
 						MREF(parent_no), ni->mft_no);
 				goto add_to_lostfound;
@@ -1682,6 +1794,8 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 	if (ie_flags & FILE_ATTR_VIEW_INDEX_PRESENT)
 		return ie_flags;
 
+	/* Is checking MFT_RECORD_IS_4 need? */
+
 	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
 		/* mft record flags is set to directory */
 		if (ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4)) {
@@ -1769,6 +1883,23 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 	return (int32_t)ie_flags;
 }
 
+static int ntfsck_check_orphan_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
+		FILE_NAME_ATTR *ie_fn)
+{
+	int32_t flags;
+	int ret;
+
+	flags = ntfsck_check_file_type(ni, ictx, ie_fn);
+	if (flags < 0)
+		return STATUS_ERROR;
+
+	/* check $FILE_NAME */
+	ret = ntfsck_check_file_name_attr(ni, ie_fn, ictx);
+	if (ret < 0)
+		return STATUS_ERROR;
+
+	return STATUS_OK;
+}
 /*
  * Decompose non-resident cluster runlist and make into runlist structure.
  *
@@ -2298,7 +2429,6 @@ static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size, ntfs_attr_search_c
 static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 		ntfs_attr_search_ctx *actx, struct rl_size *out_rls, int set_bit)
 {
-	BOOL need_fix = FALSE;
 	ntfs_volume *vol;
 	ntfs_inode *ni;
 	ATTR_RECORD *a;
@@ -2323,30 +2453,8 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 
 	ntfs_init_problem_ctx(&pctx, ni, na, actx, NULL, NULL, a, NULL);
 
-	/* check whole cluster runlist and set cluster bitmap of fsck */
-	if (ntfsck_check_attr_runlist(na, &rls, &need_fix, set_bit)) {
-		ntfs_log_error("Failed to get non-resident attribute(%d) "
-				"in directory(%"PRId64")", na->type, ni->mft_no);
-		return STATUS_ERROR;
-	}
-
-	/* if need_fix is set to TRUE, apply modified runlist to cluster runs */
-	if (need_fix == TRUE) {
-		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_LOG_APPLY_RUNLIST_TO_DISK, &pctx)) {
-			/*
-			 * keep a valid runlist as long as possible.
-			 * if truncate zero, call with second parameter to 0
-			 */
-			if (ntfsck_update_runlist(na, rls.alloc_size, actx)) {
-				/* FIXME: why ntfsck_update_runlist failed? and
-				 * what should it do? */
-				fsck_err_fixed();
-				return STATUS_ERROR;
-			}
-			fsck_err_fixed();
-		}
-	}
+	if (__ntfsck_check_non_resident_attr(na, actx, &rls, set_bit))
+		goto out;
 
 	/*
 	 * Skip size check of metadata files
@@ -2873,6 +2981,47 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 
 err_out:
 	ntfsck_check_inode_non_resident(ni, 0);
+	return STATUS_ERROR;
+}
+
+static int ntfsck_check_orphan_inode(ntfs_inode *parent_ni, ntfs_inode *ni)
+{
+	int ret;
+
+	if (ntfsck_check_orphan_inode_fields(parent_ni, ni))
+		goto out;
+
+	ret = ntfsck_check_inode_non_resident(ni, 1);
+	if (ret)
+		goto err_out;
+
+	if (ni->attr_list) {
+		if (ntfsck_check_attr_list(ni))
+			goto err_out;
+
+		if (ntfs_inode_attach_all_extents(ni))
+			goto err_out;
+	}
+
+	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
+		ret = ntfsck_check_directory(ni);
+		if (ret)
+			goto err_out;
+	} else if (ni->mrec->flags & MFT_RECORD_IS_VIEW_INDEX) {
+		/* TODO: check view index */
+	} else if (ni->mrec->flags & MFT_RECORD_IS_4) {
+		/* TODO: check $Extend sub-files */
+	} else {
+		ret = ntfsck_check_file(ni);
+		if (ret)
+			goto err_out;
+	}
+
+	return STATUS_OK;
+
+err_out:
+	ntfsck_check_inode_non_resident(ni, 0);
+out:
 	return STATUS_ERROR;
 }
 

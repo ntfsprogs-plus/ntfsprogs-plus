@@ -4177,8 +4177,8 @@ static int link_group_members(struct SECURITY_CONTEXT *scx)
 static int ntfs_do_default_mapping(struct SECURITY_CONTEXT *scx,
 			 uid_t uid, gid_t gid, const SID *usid)
 {
-	struct MAPPING *usermapping;
-	struct MAPPING *groupmapping;
+	struct MAPPING *usermapping = NULL;
+	struct MAPPING *groupmapping = NULL;
 	SID *sid;
 	int sidsz;
 	int res;
@@ -4373,11 +4373,19 @@ int ntfs_build_mapping(struct SECURITY_CONTEXT *scx, const char *usermap_path,
 	if (firstitem) {
 		usermapping = ntfs_do_user_mapping(firstitem);
 		groupmapping = ntfs_do_group_mapping(firstitem);
-		if (usermapping && groupmapping) {
+		if (usermapping)
 			scx->mapping[MAPUSERS] = usermapping;
+		if (groupmapping)
 			scx->mapping[MAPGROUPS] = groupmapping;
-		} else
+
+		if (!usermapping || !groupmapping) {
 			ntfs_log_error("There were no valid user or no valid group\n");
+			if (usermapping)
+				ntfs_free(usermapping);
+			if (groupmapping)
+				ntfs_free(groupmapping);
+		}
+
 		/* now we can free the memory copy of input text */
 		/* and rely on internal representation */
 		while (firstitem) {

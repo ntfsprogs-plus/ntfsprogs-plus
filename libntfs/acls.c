@@ -4507,6 +4507,9 @@ struct MAPPING *ntfs_do_group_mapping(struct MAPLIST *firstitem)
 						else
 							firstmapping = mapping;
 						lastmapping = mapping;
+					} else {
+						free(sid);
+						sid = NULL;
 					}
 				}
 			}

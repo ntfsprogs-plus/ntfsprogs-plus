@@ -3204,10 +3204,6 @@ static int create_hardlink_res(MFT_RECORD *m_parent, const leMFT_REF ref_parent,
 		return -EINVAL;
 	}
 	if (packed_ea_size) {
-		free(fn);
-		return -EINVAL;
-	}
-	if (packed_ea_size) {
 		fn->packed_ea_size = cpu_to_le16(packed_ea_size);
 		fn->reserved = const_cpu_to_le16(0);
 	} else {

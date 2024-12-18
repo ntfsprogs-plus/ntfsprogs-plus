@@ -231,6 +231,9 @@ runlist *ntfs_fsck_make_dup_runlist(runlist *orig_dup_rl, runlist *new_dup_rl)
 		 * index '1' is for runlist end mark
 		 */
 		orig_dup_rl = ntfs_calloc((2 + 0xfff) & ~0xfff);
+		if (!orig_dup_rl)
+			return orig_dup_rl;
+
 		orig_dup_rl[0].lcn = new_dup_rl->lcn;
 		orig_dup_rl[0].vcn = new_dup_rl->vcn;
 		orig_dup_rl[0].length = new_dup_rl->length;

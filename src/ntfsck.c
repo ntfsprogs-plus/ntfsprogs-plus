@@ -3035,11 +3035,14 @@ static inline int ntfsck_is_directory(FILE_NAME_ATTR *ie_fn)
 
 		filename = ntfs_attr_name_get(ie_fn->file_name,
 				ie_fn->file_name_length);
+		if (!filename)
+			return 0;
+
 		if (!strcmp(filename, ".")) {
-			free(filename);
+			ntfs_attr_name_free(&filename);
 			return 0;
 		}
-		free(filename);
+		ntfs_attr_name_free(&filename);
 	}
 
 	return 1;
@@ -3929,7 +3932,10 @@ err_continue:
 			dir_ni->fsck_ibm_size = 0;
 		}
 
-		ntfsck_close_inode(dir_ni);
+		if (dir_ni) {
+			ntfsck_close_inode(dir_ni);
+		}
+
 		ntfs_list_del(&dir->list);
 		free(dir);
 	}

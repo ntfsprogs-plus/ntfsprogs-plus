@@ -441,8 +441,11 @@ int ntfs_ea_check_wsldev(ntfs_inode *ni, dev_t *rdevp)
 		free(buf);
 		bufsize = lth;
 		buf = (char*)malloc(bufsize);
-		if (buf)
-			lth = ntfs_get_ntfs_ea(ni, buf, bufsize);
+		if (!buf) {
+			ntfs_log_error("Failed to allocate buffer for ea\n");
+			return -ENOMEM;
+		}
+		lth = ntfs_get_ntfs_ea(ni, buf, bufsize);
 	}
 
 	if ((lth > 0) && (lth <= bufsize)) {

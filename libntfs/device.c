@@ -330,6 +330,7 @@ s64 ntfs_mst_pread(struct ntfs_device *dev, const s64 pos, s64 count,
 		const u32 bksize, void *b)
 {
 	s64 br, i;
+	int ret;
 
 	if (bksize & (bksize - 1) || bksize % NTFS_BLOCK_SIZE) {
 		errno = EINVAL;
@@ -346,11 +347,15 @@ s64 ntfs_mst_pread(struct ntfs_device *dev, const s64 pos, s64 count,
 	 * magic will be detected later on.
 	 */
 	count = br / bksize;
-	for (i = 0; i < count; ++i)
-		ntfs_mst_post_read_fixup((NTFS_RECORD*)
+	for (i = 0; i < count; ++i) {
+		ret = ntfs_mst_post_read_fixup((NTFS_RECORD*)
 				((u8*)b + i * bksize), bksize);
+		if (ret)
+			break;
+	}
+
 	/* Finally, return the number of complete blocks read. */
-	return count;
+	return i;
 }
 
 /**

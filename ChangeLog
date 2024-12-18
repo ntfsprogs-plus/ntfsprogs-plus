@@ -1,5 +1,17 @@
 CHANGE NOTES for ntfsprogs-plus
 
+v0.9.14
+Fix comparison of wrong index block position for > 4k cluster size.
+Fix checking size and maximum bits of $BITMAP (index bitmap).
+The issue where corrupted lost+found directory could not be repaired has been
+fixed.
+Fix inproper checking for orphan inode.
+(Fix side effect of a44e83dd3b60cf1b9d854396d53c89ca51c9f520 patch)
+
+ETC
+ Remove "Fix it" statement from print definitions.
+ Move corrupted images for tests to separated repository.
+
 v0.9.13
 Fix checking fsck lcnbmp over the maximum cluster number.
 Adjust maximum fsck bitmap buffer index count.

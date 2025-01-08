@@ -3,11 +3,11 @@ name: ntfsprogs test CI
 on:
   push:
     branches:
-      - master
+      - main
       - next
   pull_request:
     branches:
-      - master
+      - main
       - next
 
 jobs:
@@ -30,4 +30,4 @@ jobs:
     - name: check ntfs test images
       run: |
         cd tests
-        ./test_all_images.sh
+        sudo ./test_all_images.sh

@@ -25,7 +25,7 @@
 # Foundation,Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 # Autoconf
-AC_PREREQ([2.71])
+AC_PREREQ([2.59])
 AC_INIT([ntfsprogs-plus],[0.9.14],[linkinjeon@kernel.org])
 AC_CONFIG_SRCDIR([config.h.in])
 LIBNTFS_VERSION="90"

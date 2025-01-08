@@ -445,26 +445,26 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 	ntfs_init_problem_ctx(&pctx, ni, na, NULL, NULL, ni->mrec, NULL, NULL);
 
 	while (rl && rl[i].length) {
-		/* lcn corrupted */
-		if (rl[i].lcn >= vol->nr_clusters) {
-			/* truncate runlist */
-			rl[i].lcn = LCN_ENOENT;
-			rl[i].length = 0;
-			break;
-		}
-
-		/* length corrupted */
-		if (rl[i].lcn + rl[i].length >= vol->nr_clusters) {
-			/* adjust length */
-			rl[i].length = vol->nr_clusters - rl[i].lcn;
-		}
-
 		if (rl[i].lcn > LCN_HOLE) {
 			ntfs_log_trace("%s cluster run of mft entry(%"PRIu64") in memory : "
 					"vcn(%"PRId64"), lcn(%"PRId64"), length(%"PRId64")\n",
 					set_bit ? "Set" : "Clear",
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
+
+			/* check lcn corrupted */
+			if (rl[i].lcn >= vol->nr_clusters) {
+				/* truncate runlist */
+				rl[i].lcn = LCN_ENOENT;
+				rl[i].length = 0;
+				break;
+			}
+
+			/* check length corrupted */
+			if (rl[i].lcn + rl[i].length >= vol->nr_clusters) {
+				/* adjust length */
+				rl[i].length = vol->nr_clusters - rl[i].lcn;
+			}
 
 			dup_rl = ntfs_fsck_check_and_set_lcnbmp(vol, na, i, set_bit, dup_rl);
 

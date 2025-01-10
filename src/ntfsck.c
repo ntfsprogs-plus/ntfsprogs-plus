@@ -1084,7 +1084,7 @@ stack_of:
 					goto stack_of;
 				}
 
-				ntfs_log_info("Not found parent inode(%"PRIu64")"
+				ntfs_log_error("Not found parent inode(%"PRIu64")"
 						"of inode(%"PRIu64") in orphaned list\n",
 						MREF(parent_no), ni->mft_no);
 				goto add_to_lostfound;
@@ -2586,7 +2586,7 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 
 check_next:
 	/* $INDEX_ALLOCATION actual size is zero, remove it with $BITMAP */
-	if (ia_na && ia_na->data_size == 0) {
+	if (ia_na && ia_na->allocated_size == 0) {
 		ntfs_attr_rm(ia_na);
 		if (bm_na)
 			ntfs_attr_rm(bm_na);
@@ -2963,10 +2963,13 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 
 	/*
 	 * Directory system file is Root and $Extend only.
-	 * Root directory is already checked in ntfsck_check_system_files() */
+	 * Root directory is already checked in ntfsck_check_system_files()
+	 * FIXME: in case of $Extend, ntfsck_check_directory() return failure
+	 *
 	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
 		ret = ntfsck_check_directory(ni);
 	}
+	*/
 
 	/* TODO: check index
 	if (ni->mrec->flags & MFT_RECORD_IS_VIEW_INDEX) {

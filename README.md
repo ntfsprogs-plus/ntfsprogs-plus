@@ -1,26 +1,31 @@
 # Overview
 
 ntfsprogs-plus project focus on filesystem utilities based on ntfs-3g project
-to support kernel ntfs filesystem. ntfsprogs-plus takes some utilities from ntfs-3g only what it need.
+to support kernel ntfs filesystem.
+ntfsprogs-plus takes some utilities from ntfs-3g only what it need.
 (ntfs-3g consist of several useful utilities and user-level filesystem code using FUSE)
 
-ntfs-3g was the only solution to support ntfs for free in linux. They also support several tools
-to manage and debug ntfs filesystem like ntfsclone, ntfsinfo, ntfscluster. Those utilities are
-very useful, but ntfs-3g does not support filesystem check utility.
+ntfs-3g was the only solution to support ntfs for free in linux.
+They also support several tools to manage and debug ntfs filesystem
+like ntfsclone, ntfsinfo, ntfscluster.
+Those utilities are very useful, but ntfs-3g does not support filesystem check utility.
 They just support ntfsfix which is a utility that only fixes boot sector with mirror boot
 sector, and a rare bug case of Windows XP (called by self-located MFT), reset journal.
 
 So, ntfsprogs-plus try to implement checking filesystem utility which is named ntfsck.
 You may think ntfsck is a linux version of chkdsk of Windows.
 ntfsprogs-plus use a little modified ntfs-3g library for fsck.
-ntfs-3g have some memory bugs and restriction. ntfsprogs-plus also try to remove memory bug and restriction.
+ntfs-3g have some memory bugs and restriction.
+ntfsprogs-plus also try to remove memory bug and restriction.
 
-At first release, ntfsck fully check filesystem and repair it. And not yet support journal replay.
+At first release, ntfsck fully check filesystem and repair it.
+And not yet support journal replay.
 
 # Build and Install
 You can configure and set up build environment according to your condition.
-You should have GNU Build system (autoconf, automake, libtool) and some libraries
-to build ntfsprogs-plus. If you don't have them, you should install them
+You should have GNU Build system (autoconf, automake, libtool)
+and some libraries to build ntfsprogs-plus. If you don't have them,
+you should install them.
 
 For ubuntu
 ```
@@ -63,6 +68,18 @@ If you want to compile with arm cross compiler, you can also configure.
 ```
 $ ./configure --host=arm-linux-gnueabi --target=arm-linux-gnueabi
 ```
+# Test
+You can test corrupted images in *tests* directory. Just execute script *test_all_images.sh* to test images like below.
+```
+$ cd tests
+$ ./test_all_images.sh
+```
+Script will download images and script from *https://github.com/ntfsprogs-plus/ntfs_corrupted_images* repository and test them. Default test branch is *main* branch, if you test other branch of corrupted image repository, you may execute script with branch name.
+```
+$ cd tests
+$ ./test_all_images.sh <branch name>
+```
+During test, script will request your *sudo* previleges because of *mount* command. If your system need to get *sudo* previleges for executing *mount*, *unmount*, you should have it to test.
 
 # Utilities Usage
 

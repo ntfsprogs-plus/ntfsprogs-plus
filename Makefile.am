@@ -26,7 +26,7 @@ MAINTAINERCLEANFILES=\
 
 SUBDIRS = include libntfs src
 
-doc_DATA = README
+doc_DATA = README.md
 
 dist-hook:
 	$(MKDIR_P) "$(distdir)/m4"

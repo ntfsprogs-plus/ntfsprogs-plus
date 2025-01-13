@@ -8,6 +8,7 @@ FSCK_PATH=$PWD/../src/
 CHECKOUT_BR=${1:-"main"}
 
 echo "Download corrupted images..."
+echo ""
 
 if [ -d "${REPO_NAME}" ]; then
 	cd ${REPO_NAME}
@@ -26,6 +27,10 @@ if [ ${CHECKOUT_BR} != "main" ]; then
 
 	cd ${REPO_NAME} && git checkout origin/${CHECKOUT_BR} -b ${CHECKOUT_BR}
 	RET=$?
+	if [ ${RET} -ne 0 ]; then
+		git checkout ${CHECKOUT_BR}
+		RET=$?
+	fi
 	cd ..
 else
 	echo "Rebasing latest origin/main... "
@@ -36,42 +41,14 @@ fi
 
 if [ $RET -ne 0 ]; then
 	echo "Failed to checkout or rebase ${CHECKOUT_BR}"
-	exit 1
+	exit
 fi
 
-# test created_manually directory
-echo "==============================================="
-echo "Test corrupted images which is created manually"
-echo "==============================================="
-sleep 2
-setsid /bin/bash -c "cd ${REPO_NAME}/created_manually && ENV=${FSCK_PATH} ./test_fsck.sh"
+/bin/bash -c "cd ${REPO_NAME} && ENV=${FSCK_PATH} ./test_all.sh 2> /dev/null"
 RET=$?
 if [ $RET -ne 0 ]; then
-	echo "Failed to test for created_manually images"
-	exit 1
-fi
-echo "==================================================="
-echo "Test corrupted images which is generated during use"
-echo "==================================================="
-sleep 2
-# test generated_during_use directory
-/bin/bash -c "cd ${REPO_NAME}/generated_during_use && ENV=${FSCK_PATH} ./test_fsck.sh"
-if [ $? -ne 0 ]; then
-	echo "Failed to test for generated_during_use images"
 	exit 1
 fi
 
-if [ ${CHECKOUT_BR} != "main" ]; then
-	echo "Delete working branch ${CHECKOUT_BR}... "
-	setsid /bin/bash -c "cd ${REPO_NAME} && git branch -D ${CHECKOUT_BR}"
-fi
-
-#echo "==============================================="
-#echo "Test for manually created images"
-#echo "   Passed ${MAN_PASS_COUNT} of ${MAN_TOTAL_CNT}"
-#echo
-#echo "Test for generated images"
-#echo "   Passed ${GEN_PASS_COUNT} of ${GEN_TOTAL_CNT}"
-#echo "==============================================="
 echo "Sucess to test corrupted images"
 #rm -rf ${REPO_NAME}

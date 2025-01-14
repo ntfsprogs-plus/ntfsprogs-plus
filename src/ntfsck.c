@@ -2961,15 +2961,9 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
 		goto err_out;
 
-	/*
-	 * Directory system file is Root and $Extend only.
-	 * Root directory is already checked in ntfsck_check_system_files()
-	 * FIXME: in case of $Extend, ntfsck_check_directory() return failure
-	 *
 	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
 		ret = ntfsck_check_directory(ni);
 	}
-	*/
 
 	/* TODO: check index
 	if (ni->mrec->flags & MFT_RECORD_IS_VIEW_INDEX) {

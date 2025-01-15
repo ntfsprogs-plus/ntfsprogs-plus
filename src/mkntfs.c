@@ -3791,7 +3791,7 @@ static BOOL mkntfs_override_vol_params(ntfs_volume *vol)
 			}
 			opts.enable_compression = 0;
 		}
-		ntfs_log_warning("Windows cannot use compression when the "
+		ntfs_log_debug("Windows cannot use compression when the "
 				"cluster size is larger than 4096 bytes.  "
 				"Compression has been disabled for this "
 				"volume.\n");

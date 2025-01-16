@@ -1254,13 +1254,9 @@ static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	ntfs_inode *ni = NULL;
-	ntfs_inode *parent_ni = NULL;
 	struct orphan_mft *of;
 	int is_used;
 	ntfs_attr_search_ctx *ctx = NULL;
-	FILE_NAME_ATTR *fn;
-	u64 parent_no;
-	int nlink;
 	problem_context_t pctx = {0, };
 
 	pctx.inum = mft_num;
@@ -1308,38 +1304,12 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		return;
 	}
 
-	nlink = 0;
-	while (!ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+	if (ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
 				CASE_SENSITIVE, 0, NULL, 0, ctx)) {
-		fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
-				le16_to_cpu(ctx->attr->value_offset));
-
-		parent_no = le64_to_cpu(fn->parent_directory);
-		if (parent_no != (u64)-1) {
-			parent_ni = ntfsck_open_inode(vol, MREF(parent_no));
-			if (!parent_ni) {
-				ntfs_log_error("Failed to open parent inode(%"PRIu64")\n",
-						MREF(parent_no));
-				continue;
-			}
-
-			if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn) < 0) {
-				/* do not add inode to parent */
-				ntfs_log_debug("Different sequence number of parent(%"PRIu64
-						") and inode(%"PRIu64")\n",
-						parent_ni->mft_no, ni->mft_no);
-				/* FIXME: is it need to call ntfs_fix_problem()? */
-				ntfsck_remove_filename(ni, fn);
-				ntfsck_close_inode(parent_ni);
-				continue;
-			}
-			ntfsck_close_inode(parent_ni);
-		}
-		nlink++;
-	} /* while (!ntfs_attr_lookup(AT_FILE_NAME, ... */
-
-	if (nlink == 0)
+		ntfs_log_error("Failed to find filename of inode(%"PRIu64")\n",
+				ni->mft_no);
 		goto err_check_inode;
+	}
 
 	if (ni->attr_list) {
 		if (ntfsck_check_attr_list(ni))

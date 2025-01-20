@@ -1,5 +1,11 @@
 CHANGE NOTES for ntfsprogs-plus
 
+v0.9.15
+Fix checking adjustment of hole file length.
+Fix checking system directory like $Deleted.
+Mitigate check condition about orphan candidates.
+Downgrade mkfs error message to debug.
+
 v0.9.14
 Fix comparison of wrong index block position for > 4k cluster size.
 Fix checking size and maximum bits of $BITMAP (index bitmap).

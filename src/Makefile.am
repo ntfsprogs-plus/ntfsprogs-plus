@@ -69,6 +69,8 @@ install-exec-hook:
 	$(INSTALL) -d $(DESTDIR)/$(sbindir)
 	$(LN_S) -f $(sbindir)/mkntfs $(DESTDIR)$(sbindir)/mkfs.ntfs
 	$(LN_S) -f $(sbindir)/ntfsck $(DESTDIR)$(sbindir)/fsck.ntfs
+	$(LN_S) -f $(sbindir)/mkntfs $(DESTDIR)$(sbindir)/mkfs.ntfsplus
+	$(LN_S) -f $(sbindir)/ntfsck $(DESTDIR)$(sbindir)/fsck.ntfsplus
 
 install-data-hook:
 	$(INSTALL) -d $(DESTDIR)$(man8dir)

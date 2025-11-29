@@ -61,18 +61,6 @@ endif
 # And create ldscript or symbolic link from /usr
 install-exec-hook: install-rootlibLTLIBRARIES
 if INSTALL_LIBRARY
-	if [ ! "$(DESTDIR)/$(rootlibdir)" -ef "$(DESTDIR)/$(libdir)" ]; then \
-		$(MV) -f "$(DESTDIR)/$(libdir)"/libntfs.so* "$(DESTDIR)/$(rootlibdir)";  \
-	fi
-if GENERATE_LDSCRIPT
-	if [ ! "$(DESTDIR)/$(rootlibdir)" -ef "$(DESTDIR)/$(libdir)" ]; then \
-		$(install_sh_PROGRAM) "libntfs.script.so" "$(DESTDIR)/$(libdir)/libntfs.so"; \
-	fi
-else
-	if [ ! "$(DESTDIR)/$(rootlibdir)" -ef "$(DESTDIR)/$(libdir)" ]; then \
-		$(LN_S) "$(rootlibdir)/libntfs.so" "$(DESTDIR)/$(libdir)/libntfs.so"; \
-	fi
-endif
 endif
 
 uninstall-local:

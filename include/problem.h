@@ -94,4 +94,7 @@ void ntfs_init_problem_ctx(problem_context_t *pctx, ntfs_inode *ni, ntfs_attr *n
 void ntfs_print_problem(ntfs_volume *vol, problem_code_t code, problem_context_t *pctx);
 BOOL ntfs_fix_problem(ntfs_volume *vol, problem_code_t code, problem_context_t *pctx);
 BOOL ntfs_ask_repair(const ntfs_volume *vol);
+
+#define ntfs_print_message		ntfs_print_problem
+
 #endif

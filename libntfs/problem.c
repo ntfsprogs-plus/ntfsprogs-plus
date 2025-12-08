@@ -7,11 +7,11 @@
 static struct ntfs_problem problem_table[] = {
 	/* Pre-scan MFT */
 	{ PR_PRE_SCAN_MFT,
-		"Scan all mft entries and apply those lcn bitmap to disk",
+		"Scan all mft entries and apply those lcn bitmap to disk.",
 		PR_PREEN_NOMSG | PR_NO_NOMSG,
 	},
 	{ PR_RESET_LOG_FILE,
-		"Reset logfile",
+		"Reset logfile.",
 		PR_PREEN_NOMSG | PR_NO_NOMSG,
 	},
 	{ PR_MFT_FLAG_MISMATCH,
@@ -399,6 +399,7 @@ void ntfs_print_problem(ntfs_volume *vol, problem_code_t code, problem_context_t
 
 	message = p->desc;
 	print_message(pctx, message);
+	fprintf(stderr, "\n");
 	fflush(stderr);
 }
 

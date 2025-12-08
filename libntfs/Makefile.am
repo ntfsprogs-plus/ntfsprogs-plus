@@ -61,16 +61,21 @@ endif
 # And create ldscript or symbolic link from /usr
 install-exec-hook: install-rootlibLTLIBRARIES
 if INSTALL_LIBRARY
-	if [ ! "$(DESTDIR)/$(rootlibdir)" -ef "$(DESTDIR)/$(libdir)" ]; then \
-		$(MV) -f "$(DESTDIR)/$(libdir)"/libntfs.so* "$(DESTDIR)/$(rootlibdir)";  \
+	@if test "x$(rootlibdir)" != "x$(libdir)"; then \
+		$(MKDIR_P) "$(DESTDIR)$(rootlibdir)" || exit 1; \
+		if test -f "$(DESTDIR)$(libdir)/libntfs.so"; then \
+			mv -f "$(DESTDIR)$(libdir)/libntfs.so"* "$(DESTDIR)$(rootlibdir)/" || exit 1; \
+		else \
+			echo "WARNING: libntfs.so not found, skipping relocation"; \
+		fi; \
 	fi
 if GENERATE_LDSCRIPT
-	if [ ! "$(DESTDIR)/$(rootlibdir)" -ef "$(DESTDIR)/$(libdir)" ]; then \
-		$(install_sh_PROGRAM) "libntfs.script.so" "$(DESTDIR)/$(libdir)/libntfs.so"; \
+	@if test "x$(rootlibdir)" != "x$(libdir)"; then \
+		$(INSTALL_PROGRAM) "$(builddir)/libntfs.script.so" "$(DESTDIR)$(libdir)/libntfs.so" || exit 1; \
 	fi
 else
-	if [ ! "$(DESTDIR)/$(rootlibdir)" -ef "$(DESTDIR)/$(libdir)" ]; then \
-		$(LN_S) "$(rootlibdir)/libntfs.so" "$(DESTDIR)/$(libdir)/libntfs.so"; \
+	@if test "x$(rootlibdir)" != "x$(libdir)"; then \
+		(cd "$(DESTDIR)$(libdir)" && rm -f libntfs.so && $(LN_S) "$(rootlibdir)/libntfs.so" libntfs.so) || exit 1; \
 	fi
 endif
 endif

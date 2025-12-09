@@ -28,6 +28,8 @@ SUBDIRS = include libntfs src
 
 doc_DATA = README.md
 
+README: README.md
+
 dist-hook:
 	$(MKDIR_P) "$(distdir)/m4"
 

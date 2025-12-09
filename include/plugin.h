@@ -37,16 +37,16 @@
 struct fuse_file_info;
 struct stat;
 
-	/*
-	 *	The plugin operations currently defined.
-	 * These functions should return a non-negative value when they
-	 * succeed, or a negative errno value when they fail.
-	 * They must not close or free their arguments.
-	 * The file system must be left in a consistent state after
-	 * each individual call.
-	 * If an operation is not defined, an EOPNOTSUPP error is
-	 * returned to caller.
-	 */
+/*
+ *	The plugin operations currently defined.
+ * These functions should return a non-negative value when they
+ * succeed, or a negative errno value when they fail.
+ * They must not close or free their arguments.
+ * The file system must be left in a consistent state after
+ * each individual call.
+ * If an operation is not defined, an EOPNOTSUPP error is
+ * returned to caller.
+ */
 typedef struct plugin_operations {
 	/*
 	 *	Set the attributes st_size, st_blocks and st_mode

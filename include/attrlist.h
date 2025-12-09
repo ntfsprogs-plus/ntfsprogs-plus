@@ -1,6 +1,6 @@
 /*
- * attrlist.h - Exports for attribute list attribute handling.  
- * 		Originated from Linux-NTFS project.
+ * attrlist.h - Exports for attribute list attribute handling.
+ *		Originated from Linux-NTFS project.
  *
  * Copyright (c) 2004 Anton Altaparmakov
  * Copyright (c) 2004 Yura Pakhuchiy

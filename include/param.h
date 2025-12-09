@@ -31,7 +31,7 @@
 #define FORCE_FORMAT_v1x 0	/* Insert security data as in NTFS v1.x */
 #define OWNERFROMACL 1		/* Get the owner from ACL (not Windows owner) */
 
-		/* default security sub-authorities */
+/* default security sub-authorities */
 enum {
 	DEFSECAUTH1 = -1153374643, /* 3141592653 */
 	DEFSECAUTH2 = 589793238,
@@ -43,18 +43,18 @@ enum {
  *		Parameters for formatting
  */
 
-		/* Up to Windows 10, the cluster size was limited to 64K */
+/* Up to Windows 10, the cluster size was limited to 64K */
 #define NTFS_MAX_CLUSTER_SIZE 2097152 /* Windows 10 Creators allows 2MB */
 
 /*
  *		Parameters for compression
  */
 
-	/* default option for compression */
+/* default option for compression */
 #define DEFAULT_COMPRESSION 1
-	/* (log2 of) number of clusters in a compression block for new files */
+/* (log2 of) number of clusters in a compression block for new files */
 #define STANDARD_COMPRESSION_UNIT 4
-	/* maximum cluster size for allowing compression for new files */
+/* maximum cluster size for allowing compression for new files */
 #define MAX_COMPRESSION_CLUSTER_SIZE 4096
 
 /*
@@ -80,14 +80,14 @@ enum {
  *		Parameters for runlists
  */
 
-	/* only update the final extent of a runlist when appending data */
+/* only update the final extent of a runlist when appending data */
 #define PARTIAL_RUNLIST_UPDATING 1
 
 /*
  *		Parameters for upper-case table
  */
 
-	/* Create upper-case tables as defined by Windows 6.1 (Win7) */
+/* Create upper-case tables as defined by Windows 6.1 (Win7) */
 #define UPCASE_MAJOR 6
 #define UPCASE_MINOR 1
 

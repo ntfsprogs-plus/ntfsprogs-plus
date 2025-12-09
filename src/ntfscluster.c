@@ -150,7 +150,7 @@ static int parse_options(int argc, char **argv)
 
 		case 'c':
 			if ((opts.action == act_none) &&
-			    (utils_parse_range(optarg, &opts.range_begin, &opts.range_end, FALSE)))
+					(utils_parse_range(optarg, &opts.range_begin, &opts.range_end, FALSE)))
 				opts.action = act_cluster;
 			else
 				opts.action = act_error;
@@ -197,7 +197,7 @@ static int parse_options(int argc, char **argv)
 			break;
 		case 's':
 			if ((opts.action == act_none) &&
-			    (utils_parse_range(optarg, &opts.range_begin, &opts.range_end, FALSE)))
+					(utils_parse_range(optarg, &opts.range_begin, &opts.range_end, FALSE)))
 				opts.action = act_sector;
 			else
 				opts.action = act_error;
@@ -266,7 +266,7 @@ static int parse_options(int argc, char **argv)
 	if (help || err)
 		usage();
 
-		/* tri-state 0 : done, 1 : error, -1 : proceed */
+	/* tri-state 0 : done, 1 : error, -1 : proceed */
 	return (err ? 1 : (help || ver ? 0 : -1));
 }
 
@@ -425,7 +425,7 @@ static int dump_file(ntfs_volume *vol, ntfs_inode *ino)
  * print_match
  */
 static int print_match(ntfs_inode *ino, ATTR_RECORD *attr,
-	runlist_element *run, void *data __attribute__((unused)))
+		runlist_element *run, void *data __attribute__((unused)))
 {
 	char *buffer;
 
@@ -452,7 +452,7 @@ static int print_match(ntfs_inode *ino, ATTR_RECORD *attr,
  * find_last
  */
 static int find_last(ntfs_inode *ino, ATTR_RECORD *attr, runlist_element *run,
-	void *data)
+		void *data)
 {
 	struct match *m;
 
@@ -527,7 +527,7 @@ int main(int argc, char *argv[])
 			ino = 0;
 			if (unix_name) {
 				ino = ntfs_pathname_to_inode(vol, NULL,
-								unix_name);
+						unix_name);
 				free(unix_name);
 			}
 #else

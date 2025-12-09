@@ -111,7 +111,7 @@ static const ntfschar vol_junction_head[] = {
 } ;
 
 static ntfschar reparse_index_name[] = { const_cpu_to_le16('$'),
-					 const_cpu_to_le16('R') };
+	const_cpu_to_le16('R') };
 
 static const char mappingdir[] = ".NTFS-3G/";
 
@@ -161,7 +161,7 @@ static u64 ntfs_fix_file_name(ntfs_inode *dir_ni, ntfschar *uname,
 			 * whose lower case is smaller (such as umlauted Y)
 			 */
 			if ((cpuchar < vol->upcase_len)
-			    && (le16_to_cpu(vol->upcase[cpuchar]) < cpuchar))
+					&& (le16_to_cpu(vol->upcase[cpuchar]) < cpuchar))
 				find.attr.file_name[i] = vol->upcase[cpuchar];
 			else
 				find.attr.file_name[i] = uname[i];
@@ -175,19 +175,19 @@ static u64 ntfs_fix_file_name(ntfs_inode *dir_ni, ntfschar *uname,
 		 * so we still have to check whether this is a real match
 		 */
 		if (icx->entry && (icx->entry->ie_flags & INDEX_ENTRY_END))
-				/* get next entry if reaching end of block */
+			/* get next entry if reaching end of block */
 			entry = ntfs_index_next(icx->entry, icx);
 		else
 			entry = icx->entry;
 		if (entry) {
 			found = &entry->key.file_name;
 			if (lkup
-			   && ntfs_names_are_equal(find.attr.file_name,
-				find.attr.file_name_length,
-				found->file_name, found->file_name_length,
-				IGNORE_CASE,
-				vol->upcase, vol->upcase_len))
-					lkup = 0;
+					&& ntfs_names_are_equal(find.attr.file_name,
+						find.attr.file_name_length,
+						found->file_name, found->file_name_length,
+						IGNORE_CASE,
+						vol->upcase, vol->upcase_len))
+				lkup = 0;
 			if (!lkup) {
 				/*
 				 * name found :
@@ -218,7 +218,7 @@ static u64 ntfs_fix_file_name(ntfs_inode *dir_ni, ntfschar *uname,
  */
 
 static char *search_absolute(ntfs_volume *vol, ntfschar *path,
-				int count, BOOL isdir)
+		int count, BOOL isdir)
 {
 	ntfs_inode *ni;
 	u64 inum;
@@ -244,7 +244,7 @@ static char *search_absolute(ntfs_volume *vol, ntfschar *path,
 		do {
 			len = 0;
 			while (((start + len) < count)
-			    && (path[start + len] != const_cpu_to_le16('\\')))
+					&& (path[start + len] != const_cpu_to_le16('\\')))
 				len++;
 			inum = ntfs_fix_file_name(ni, &path[start], len);
 			ntfs_inode_close(ni);
@@ -257,18 +257,18 @@ static char *search_absolute(ntfs_volume *vol, ntfschar *path,
 					path[start++] = const_cpu_to_le16('/');
 			}
 		} while (ni
-		    && (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)
-		    && !(ni->flags & FILE_ATTR_REPARSE_POINT)
-		    && (start < count));
-	if (ni
-	    && ((ni->mrec->flags & MFT_RECORD_IS_DIRECTORY ? isdir : !isdir)
-		|| (ni->flags & FILE_ATTR_REPARSE_POINT)))
-		if (ntfs_ucstombs(path, count, &target, 0) < 0) {
-			if (target)
-				ntfs_attr_name_free(&target);
-		}
-	if (ni)
-		ntfs_inode_close(ni);
+				&& (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)
+				&& !(ni->flags & FILE_ATTR_REPARSE_POINT)
+				&& (start < count));
+		if (ni
+				&& ((ni->mrec->flags & MFT_RECORD_IS_DIRECTORY ? isdir : !isdir)
+					|| (ni->flags & FILE_ATTR_REPARSE_POINT)))
+			if (ntfs_ucstombs(path, count, &target, 0) < 0) {
+				if (target)
+					ntfs_attr_name_free(&target);
+			}
+		if (ni)
+			ntfs_inode_close(ni);
 	}
 	return (target);
 }
@@ -301,28 +301,28 @@ static char *search_relative(ntfs_inode *ni, ntfschar *path, int count)
 	ok = TRUE;
 	morelinks = FALSE;
 	curni = ntfs_dir_parent_inode(ni);
-		/*
-		 * Examine and translate the path, until we reach either
-		 *  - the end,
-		 *  - an unknown item
-		 *  - a non-directory
-		 *  - another reparse point,
-		 * A reparse point is not dereferenced, it will be
-		 * examined later when the translated path is dereferenced,
-		 * however the final part of the path will not be adjusted
-		 * to correct case.
-		 */
+	/*
+	 * Examine and translate the path, until we reach either
+	 *  - the end,
+	 *  - an unknown item
+	 *  - a non-directory
+	 *  - another reparse point,
+	 * A reparse point is not dereferenced, it will be
+	 * examined later when the translated path is dereferenced,
+	 * however the final part of the path will not be adjusted
+	 * to correct case.
+	 */
 	while (curni && ok && !morelinks && (pos < (count - 1)) && --max) {
 		if ((count >= (pos + 2))
-		    && (path[pos] == const_cpu_to_le16('.'))
-		    && (path[pos+1] == const_cpu_to_le16('\\'))) {
+				&& (path[pos] == const_cpu_to_le16('.'))
+				&& (path[pos+1] == const_cpu_to_le16('\\'))) {
 			path[pos+1] = const_cpu_to_le16('/');
 			pos += 2;
 		} else {
 			if ((count >= (pos + 3))
-			    && (path[pos] == const_cpu_to_le16('.'))
-			    &&(path[pos+1] == const_cpu_to_le16('.'))
-			    && (path[pos+2] == const_cpu_to_le16('\\'))) {
+					&& (path[pos] == const_cpu_to_le16('.'))
+					&&(path[pos+1] == const_cpu_to_le16('.'))
+					&& (path[pos+2] == const_cpu_to_le16('\\'))) {
 				path[pos+2] = const_cpu_to_le16('/');
 				pos += 3;
 				newni = ntfs_dir_parent_inode(curni);
@@ -334,16 +334,16 @@ static char *search_relative(ntfs_inode *ni, ntfschar *path, int count)
 			} else {
 				lth = 0;
 				while (((pos + lth) < count)
-				    && (path[pos + lth] != const_cpu_to_le16('\\')))
+						&& (path[pos + lth] != const_cpu_to_le16('\\')))
 					lth++;
 				if (lth > 0)
 					inum = ntfs_fix_file_name(curni,&path[pos],lth);
 				else
 					inum = (u64)-1;
 				if (!lth
-				    || ((curni != ni)
-					&& ntfs_inode_close(curni))
-				    || (inum == (u64)-1))
+						|| ((curni != ni)
+							&& ntfs_inode_close(curni))
+						|| (inum == (u64)-1))
 					ok = FALSE;
 				else {
 					curni = ntfs_inode_open(ni->vol, MREF(inum));
@@ -356,13 +356,13 @@ static char *search_relative(ntfs_inode *ni, ntfschar *path, int count)
 							path[pos + lth] = const_cpu_to_le16('/');
 							pos += lth + 1;
 							if (morelinks
-							   && ntfs_inode_close(curni))
+									&& ntfs_inode_close(curni))
 								ok = FALSE;
 						} else {
 							pos += lth;
 							if (!morelinks
-							  && (ni->mrec->flags ^ curni->mrec->flags)
-							    & MFT_RECORD_IS_DIRECTORY)
+									&& (ni->mrec->flags ^ curni->mrec->flags)
+									& MFT_RECORD_IS_DIRECTORY)
 								ok = FALSE;
 							if (ntfs_inode_close(curni))
 								ok = FALSE;
@@ -412,7 +412,7 @@ static int ntfs_drive_letter(ntfs_volume *vol, ntfschar letter)
 		else
 			if (errno == ENOENT) {
 				ret = 0;
-					/* avoid errno pollution */
+				/* avoid errno pollution */
 				errno = olderrno;
 			}
 	}
@@ -434,16 +434,16 @@ int ntfs_reparse_check_wsl(ntfs_inode *ni, const REPARSE_POINT *reparse)
 
 	res = -EOPNOTSUPP;
 	switch (reparse->reparse_tag) {
-	case IO_REPARSE_TAG_AF_UNIX :
-	case IO_REPARSE_TAG_LX_FIFO :
-	case IO_REPARSE_TAG_LX_CHR :
-	case IO_REPARSE_TAG_LX_BLK :
-		if (!reparse->reparse_data_length
-		    && (ni->flags & FILE_ATTRIBUTE_RECALL_ON_OPEN))
-			res = 0;
-		break;
-	default :
-		break;
+		case IO_REPARSE_TAG_AF_UNIX :
+		case IO_REPARSE_TAG_LX_FIFO :
+		case IO_REPARSE_TAG_LX_CHR :
+		case IO_REPARSE_TAG_LX_BLK :
+			if (!reparse->reparse_data_length
+					&& (ni->flags & FILE_ATTRIBUTE_RECALL_ON_OPEN))
+				res = 0;
+			break;
+		default :
+			break;
 	}
 	if (res)
 		errno = EOPNOTSUPP;
@@ -463,7 +463,7 @@ int ntfs_reparse_check_wsl(ntfs_inode *ni, const REPARSE_POINT *reparse)
  */
 
 static BOOL valid_reparse_data(ntfs_inode *ni,
-			const REPARSE_POINT *reparse_attr, size_t size)
+		const REPARSE_POINT *reparse_attr, size_t size)
 {
 	BOOL ok;
 	unsigned int offs;
@@ -476,49 +476,49 @@ static BOOL valid_reparse_data(ntfs_inode *ni,
 		&& (size >= sizeof(REPARSE_POINT))
 		&& (reparse_attr->reparse_tag != IO_REPARSE_TAG_RESERVED_ZERO)
 		&& (((size_t)le16_to_cpu(reparse_attr->reparse_data_length)
-			 + sizeof(REPARSE_POINT)
-			 + ((reparse_attr->reparse_tag &
-			     IO_REPARSE_TAG_IS_MICROSOFT) ? 0 : sizeof(GUID))) == size);
+			+ sizeof(REPARSE_POINT)
+			+ ((reparse_attr->reparse_tag &
+					IO_REPARSE_TAG_IS_MICROSOFT) ? 0 : sizeof(GUID))) == size);
 	if (ok) {
 		switch (reparse_attr->reparse_tag) {
 		case IO_REPARSE_TAG_MOUNT_POINT :
 			if (size < sizeof(REPARSE_POINT) +
-				   sizeof(struct MOUNT_POINT_REPARSE_DATA)) {
+					sizeof(struct MOUNT_POINT_REPARSE_DATA)) {
 				ok = FALSE;
 				break;
 			}
 			mount_point_data = (const struct MOUNT_POINT_REPARSE_DATA*)
-						reparse_attr->reparse_data;
+				reparse_attr->reparse_data;
 			offs = le16_to_cpu(mount_point_data->subst_name_offset);
 			lth = le16_to_cpu(mount_point_data->subst_name_length);
-				/* consistency checks */
+			/* consistency checks */
 			if (!(ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)
-			    || ((size_t)((sizeof(REPARSE_POINT)
-				 + sizeof(struct MOUNT_POINT_REPARSE_DATA)
-				 + offs + lth)) > size))
+					|| ((size_t)((sizeof(REPARSE_POINT)
+						+ sizeof(struct MOUNT_POINT_REPARSE_DATA)
+						+ offs + lth)) > size))
 				ok = FALSE;
 			break;
 		case IO_REPARSE_TAG_SYMLINK :
 			if (size < sizeof(REPARSE_POINT) +
-				   sizeof(struct SYMLINK_REPARSE_DATA)) {
+					sizeof(struct SYMLINK_REPARSE_DATA)) {
 				ok = FALSE;
 				break;
 			}
 			symlink_data = (const struct SYMLINK_REPARSE_DATA*)
-						reparse_attr->reparse_data;
+				reparse_attr->reparse_data;
 			offs = le16_to_cpu(symlink_data->subst_name_offset);
 			lth = le16_to_cpu(symlink_data->subst_name_length);
 			if ((size_t)((sizeof(REPARSE_POINT)
-				 + sizeof(struct SYMLINK_REPARSE_DATA)
-				 + offs + lth)) > size)
+					+ sizeof(struct SYMLINK_REPARSE_DATA)
+					+ offs + lth)) > size)
 				ok = FALSE;
 			break;
 		case IO_REPARSE_TAG_LX_SYMLINK :
 			wsl_reparse_data = (const struct WSL_LINK_REPARSE_DATA*)
-						reparse_attr->reparse_data;
+				reparse_attr->reparse_data;
 			if ((le16_to_cpu(reparse_attr->reparse_data_length)
-					<= sizeof(wsl_reparse_data->type))
-			    || (wsl_reparse_data->type != const_cpu_to_le32(2)))
+						<= sizeof(wsl_reparse_data->type))
+					|| (wsl_reparse_data->type != const_cpu_to_le32(2)))
 				ok = FALSE;
 			break;
 		case IO_REPARSE_TAG_AF_UNIX :
@@ -526,7 +526,7 @@ static BOOL valid_reparse_data(ntfs_inode *ni,
 		case IO_REPARSE_TAG_LX_CHR :
 		case IO_REPARSE_TAG_LX_BLK :
 			if (reparse_attr->reparse_data_length
-			    || !(ni->flags & FILE_ATTRIBUTE_RECALL_ON_OPEN))
+					|| !(ni->flags & FILE_ATTRIBUTE_RECALL_ON_OPEN))
 				ok = FALSE;
 			break;
 		default :
@@ -554,7 +554,7 @@ static BOOL valid_reparse_data(ntfs_inode *ni,
  */
 
 static char *ntfs_get_fulllink(ntfs_volume *vol, ntfschar *junction,
-			int count, const char *mnt_point, BOOL isdir)
+		int count, const char *mnt_point, BOOL isdir)
 {
 	char *target;
 	char *fulltarget;
@@ -564,36 +564,36 @@ static char *ntfs_get_fulllink(ntfs_volume *vol, ntfschar *junction,
 
 	target = (char*)NULL;
 	fulltarget = (char*)NULL;
-			/*
-			 * For a valid directory junction we want \??\x:\
-			 * where \ is an individual char and x a non-null char
-			 */
+	/*
+	 * For a valid directory junction we want \??\x:\
+	 * where \ is an individual char and x a non-null char
+	 */
 	if ((count >= 7)
-	    && !memcmp(junction,dir_junction_head,8)
-	    && junction[4]
-	    && (junction[5] == const_cpu_to_le16(':'))
-	    && (junction[6] == const_cpu_to_le16('\\')))
+			&& !memcmp(junction,dir_junction_head,8)
+			&& junction[4]
+			&& (junction[5] == const_cpu_to_le16(':'))
+			&& (junction[6] == const_cpu_to_le16('\\')))
 		kind = DIR_JUNCTION;
 	else
-			/*
-			 * For a valid volume junction we want \\?\Volume{
-			 * and a final \ (where \ is an individual char)
-			 */
+		/*
+		 * For a valid volume junction we want \\?\Volume{
+		 * and a final \ (where \ is an individual char)
+		 */
 		if ((count >= 12)
-		    && !memcmp(junction,vol_junction_head,22)
-		    && (junction[count-1] == const_cpu_to_le16('\\')))
+				&& !memcmp(junction,vol_junction_head,22)
+				&& (junction[count-1] == const_cpu_to_le16('\\')))
 			kind = VOL_JUNCTION;
 		else
 			kind = NO_JUNCTION;
-			/*
-			 * Directory junction with an explicit path and
-			 * no specific definition for the drive letter :
-			 * try to interpret as a target on the same volume
-			 */
+	/*
+	 * Directory junction with an explicit path and
+	 * no specific definition for the drive letter :
+	 * try to interpret as a target on the same volume
+	 */
 	if ((kind == DIR_JUNCTION)
-	    && (count >= 7)
-	    && junction[7]
-	    && !ntfs_drive_letter(vol, junction[4])) {
+			&& (count >= 7)
+			&& junction[7]
+			&& !ntfs_drive_letter(vol, junction[4])) {
 		target = search_absolute(vol,&junction[7],count - 7, isdir);
 		if (target) {
 			fulltarget = (char*)ntfs_malloc(strlen(mnt_point)
@@ -606,29 +606,29 @@ static char *ntfs_get_fulllink(ntfs_volume *vol, ntfschar *junction,
 			ntfs_attr_name_free(&target);
 		}
 	}
-			/*
-			 * Volume junctions or directory junctions with
-			 * target not found on current volume :
-			 * link to /.NTFS-3G/target which the user can
-			 * define as a symbolic link to the real target
-			 */
+	/*
+	 * Volume junctions or directory junctions with
+	 * target not found on current volume :
+	 * link to /.NTFS-3G/target which the user can
+	 * define as a symbolic link to the real target
+	 */
 	if (((kind == DIR_JUNCTION) && !fulltarget)
-	    || (kind == VOL_JUNCTION)) {
+			|| (kind == VOL_JUNCTION)) {
 		sz = ntfs_ucstombs(&junction[4],
-			(kind == VOL_JUNCTION ? count - 5 : count - 4),
-			&target, 0);
+				(kind == VOL_JUNCTION ? count - 5 : count - 4),
+				&target, 0);
 		if ((sz > 0) && target) {
-				/* reverse slashes */
+			/* reverse slashes */
 			for (q=target; *q; q++)
 				if (*q == '\\')
 					*q = '/';
-				/* force uppercase drive letter */
+			/* force uppercase drive letter */
 			if ((target[1] == ':')
-			    && (target[0] >= 'a')
-			    && (target[0] <= 'z'))
+					&& (target[0] >= 'a')
+					&& (target[0] <= 'z'))
 				target[0] += 'A' - 'a';
 			fulltarget = (char*)ntfs_malloc(strlen(mnt_point)
-				    + sizeof(mappingdir) + strlen(target) + 1);
+					+ sizeof(mappingdir) + strlen(target) + 1);
 			if (fulltarget) {
 				strcpy(fulltarget,mnt_point);
 				strcat(fulltarget,"/");
@@ -657,8 +657,8 @@ static char *ntfs_get_fulllink(ntfs_volume *vol, ntfschar *junction,
  */
 
 char *ntfs_get_abslink(ntfs_volume *vol, ntfschar *junction, int count,
-			const char *mnt_point __attribute__((unused)),
-			BOOL isdir)
+		const char *mnt_point __attribute__((unused)),
+		BOOL isdir)
 {
 	char *target;
 	char *fulltarget;
@@ -668,41 +668,41 @@ char *ntfs_get_abslink(ntfs_volume *vol, ntfschar *junction, int count,
 
 	target = (char*)NULL;
 	fulltarget = (char*)NULL;
-			/*
-			 * For a full valid path we want x:\
-			 * where \ is an individual char and x a non-null char
-			 */
+	/*
+	 * For a full valid path we want x:\
+	 * where \ is an individual char and x a non-null char
+	 */
 	if ((count >= 3)
-	    && junction[0]
-	    && (junction[1] == const_cpu_to_le16(':'))
-	    && (junction[2] == const_cpu_to_le16('\\')))
+			&& junction[0]
+			&& (junction[1] == const_cpu_to_le16(':'))
+			&& (junction[2] == const_cpu_to_le16('\\')))
 		kind = FULL_PATH;
 	else
-			/*
-			 * For an absolute path we want an initial \
-			 */
+		/*
+		 * For an absolute path we want an initial \
+		 */
 		if ((count >= 0)
-		    && (junction[0] == const_cpu_to_le16('\\')))
+				&& (junction[0] == const_cpu_to_le16('\\')))
 			kind = ABS_PATH;
 		else
 			kind = REJECTED_PATH;
-			/*
-			 * Full path, with a drive letter and
-			 * no specific definition for the drive letter :
-			 * try to interpret as a target on the same volume.
-			 * Do the same for an abs path with no drive letter.
-			 */
+	/*
+	 * Full path, with a drive letter and
+	 * no specific definition for the drive letter :
+	 * try to interpret as a target on the same volume.
+	 * Do the same for an abs path with no drive letter.
+	 */
 	if (((kind == FULL_PATH)
-	    && (count >= 3)
-	    && junction[3]
-	    && !ntfs_drive_letter(vol, junction[0]))
-	    || (kind == ABS_PATH)) {
+				&& (count >= 3)
+				&& junction[3]
+				&& !ntfs_drive_letter(vol, junction[0]))
+			|| (kind == ABS_PATH)) {
 		if (kind == ABS_PATH)
 			target = search_absolute(vol, &junction[1],
-				count - 1, isdir);
+					count - 1, isdir);
 		else
 			target = search_absolute(vol, &junction[3],
-				count - 3, isdir);
+					count - 3, isdir);
 		if (target) {
 			fulltarget = (char*)ntfs_malloc(
 					strlen(vol->abs_mnt_point)
@@ -715,27 +715,27 @@ char *ntfs_get_abslink(ntfs_volume *vol, ntfschar *junction, int count,
 			ntfs_attr_name_free(&target);
 		}
 	}
-			/*
-			 * full path with target not found on current volume :
-			 * link to /.NTFS-3G/target which the user can
-			 * define as a symbolic link to the real target
-			 */
+	/*
+	 * full path with target not found on current volume :
+	 * link to /.NTFS-3G/target which the user can
+	 * define as a symbolic link to the real target
+	 */
 	if ((kind == FULL_PATH) && !fulltarget) {
 		sz = ntfs_ucstombs(&junction[0],
-			count,&target, 0);
+				count,&target, 0);
 		if ((sz > 0) && target) {
-				/* reverse slashes */
+			/* reverse slashes */
 			for (q=target; *q; q++)
 				if (*q == '\\')
 					*q = '/';
-				/* force uppercase drive letter */
+			/* force uppercase drive letter */
 			if ((target[1] == ':')
-			    && (target[0] >= 'a')
-			    && (target[0] <= 'z'))
+					&& (target[0] >= 'a')
+					&& (target[0] <= 'z'))
 				target[0] += 'A' - 'a';
 			fulltarget = (char*)ntfs_malloc(
-				strlen(vol->abs_mnt_point)
-				    + sizeof(mappingdir) + strlen(target) + 1);
+					strlen(vol->abs_mnt_point)
+					+ sizeof(mappingdir) + strlen(target) + 1);
 			if (fulltarget) {
 				strcpy(fulltarget,vol->abs_mnt_point);
 				strcat(fulltarget,"/");
@@ -798,7 +798,7 @@ char *ntfs_make_symlink(ntfs_inode *ni, const char *mnt_point)
 	target = (char*)NULL;
 	bad = TRUE;
 	isdir = (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)
-			 != const_cpu_to_le16(0);
+		!= const_cpu_to_le16(0);
 	vol = ni->vol;
 	reparse_attr = (REPARSE_POINT*)ntfs_attr_readall(ni,
 			AT_REPARSE_POINT,(ntfschar*)NULL, 0, &attr_size);
@@ -807,29 +807,29 @@ char *ntfs_make_symlink(ntfs_inode *ni, const char *mnt_point)
 		switch (reparse_attr->reparse_tag) {
 		case IO_REPARSE_TAG_MOUNT_POINT :
 			mount_point_data = (struct MOUNT_POINT_REPARSE_DATA*)
-						reparse_attr->reparse_data;
+				reparse_attr->reparse_data;
 			offs = le16_to_cpu(mount_point_data->subst_name_offset);
 			lth = le16_to_cpu(mount_point_data->subst_name_length);
-				/* reparse data consistency has been checked */
+			/* reparse data consistency has been checked */
 			target = ntfs_get_fulllink(vol,
-				(ntfschar*)&mount_point_data->path_buffer[offs],
-				lth/2, mnt_point, isdir);
+					(ntfschar*)&mount_point_data->path_buffer[offs],
+					lth/2, mnt_point, isdir);
 			if (target)
 				bad = FALSE;
 			break;
 		case IO_REPARSE_TAG_SYMLINK :
 			symlink_data = (struct SYMLINK_REPARSE_DATA*)
-						reparse_attr->reparse_data;
+				reparse_attr->reparse_data;
 			offs = le16_to_cpu(symlink_data->subst_name_offset);
 			lth = le16_to_cpu(symlink_data->subst_name_length);
 			p = (ntfschar*)&symlink_data->path_buffer[offs];
-				/*
-				 * Predetermine the kind of target,
-				 * the called function has to make a full check
-				 */
+			/*
+			 * Predetermine the kind of target,
+			 * the called function has to make a full check
+			 */
 			if (*p++ == const_cpu_to_le16('\\')) {
 				if ((*p == const_cpu_to_le16('?'))
-				    || (*p == const_cpu_to_le16('\\')))
+						|| (*p == const_cpu_to_le16('\\')))
 					kind = FULL_TARGET;
 				else
 					kind = ABS_TARGET;
@@ -839,33 +839,33 @@ char *ntfs_make_symlink(ntfs_inode *ni, const char *mnt_point)
 				else
 					kind = REL_TARGET;
 			p--;
-				/* reparse data consistency has been checked */
+			/* reparse data consistency has been checked */
 			switch (kind) {
 			case FULL_TARGET :
 				if (!(symlink_data->flags
-				   & const_cpu_to_le32(1))) {
+							& const_cpu_to_le32(1))) {
 					target = ntfs_get_fulllink(vol,
-						p, lth/2,
-						mnt_point, isdir);
+							p, lth/2,
+							mnt_point, isdir);
 					if (target)
 						bad = FALSE;
 				}
 				break;
 			case ABS_TARGET :
 				if (symlink_data->flags
-				   & const_cpu_to_le32(1)) {
+						& const_cpu_to_le32(1)) {
 					target = ntfs_get_abslink(vol,
-						p, lth/2,
-						mnt_point, isdir);
+							p, lth/2,
+							mnt_point, isdir);
 					if (target)
 						bad = FALSE;
 				}
 				break;
 			case REL_TARGET :
 				if (symlink_data->flags
-				   & const_cpu_to_le32(1)) {
+						& const_cpu_to_le32(1)) {
 					target = ntfs_get_rellink(ni,
-						p, lth/2);
+							p, lth/2);
 					if (target)
 						bad = FALSE;
 				}
@@ -874,15 +874,15 @@ char *ntfs_make_symlink(ntfs_inode *ni, const char *mnt_point)
 			break;
 		case IO_REPARSE_TAG_LX_SYMLINK :
 			wsl_link_data = (struct WSL_LINK_REPARSE_DATA*)
-						reparse_attr->reparse_data;
+				reparse_attr->reparse_data;
 			if (wsl_link_data->type == const_cpu_to_le32(2)) {
 				lth = le16_to_cpu(
-					reparse_attr->reparse_data_length)
+						reparse_attr->reparse_data_length)
 					- sizeof(wsl_link_data->type);
 				target = (char*)ntfs_malloc(lth + 1);
 				if (target) {
 					memcpy(target, wsl_link_data->link,
-						lth);
+							lth);
 					target[lth] = 0;
 					bad = FALSE;
 				}
@@ -915,11 +915,11 @@ BOOL ntfs_possible_symlink(ntfs_inode *ni)
 			AT_REPARSE_POINT,(ntfschar*)NULL, 0, &attr_size);
 	if (reparse_attr && attr_size) {
 		switch (reparse_attr->reparse_tag) {
-		case IO_REPARSE_TAG_MOUNT_POINT :
-		case IO_REPARSE_TAG_SYMLINK :
-		case IO_REPARSE_TAG_LX_SYMLINK :
-			possible = TRUE;
-		default : ;
+			case IO_REPARSE_TAG_MOUNT_POINT :
+			case IO_REPARSE_TAG_SYMLINK :
+			case IO_REPARSE_TAG_LX_SYMLINK :
+				possible = TRUE;
+			default : ;
 		}
 		free(reparse_attr);
 	}
@@ -935,7 +935,7 @@ BOOL ntfs_possible_symlink(ntfs_inode *ni)
  */
 
 static int set_reparse_index(ntfs_inode *ni, ntfs_index_context *xr,
-			le32 reparse_tag)
+		le32 reparse_tag)
 {
 	struct REPARSE_INDEX indx;
 	u64 file_id_cpu;
@@ -946,18 +946,18 @@ static int set_reparse_index(ntfs_inode *ni, ntfs_index_context *xr,
 	file_id_cpu = MK_MREF(ni->mft_no,le16_to_cpu(seqn));
 	file_id = cpu_to_le64(file_id_cpu);
 	indx.header.data_offset = const_cpu_to_le16(
-					sizeof(INDEX_ENTRY_HEADER)
-					+ sizeof(REPARSE_INDEX_KEY));
+			sizeof(INDEX_ENTRY_HEADER)
+			+ sizeof(REPARSE_INDEX_KEY));
 	indx.header.data_length = const_cpu_to_le16(0);
 	indx.header.reservedV = const_cpu_to_le32(0);
 	indx.header.length = const_cpu_to_le16(
-					sizeof(struct REPARSE_INDEX));
+			sizeof(struct REPARSE_INDEX));
 	indx.header.key_length = const_cpu_to_le16(
-					sizeof(REPARSE_INDEX_KEY));
+			sizeof(REPARSE_INDEX_KEY));
 	indx.header.flags = const_cpu_to_le16(0);
 	indx.header.reserved = const_cpu_to_le16(0);
 	indx.key.reparse_tag = reparse_tag;
-		/* danger on processors which require proper alignment ! */
+	/* danger on processors which require proper alignment ! */
 	memcpy(&indx.key.file_id, &file_id, 8);
 	indx.filling = const_cpu_to_le32(0);
 	ntfs_index_ctx_reinit(xr);
@@ -974,7 +974,7 @@ static int set_reparse_index(ntfs_inode *ni, ntfs_index_context *xr,
  */
 
 static int remove_reparse_index(ntfs_attr *na, ntfs_index_context *xr,
-				le32 *preparse_tag)
+		le32 *preparse_tag)
 {
 	REPARSE_INDEX_KEY key;
 	u64 file_id_cpu;
@@ -985,17 +985,17 @@ static int remove_reparse_index(ntfs_attr *na, ntfs_index_context *xr,
 
 	ret = na->data_size;
 	if (ret) {
-			/* read the existing reparse_tag */
+		/* read the existing reparse_tag */
 		size = ntfs_attr_pread(na, 0, 4, preparse_tag);
 		if (size == 4) {
 			seqn = na->ni->mrec->sequence_number;
 			file_id_cpu = MK_MREF(na->ni->mft_no,le16_to_cpu(seqn));
 			file_id = cpu_to_le64(file_id_cpu);
 			key.reparse_tag = *preparse_tag;
-		/* danger on processors which require proper alignment ! */
+			/* danger on processors which require proper alignment ! */
 			memcpy(&key.file_id, &file_id, 8);
 			if (!ntfs_index_lookup(&key, sizeof(REPARSE_INDEX_KEY), xr)
-			    && ntfs_index_rm(xr))
+					&& ntfs_index_rm(xr))
 				ret = -1;
 		} else {
 			ret = -1;
@@ -1021,7 +1021,7 @@ static ntfs_index_context *open_reparse_index(ntfs_volume *vol)
 	ntfs_inode *dir_ni;
 	ntfs_index_context *xr;
 
-		/* do not use path_name_to inode - could reopen root */
+	/* do not use path_name_to inode - could reopen root */
 	dir_ni = ntfs_inode_open(vol, FILE_Extend);
 	ni = (ntfs_inode*)NULL;
 	if (dir_ni) {
@@ -1055,7 +1055,7 @@ static ntfs_index_context *open_reparse_index(ntfs_volume *vol)
  */
 
 static int update_reparse_data(ntfs_inode *ni, ntfs_index_context *xr,
-			const char *value, size_t size)
+		const char *value, size_t size)
 {
 	int res;
 	int written;
@@ -1066,7 +1066,7 @@ static int update_reparse_data(ntfs_inode *ni, ntfs_index_context *xr,
 	res = 0;
 	na = ntfs_attr_open(ni, AT_REPARSE_POINT, AT_UNNAMED, 0);
 	if (na) {
-			/* remove the existing reparse data */
+		/* remove the existing reparse data */
 		oldsize = remove_reparse_index(na,xr,&reparse_tag);
 		if (oldsize < 0)
 			res = -1;
@@ -1076,18 +1076,18 @@ static int update_reparse_data(ntfs_inode *ni, ntfs_index_context *xr,
 			/* overwrite value if any */
 			if (!res && value) {
 				written = (int)ntfs_attr_pwrite(na,
-						 (s64)0, (s64)size, value);
+						(s64)0, (s64)size, value);
 				if (written != (s64)size) {
 					ntfs_log_error("Failed to update "
-						"reparse data\n");
+							"reparse data\n");
 					errno = EIO;
 					res = -1;
 				}
 			}
 			if (!res
-			    && set_reparse_index(ni,xr,
-				((const REPARSE_POINT*)value)->reparse_tag)
-			    && (oldsize > 0)) {
+					&& set_reparse_index(ni,xr,
+						((const REPARSE_POINT*)value)->reparse_tag)
+					&& (oldsize > 0)) {
 				/*
 				 * If cannot index, try to remove the reparse
 				 * data and log the error. There will be an
@@ -1124,10 +1124,10 @@ int ntfs_delete_reparse_index(ntfs_inode *ni)
 	res = 0;
 	na = ntfs_attr_open(ni, AT_REPARSE_POINT, AT_UNNAMED, 0);
 	if (na) {
-			/*
-			 * read the existing reparse data (the tag is enough)
-			 * and un-index it
-			 */
+		/*
+		 * read the existing reparse data (the tag is enough)
+		 * and un-index it
+		 */
 		xr = open_reparse_index(ni->vol);
 		if (xr) {
 			if (remove_reparse_index(na,xr,&reparse_tag) < 0)
@@ -1160,12 +1160,12 @@ int ntfs_get_ntfs_reparse_data(ntfs_inode *ni, char *value, size_t size)
 	if (ni) {
 		if (ni->flags & FILE_ATTR_REPARSE_POINT) {
 			reparse_attr = (REPARSE_POINT*)ntfs_attr_readall(ni,
-				AT_REPARSE_POINT,(ntfschar*)NULL, 0, &attr_size);
+					AT_REPARSE_POINT,(ntfschar*)NULL, 0, &attr_size);
 			if (reparse_attr) {
 				if (attr_size <= (s64)size) {
 					if (value)
 						memcpy(value,reparse_attr,
-							attr_size);
+								attr_size);
 					else
 						errno = EINVAL;
 				}
@@ -1186,7 +1186,7 @@ int ntfs_get_ntfs_reparse_data(ntfs_inode *ni, char *value, size_t size)
  */
 
 int ntfs_set_ntfs_reparse_data(ntfs_inode *ni,
-			const char *value, size_t size, int flags)
+		const char *value, size_t size, int flags)
 {
 	int res;
 	u8 dummy;
@@ -1194,31 +1194,31 @@ int ntfs_set_ntfs_reparse_data(ntfs_inode *ni,
 	ntfs_index_context *xr;
 
 	res = 0;
-			/*
-			 * reparse data compatibily with EA is not checked
-			 * any more, it is required by Windows 10, but may
-			 * lead to problems with earlier versions.
-			 */
+	/*
+	 * reparse data compatibily with EA is not checked
+	 * any more, it is required by Windows 10, but may
+	 * lead to problems with earlier versions.
+	 */
 	if (ni && valid_reparse_data(ni, (const REPARSE_POINT*)value, size)) {
 		xr = open_reparse_index(ni->vol);
 		if (xr) {
 			if (!ntfs_attr_exist(ni,AT_REPARSE_POINT,
 						AT_UNNAMED,0)) {
 				if (!(flags & XATTR_REPLACE)) {
-			/*
-			 * no reparse data attribute : add one,
-			 * apparently, this does not feed the new value in
-			 * Note : NTFS version must be >= 3
-			 */
+					/*
+					 * no reparse data attribute : add one,
+					 * apparently, this does not feed the new value in
+					 * Note : NTFS version must be >= 3
+					 */
 					if (ni->vol->major_ver >= 3) {
 						res = ntfs_attr_add(ni,
-							AT_REPARSE_POINT,
-							AT_UNNAMED,0,&dummy,
-							(s64)0);
+								AT_REPARSE_POINT,
+								AT_UNNAMED,0,&dummy,
+								(s64)0);
 						if (!res) {
-						    ni->flags |=
-							FILE_ATTR_REPARSE_POINT;
-						    NInoFileNameSetDirty(ni);
+							ni->flags |=
+								FILE_ATTR_REPARSE_POINT;
+							NInoFileNameSetDirty(ni);
 						}
 						NInoSetDirty(ni);
 					} else {
@@ -1236,7 +1236,7 @@ int ntfs_set_ntfs_reparse_data(ntfs_inode *ni,
 				}
 			}
 			if (!res) {
-					/* update value and index */
+				/* update value and index */
 				res = update_reparse_data(ni,xr,value,size);
 			}
 			xrni = xr->ni;
@@ -1275,34 +1275,34 @@ int ntfs_remove_ntfs_reparse_data(ntfs_inode *ni)
 		 * open and delete the reparse data
 		 */
 		na = ntfs_attr_open(ni, AT_REPARSE_POINT,
-			AT_UNNAMED,0);
+				AT_UNNAMED,0);
 		if (na) {
 			/* first remove index (reparse data needed) */
 			xr = open_reparse_index(ni->vol);
 			if (xr) {
 				if (remove_reparse_index(na,xr,
-						&reparse_tag) < 0) {
+							&reparse_tag) < 0) {
 					res = -1;
 				} else {
 					/* now remove attribute */
 					res = ntfs_attr_rm(na);
 					if (!res) {
 						ni->flags &=
-						    ~FILE_ATTR_REPARSE_POINT;
+							~FILE_ATTR_REPARSE_POINT;
 						NInoFileNameSetDirty(ni);
 					} else {
-					/*
-					 * If we could not remove the
-					 * attribute, try to restore the
-					 * index and log the error. There
-					 * will be an inconsistency if
-					 * the reindexing fails.
-					 */
+						/*
+						 * If we could not remove the
+						 * attribute, try to restore the
+						 * index and log the error. There
+						 * will be an inconsistency if
+						 * the reindexing fails.
+						 */
 						set_reparse_index(ni, xr,
-							reparse_tag);
+								reparse_tag);
 						ntfs_log_error(
-						"Failed to remove reparse data."
-						" Possible corruption.\n");
+								"Failed to remove reparse data."
+								" Possible corruption.\n");
 					}
 				}
 				xrni = xr->ni;
@@ -1313,7 +1313,7 @@ int ntfs_remove_ntfs_reparse_data(ntfs_inode *ni)
 			}
 			olderrno = errno;
 			ntfs_attr_close(na);
-					/* avoid errno pollution */
+			/* avoid errno pollution */
 			if (errno == ENOENT)
 				errno = olderrno;
 		} else {
@@ -1333,7 +1333,7 @@ int ntfs_remove_ntfs_reparse_data(ntfs_inode *ni)
  */
 
 int ntfs_reparse_set_wsl_symlink(ntfs_inode *ni,
-			const ntfschar *target, int target_len)
+		const ntfschar *target, int target_len)
 {
 	int res;
 	int len;
@@ -1350,7 +1350,7 @@ int ntfs_reparse_set_wsl_symlink(ntfs_inode *ni,
 		reparse = (REPARSE_POINT*)malloc(reparse_len);
 		if (reparse) {
 			data = (struct WSL_LINK_REPARSE_DATA*)
-					reparse->reparse_data;
+				reparse->reparse_data;
 			reparse->reparse_tag = IO_REPARSE_TAG_LX_SYMLINK;
 			reparse->reparse_data_length
 				= cpu_to_le16(sizeof(data->type) + len);
@@ -1358,7 +1358,7 @@ int ntfs_reparse_set_wsl_symlink(ntfs_inode *ni,
 			data->type = const_cpu_to_le32(2);
 			memcpy(data->link, utarget, len);
 			res = ntfs_set_ntfs_reparse_data(ni,
-				(char*)reparse, reparse_len, 0);
+					(char*)reparse, reparse_len, 0);
 			free(reparse);
 		}
 	}
@@ -1382,22 +1382,22 @@ int ntfs_reparse_set_wsl_not_symlink(ntfs_inode *ni, mode_t mode)
 	res = -1;
 	len = 0;
 	switch (mode) {
-	case S_IFSOCK :
-		reparse_tag = IO_REPARSE_TAG_AF_UNIX;
-		break;
-	case S_IFIFO :
-		reparse_tag = IO_REPARSE_TAG_LX_FIFO;
-		break;
-	case S_IFCHR :
-		reparse_tag = IO_REPARSE_TAG_LX_CHR;
-		break;
-	case S_IFBLK :
-		reparse_tag = IO_REPARSE_TAG_LX_BLK;
-		break;
-	default :
-		len = -1;
-		errno = EOPNOTSUPP;
-		break;
+		case S_IFSOCK :
+			reparse_tag = IO_REPARSE_TAG_AF_UNIX;
+			break;
+		case S_IFIFO :
+			reparse_tag = IO_REPARSE_TAG_LX_FIFO;
+			break;
+		case S_IFCHR :
+			reparse_tag = IO_REPARSE_TAG_LX_CHR;
+			break;
+		case S_IFBLK :
+			reparse_tag = IO_REPARSE_TAG_LX_BLK;
+			break;
+		default :
+			len = -1;
+			errno = EOPNOTSUPP;
+			break;
 	}
 	if (len >= 0) {
 		reparse_len = sizeof(REPARSE_POINT) + len;
@@ -1407,7 +1407,7 @@ int ntfs_reparse_set_wsl_not_symlink(ntfs_inode *ni, mode_t mode)
 			reparse->reparse_data_length = cpu_to_le16(len);
 			reparse->reserved = const_cpu_to_le16(0);
 			res = ntfs_set_ntfs_reparse_data(ni,
-				(char*)reparse, reparse_len, 0);
+					(char*)reparse, reparse_len, 0);
 			free(reparse);
 		}
 	}
@@ -1431,9 +1431,9 @@ REPARSE_POINT *ntfs_get_reparse_point(ntfs_inode *ni)
 	reparse_attr = (REPARSE_POINT*)NULL;
 	if (ni) {
 		reparse_attr = (REPARSE_POINT*)ntfs_attr_readall(ni,
-			AT_REPARSE_POINT,(ntfschar*)NULL, 0, &attr_size);
+				AT_REPARSE_POINT,(ntfschar*)NULL, 0, &attr_size);
 		if (reparse_attr
-		    && !valid_reparse_data(ni, reparse_attr, attr_size)) {
+				&& !valid_reparse_data(ni, reparse_attr, attr_size)) {
 			free(reparse_attr);
 			reparse_attr = (REPARSE_POINT*)NULL;
 			errno = EINVAL;

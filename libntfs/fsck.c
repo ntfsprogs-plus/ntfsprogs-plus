@@ -501,7 +501,7 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 
 	/* Initialize fsck mft bitmap buffer array */
 	vol->max_fmb_cnt = FB_ROUND_DOWN((vol->mft_na->initialized_size >>
-			      vol->mft_record_size_bits) >> NTFSCK_BYTE_TO_BITS) + 1;
+				vol->mft_record_size_bits) >> NTFSCK_BYTE_TO_BITS) + 1;
 	vol->fsck_mft_bitmap = (u8 **)ntfs_calloc(sizeof(u8 *) * vol->max_fmb_cnt);
 	if (!vol->fsck_mft_bitmap) {
 		free(vol->fsck_lcn_bitmap);

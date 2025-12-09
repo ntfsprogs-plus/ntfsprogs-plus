@@ -276,7 +276,7 @@ s64 ntfs_pwrite(struct ntfs_device *dev, const s64 pos, s64 count,
 	NDevSetDirty(dev);
 	for (total = 0; count; count -= written, total += written) {
 		written = dops->pwrite(dev, (const char*)b + total, count,
-				       pos + total);
+				pos + total);
 		/* If everything ok, continue. */
 		if (written > 0)
 			continue;
@@ -443,7 +443,7 @@ s64 ntfs_cluster_read(const ntfs_volume *vol, const s64 lcn, const s64 count,
 		errno = ESPIPE;
 		ntfs_log_perror("Trying to read outside of volume "
 				"(%lld < %lld)", (long long)vol->nr_clusters,
-			        (long long)lcn + count);
+				(long long)lcn + count);
 		return -1;
 	}
 	br = ntfs_pread(vol->dev, lcn << vol->cluster_size_bits,
@@ -479,7 +479,7 @@ s64 ntfs_cluster_write(const ntfs_volume *vol, const s64 lcn,
 		errno = ESPIPE;
 		ntfs_log_perror("Trying to write outside of volume "
 				"(%lld < %lld)", (long long)vol->nr_clusters,
-			        (long long)lcn + count);
+				(long long)lcn + count);
 		return -1;
 	}
 	if (!NVolReadOnly(vol))
@@ -587,11 +587,11 @@ s64 ntfs_device_size_get(struct ntfs_device *dev, int block_size)
 
 		sector_size = ntfs_device_sector_size_get(dev);
 		if (sector_size >= 0 && dev->d_ops->ioctl(dev,
-			DKIOCGETBLOCKCOUNT, &blocks) >= 0)
+					DKIOCGETBLOCKCOUNT, &blocks) >= 0)
 		{
 			ntfs_log_debug("DKIOCGETBLOCKCOUNT nr blocks = %llu (0x%llx)\n",
-				(unsigned long long) blocks,
-				(unsigned long long) blocks);
+					(unsigned long long) blocks,
+					(unsigned long long) blocks);
 			return blocks * sector_size / block_size;
 		}
 	}
@@ -684,15 +684,15 @@ static int ntfs_device_get_geo(struct ntfs_device *dev)
 		 */
 		for (hd = devlist; hd; hd = hd->next) {
 			if (hd->unix_dev_name && !strncmp(dev->d_name,
-					hd->unix_dev_name, d_name_len))
+						hd->unix_dev_name, d_name_len))
 				goto got_hd;
 			if (hd->unix_dev_name2 && !strncmp(dev->d_name,
-					hd->unix_dev_name2, d_name_len))
+						hd->unix_dev_name2, d_name_len))
 				goto got_hd;
 			for (names = hd->unix_dev_names; names;
 					names = names->next) {
 				if (names->str && !strncmp(dev->d_name,
-						names->str, d_name_len))
+							names->str, d_name_len))
 					goto got_hd;
 			}
 		}
@@ -704,15 +704,15 @@ static int ntfs_device_get_geo(struct ntfs_device *dev)
 		partlist = hd_list(hddata, hw_partition, 1, NULL);
 		for (hd = partlist; hd; hd = hd->next) {
 			if (hd->unix_dev_name && !strncmp(dev->d_name,
-					hd->unix_dev_name, d_name_len))
+						hd->unix_dev_name, d_name_len))
 				goto got_part_hd;
 			if (hd->unix_dev_name2 && !strncmp(dev->d_name,
-					hd->unix_dev_name2, d_name_len))
+						hd->unix_dev_name2, d_name_len))
 				goto got_part_hd;
 			for (names = hd->unix_dev_names; names;
 					names = names->next) {
 				if (names->str && !strncmp(dev->d_name,
-						names->str, d_name_len))
+							names->str, d_name_len))
 					goto got_part_hd;
 			}
 		}

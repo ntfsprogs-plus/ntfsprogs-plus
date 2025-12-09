@@ -306,14 +306,14 @@ static int ntfs_mft_load(ntfs_volume *vol)
 	}
 
 	if (le32_to_cpu(ctx->attr->value_length) <
-	    offsetof(STANDARD_INFORMATION, owner_id)) {
+			offsetof(STANDARD_INFORMATION, owner_id)) {
 		ntfs_log_error("Corrupt STANDARD_INFORMATION in $MFT record\n");
 		goto error_exit;
 	}
 
 	/* Find the $ATTRIBUTE_LIST attribute in $MFT if present. */
 	if (ntfs_attr_lookup(AT_ATTRIBUTE_LIST, AT_UNNAMED, 0, 0, 0, NULL, 0,
-			ctx)) {
+				ctx)) {
 		if (errno != ENOENT) {
 			ntfs_log_error("$MFT has corrupt attribute list.\n");
 			goto io_error_exit;
@@ -324,7 +324,7 @@ static int ntfs_mft_load(ntfs_volume *vol)
 	l = ntfs_get_attribute_value_length(ctx->attr);
 	if (l <= 0 || l > 0x40000) {
 		ntfs_log_error("$MFT/$ATTR_LIST invalid length (%lld).\n",
-			       (long long)l);
+				(long long)l);
 		goto io_error_exit;
 	}
 	vol->mft_ni->attr_list_size = l;
@@ -338,7 +338,7 @@ static int ntfs_mft_load(ntfs_volume *vol)
 		goto io_error_exit;
 	}
 	if ((l != vol->mft_ni->attr_list_size)
-	    || (l < (s64)offsetof(ATTR_LIST_ENTRY, name))) {
+			|| (l < (s64)offsetof(ATTR_LIST_ENTRY, name))) {
 		ntfs_log_error("Partial read of $MFT/$ATTR_LIST (%lld != "
 				"%u or < %d).\n", (long long)l,
 				vol->mft_ni->attr_list_size,
@@ -365,7 +365,7 @@ mft_has_no_attr_list:
 	highest_vcn = next_vcn = 0;
 	a = NULL;
 	while (!ntfs_attr_lookup(AT_DATA, AT_UNNAMED, 0, 0, next_vcn, NULL, 0,
-			ctx)) {
+				ctx)) {
 		runlist_element *nrl;
 
 		a = ctx->attr;
@@ -378,7 +378,7 @@ mft_has_no_attr_list:
 		if (a->flags & ATTR_COMPRESSION_MASK ||
 				a->flags & ATTR_IS_ENCRYPTED) {
 			ntfs_log_error("$MFT must be uncompressed and "
-				       "unencrypted.\n");
+					"unencrypted.\n");
 			goto io_error_exit;
 		}
 		/*
@@ -420,7 +420,7 @@ mft_has_no_attr_list:
 	if (highest_vcn && highest_vcn != last_vcn - 1) {
 		ntfs_log_error("Failed to load runlist for $MFT/$DATA.\n");
 		ntfs_log_error("highest_vcn = 0x%llx, last_vcn - 1 = 0x%llx\n",
-			       (long long)highest_vcn, (long long)last_vcn - 1);
+				(long long)highest_vcn, (long long)last_vcn - 1);
 		goto io_error_exit;
 	}
 
@@ -434,7 +434,7 @@ mft_has_no_attr_list:
 
 	/* Check if filename is "$MFT" */
 	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
-				le16_to_cpu(ctx->attr->value_offset));
+			le16_to_cpu(ctx->attr->value_offset));
 	filename = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
 	if (!filename || strcmp(filename, "$MFT")) {
 		ntfs_log_error("filename of $MFT record is not '$MFT'(%s)\n",
@@ -541,7 +541,7 @@ static int ntfs_mftmirr_load(ntfs_volume *vol)
 
 	/* Check if filename is "$MFTMirr" */
 	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
-				le16_to_cpu(ctx->attr->value_offset));
+			le16_to_cpu(ctx->attr->value_offset));
 	filename = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
 	if (!filename || strcmp(filename, "$MFTMirr")) {
 		ntfs_log_error("filename of $MFT record is not '$MFTMirr'(%s)\n",
@@ -605,8 +605,8 @@ static int ntfsck_fix_boot_sector(ntfs_volume *vol, char *full_bs,
 		/* alignment problem on Sparc, even doing memcpy() */
 		sector_size_le = cpu_to_le16(sector_size);
 		if (!memcmp(&sector_size_le, &bs->bpb.bytes_per_sector, 2) &&
-		    ntfs_boot_sector_is_ntfs(bs) &&
-		    !ntfs_boot_sector_parse(vol, bs)) {
+				ntfs_boot_sector_is_ntfs(bs) &&
+				!ntfs_boot_sector_parse(vol, bs)) {
 			s64 bw;
 
 			ntfs_log_info("The alternate bootsector is usable\n");
@@ -659,15 +659,15 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 	}
 
 	if ((ntfs_boot->jump[0] != 0xeb) ||
-	    ((ntfs_boot->jump[1] != 0x52) && (ntfs_boot->jump[1] != 0x5b)) ||
-	    (ntfs_boot->jump[2] != 0x90)) {
+			((ntfs_boot->jump[1] != 0x52) && (ntfs_boot->jump[1] != 0x5b)) ||
+			(ntfs_boot->jump[2] != 0x90)) {
 		ntfs_log_error("Boot sector: Bad jump.\n");
 		ntfs_free(ntfs_boot);
 		return 1;
 	}
 
 	if (ntfs_boot_sector_is_ntfs(ntfs_boot) &&
-	    (ntfs_boot_sector_parse(vol, ntfs_boot) == 0))
+			(ntfs_boot_sector_parse(vol, ntfs_boot) == 0))
 		goto out;
 
 	if (NVolFsck(vol)) {
@@ -681,21 +681,21 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 			shown_sectors = sle64_to_cpu(ntfs_boot->number_of_sectors);
 			/* first try the actual last sector */
 			if ((actual_sectors > 0) &&
-			    !ntfsck_fix_boot_sector(vol, (char *)ntfs_boot, actual_sectors,
-						    actual_sectors, sector_size))
+					!ntfsck_fix_boot_sector(vol, (char *)ntfs_boot, actual_sectors,
+						actual_sectors, sector_size))
 				res = 0;
 
 			/* then try the shown last sector, if less than actual */
 			if (res && (shown_sectors > 0) &&
-			    (shown_sectors < actual_sectors) &&
-			    !ntfsck_fix_boot_sector(vol, (char *)ntfs_boot, shown_sectors,
-						    shown_sectors, sector_size))
+					(shown_sectors < actual_sectors) &&
+					!ntfsck_fix_boot_sector(vol, (char *)ntfs_boot, shown_sectors,
+						shown_sectors, sector_size))
 				res = 0;
 
 			/* then try reducing the number of sectors to actual value */
 			if (res && (shown_sectors > actual_sectors) &&
-			    !ntfsck_fix_boot_sector(vol, (char *)ntfs_boot, 0, actual_sectors,
-						    sector_size))
+					!ntfsck_fix_boot_sector(vol, (char *)ntfs_boot, 0, actual_sectors,
+						sector_size))
 				res = 0;
 			if (res) {
 				ntfs_log_error("Boot sector: failed to fix boot sector\n");
@@ -793,9 +793,9 @@ static int ntfs_recover_mft_from_mftmirr(ntfs_volume *vol, const u64 mftno)
 		return -ENOMEM;
 
 	if (ntfs_mst_pread(vol->dev,
-			   (vol->mftmirr_lcn << vol->cluster_size_bits) +
+				(vol->mftmirr_lcn << vol->cluster_size_bits) +
 				mftno * vol->mft_record_size,
-			   1, vol->mft_record_size, mrec) != 1) {
+				1, vol->mft_record_size, mrec) != 1) {
 		err = -EIO;
 		goto err_out;
 	}
@@ -857,11 +857,11 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 	vol->locase = (ntfschar*)NULL;
 	NVolSetCaseSensitive(vol);
 
-		/* by default, all files are shown and not marked hidden */
+	/* by default, all files are shown and not marked hidden */
 	NVolSetShowSysFiles(vol);
 	NVolSetShowHidFiles(vol);
 	NVolClearHideDotFiles(vol);
-		/* set default compression */
+	/* set default compression */
 #if DEFAULT_COMPRESSION
 	NVolSetCompression(vol);
 #else
@@ -934,7 +934,7 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 	mft_lcn = (8192 + 2 * vol->cluster_size - 1) / vol->cluster_size;
 	if (mft_lcn * vol->cluster_size < 16 * 1024)
 		mft_lcn = (16 * 1024 + vol->cluster_size - 1) /
-				vol->cluster_size;
+			vol->cluster_size;
 	if (vol->mft_zone_start <= mft_lcn)
 		vol->mft_zone_start = 0;
 	ntfs_log_debug("mft_zone_start = 0x%llx\n", (long long)vol->mft_zone_start);
@@ -994,8 +994,8 @@ reload_mft_mirr:
 	/* Need to setup $MFTMirr so we can use the write functions, too. */
 	if (ntfs_mftmirr_load(vol) < 0) {
 		if (try_recover_mft == FALSE) {
-		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_MOUNT_LOAD_MFTMIRR_FAILURE, &pctx)) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_MOUNT_LOAD_MFTMIRR_FAILURE, &pctx)) {
 				if (!ntfs_recover_mft_from_mftmirr(vol, 1)) {
 					ntfs_log_info("Try to reload $MFTMirr after updating it using $MFT\n");
 					try_recover_mft = TRUE;
@@ -1045,21 +1045,21 @@ static int ntfs_volume_check_logfile(ntfs_volume *vol)
 
 	if (!ntfs_check_logfile(na, &rp))
 		err = EOPNOTSUPP;
-		/*
-		 * If the latest restart page was identified as version
-		 * 2.0, then Windows may have kept a cached copy of
-		 * metadata for fast restarting, and we should not mount.
-		 * Hibernation will be seen the same way on a non
-		 * Windows-system partition, so we have to use the same
-		 * error code (EPERM).
-		 * The restart page may also be identified as version 2.0
-		 * when access to the file system is terminated abruptly
-		 * by unplugging or power cut, so mounting is also rejected
-		 * after such an event.
-		 */
+	/*
+	 * If the latest restart page was identified as version
+	 * 2.0, then Windows may have kept a cached copy of
+	 * metadata for fast restarting, and we should not mount.
+	 * Hibernation will be seen the same way on a non
+	 * Windows-system partition, so we have to use the same
+	 * error code (EPERM).
+	 * The restart page may also be identified as version 2.0
+	 * when access to the file system is terminated abruptly
+	 * by unplugging or power cut, so mounting is also rejected
+	 * after such an event.
+	 */
 	if (rp
-	    && (rp->major_ver == const_cpu_to_le16(2))
-	    && (rp->minor_ver == const_cpu_to_le16(0))) {
+			&& (rp->major_ver == const_cpu_to_le16(2))
+			&& (rp->minor_ver == const_cpu_to_le16(0))) {
 		ntfs_log_error("Metadata kept in Windows cache, refused to mount.\n");
 		err = EPERM;
 	}
@@ -1172,18 +1172,18 @@ int ntfs_volume_check_hiberfile(ntfs_volume *vol, int verbose)
 	if (bytes_read < NTFS_HIBERFILE_HEADER_SIZE) {
 		if (verbose)
 			ntfs_log_error("Hibernated non-system partition, "
-				       "refused to mount.\n");
+					"refused to mount.\n");
 		errno = EPERM;
 		goto out;
 	}
 	if ((memcmp(buf, "hibr", 4) == 0)
-	   ||  (memcmp(buf, "HIBR", 4) == 0)) {
+			||  (memcmp(buf, "HIBR", 4) == 0)) {
 		if (verbose)
 			ntfs_log_error("Windows is hibernated, refused to mount.\n");
 		errno = EPERM;
 		goto out;
 	}
-        /* All right, all header bytes are zero */
+	/* All right, all header bytes are zero */
 	errno = 0;
 out:
 	if (na)
@@ -1239,16 +1239,16 @@ static int fix_txf_data(ntfs_volume *vol)
 						TXF_DATA, 9, &txf_data_size);
 				if (txf_data) {
 					if (ntfs_attr_truncate(na, 0)
-					    || (ntfs_attr_pwrite(na, 0,
-						 txf_data_size, txf_data)
-							!= txf_data_size))
+							|| (ntfs_attr_pwrite(na, 0,
+									txf_data_size, txf_data)
+								!= txf_data_size))
 						res = -1;
 					free(txf_data);
 				}
-			if (res)
-				ntfs_log_error("Failed to make $TXF_DATA resident\n");
-			else
-				ntfs_log_error("$TXF_DATA made resident\n");
+				if (res)
+					ntfs_log_error("Failed to make $TXF_DATA resident\n");
+				else
+					ntfs_log_error("$TXF_DATA made resident\n");
 			}
 			ntfs_attr_close(na);
 		}
@@ -1320,8 +1320,8 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 			ntfs_log_perror("Failed to read $MFT");
 		else {
 			ntfs_log_error("Failed to read $MFT, unexpected length "
-				       "(%lld != %d).\n", (long long)l,
-				       vol->mftmirr_size);
+					"(%lld != %d).\n", (long long)l,
+					vol->mftmirr_size);
 			errno = EIO;
 		}
 		goto error_exit;
@@ -1363,8 +1363,8 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 		if (!ntfs_mft_record_check(vol, FILE_MFT + i, mrec)) {
 			if (!memcmp(mrec, mrec2, vol->mft_record_size))
 				continue;
-		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_MOUNT_MFT_MFTMIRR_MISMATCH, &pctx)) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_MOUNT_MFT_MFTMIRR_MISMATCH, &pctx)) {
 				if (ntfs_recover_mft(vol, mrec, vol->mftmirr_lcn, FILE_MFT + i)) {
 					ntfs_log_perror("Error correcting $MFTMirror record : %d", i);
 					goto io_error_exit;
@@ -1459,8 +1459,8 @@ skip_compare_mft:
 	l = ntfs_attr_pread(na, 0, na->data_size, vol->upcase);
 	if (l != na->data_size) {
 		ntfs_log_error("Failed to read $UpCase, unexpected length "
-			       "(%lld != %lld).\n", (long long)l,
-			       (long long)na->data_size);
+				"(%lld != %lld).\n", (long long)l,
+				(long long)na->data_size);
 		errno = EIO;
 		goto error_close;
 	}
@@ -1473,9 +1473,9 @@ skip_compare_mft:
 	/* Consistency check of $UpCase, restricted to plain ASCII chars */
 	k = 0x20;
 	while ((k < vol->upcase_len)
-	    && (k < 0x7f)
-	    && (le16_to_cpu(vol->upcase[k])
-			== ((k < 'a') || (k > 'z') ? k : k + 'A' - 'a')))
+			&& (k < 0x7f)
+			&& (le16_to_cpu(vol->upcase[k])
+				== ((k < 'a') || (k > 'z') ? k : k + 'A' - 'a')))
 		k++;
 	if (k < 0x7f) {
 		ntfs_log_error("Corrupted file $UpCase\n");
@@ -1499,7 +1499,7 @@ skip_compare_mft:
 
 	/* Find the $VOLUME_INFORMATION attribute. */
 	if (ntfs_attr_lookup(AT_VOLUME_INFORMATION, AT_UNNAMED, 0, 0, 0, NULL,
-			0, ctx)) {
+				0, ctx)) {
 		ntfs_log_perror("$VOLUME_INFORMATION attribute not found in "
 				"$Volume");
 		goto error_exit;
@@ -1508,7 +1508,7 @@ skip_compare_mft:
 	/* Has to be resident. */
 	if (a->non_resident) {
 		ntfs_log_error("Attribute $VOLUME_INFORMATION must be "
-			       "resident but it isn't.\n");
+				"resident but it isn't.\n");
 		errno = EIO;
 		goto error_exit;
 	}
@@ -1518,7 +1518,7 @@ skip_compare_mft:
 	if ((char*)vinf + le32_to_cpu(a->value_length) > (char*)ctx->mrec +
 			le32_to_cpu(ctx->mrec->bytes_in_use) ||
 			le16_to_cpu(a->value_offset) + le32_to_cpu(
-			a->value_length) > le32_to_cpu(a->length)) {
+				a->value_length) > le32_to_cpu(a->length)) {
 		ntfs_log_error("$VOLUME_INFORMATION in $Volume is corrupt.\n");
 		errno = EIO;
 		goto error_exit;
@@ -1534,7 +1534,7 @@ skip_compare_mft:
 	 */
 	ntfs_attr_reinit_search_ctx(ctx);
 	if (ntfs_attr_lookup(AT_VOLUME_NAME, AT_UNNAMED, 0, 0, 0, NULL, 0,
-			ctx)) {
+				ctx)) {
 		if (errno != ENOENT) {
 			ntfs_log_perror("Failed to lookup of $VOLUME_NAME in "
 					"$Volume failed");
@@ -1569,7 +1569,7 @@ skip_compare_mft:
 			ntfs_log_perror("Volume name could not be converted "
 					"to current locale");
 			ntfs_log_debug("Forcing name into ASCII by replacing "
-				"non-ASCII characters with underscores.\n");
+					"non-ASCII characters with underscores.\n");
 			vol->vol_name = ntfs_malloc(u + 1);
 			if (!vol->vol_name)
 				goto error_exit;
@@ -1602,7 +1602,7 @@ skip_compare_mft:
 	/* Check we don't overflow 24-bits. */
 	if ((u64)na->data_size > 0xffffffLL) {
 		ntfs_log_error("Attribute definition table is too big (max "
-			       "24-bit allowed).\n");
+				"24-bit allowed).\n");
 		errno = EINVAL;
 		goto error_close;
 	}
@@ -1615,8 +1615,8 @@ skip_compare_mft:
 	l = ntfs_attr_pread(na, 0, na->data_size, vol->attrdef);
 	if (l != na->data_size) {
 		ntfs_log_error("Failed to read $AttrDef, unexpected length "
-			       "(%lld != %lld).\n", (long long)l,
-			       (long long)na->data_size);
+				"(%lld != %lld).\n", (long long)l,
+				(long long)na->data_size);
 		errno = EIO;
 		goto error_close;
 	}
@@ -1637,12 +1637,12 @@ skip_compare_mft:
 	 */
 	if (!(flags & (NTFS_MNT_RDONLY | NTFS_MNT_FORENSIC))) {
 		if (!(flags & NTFS_MNT_IGNORE_HIBERFILE) &&
-		    ntfs_volume_check_hiberfile(vol, 1) < 0) {
+				ntfs_volume_check_hiberfile(vol, 1) < 0) {
 			if (flags & NTFS_MNT_MAY_RDONLY)
 				need_fallback_ro = TRUE;
 			else
 				goto error_exit;
-			}
+		}
 		if (ntfs_volume_check_logfile(vol) < 0) {
 			/* Always reject cached metadata for now */
 			if (!(flags & NTFS_MNT_RECOVER) || (errno == EPERM)) {
@@ -1652,7 +1652,7 @@ skip_compare_mft:
 					goto error_exit;
 			} else {
 				ntfs_log_info("The file system wasn't safely "
-					      "closed on Windows. Fixing.\n");
+						"closed on Windows. Fixing.\n");
 				if (ntfs_logfile_reset(vol))
 					goto error_exit;
 			}
@@ -1695,8 +1695,8 @@ error_exit:
  */
 
 int ntfs_set_shown_files(ntfs_volume *vol,
-			BOOL show_sys_files, BOOL show_hid_files,
-			BOOL hide_dot_files)
+		BOOL show_sys_files, BOOL show_hid_files,
+		BOOL hide_dot_files)
 {
 	int res;
 
@@ -1729,7 +1729,7 @@ int ntfs_set_ignore_case(ntfs_volume *vol)
 	res = -1;
 	if (vol && vol->upcase) {
 		vol->locase = ntfs_locase_table_build(vol->upcase,
-					vol->upcase_len);
+				vol->upcase_len);
 		if (vol->locase) {
 			NVolClearCaseSensitive(vol);
 			res = 0;
@@ -2106,16 +2106,16 @@ int ntfs_volume_write_flags(ntfs_volume *vol, const le16 flags)
 		return -1;
 
 	if (ntfs_attr_lookup(AT_VOLUME_INFORMATION, AT_UNNAMED, 0, 0, 0, NULL,
-			0, ctx)) {
+				0, ctx)) {
 		ntfs_log_error("Attribute $VOLUME_INFORMATION was not found "
-			       "in $Volume!\n");
+				"in $Volume!\n");
 		goto err_out;
 	}
 	a = ctx->attr;
 	/* Sanity check. */
 	if (a->non_resident) {
 		ntfs_log_error("Attribute $VOLUME_INFORMATION must be resident "
-			       "but it isn't.\n");
+				"but it isn't.\n");
 		errno = EIO;
 		goto err_out;
 	}
@@ -2127,7 +2127,7 @@ int ntfs_volume_write_flags(ntfs_volume *vol, const le16 flags)
 			le16_to_cpu(a->value_offset) +
 			le32_to_cpu(a->value_length) > le32_to_cpu(a->length)) {
 		ntfs_log_error("Attribute $VOLUME_INFORMATION in $Volume is "
-			       "corrupt!\n");
+				"corrupt!\n");
 		errno = EIO;
 		goto err_out;
 	}
@@ -2220,7 +2220,7 @@ int ntfs_set_locale(void)
 	if (!locale) {
 		locale = setlocale(LC_ALL, NULL);
 		ntfs_log_error("Couldn't set local environment, using default "
-			       "'%s'.\n", locale);
+				"'%s'.\n", locale);
 		return 1;
 	}
 	return 0;
@@ -2275,7 +2275,7 @@ int ntfs_volume_rename(ntfs_volume *vol, const ntfschar *label, int label_len)
 
 	if (NVolReadOnly(vol)) {
 		ntfs_log_error("Refusing to change label on read-only mounted "
-			"volume.\n");
+				"volume.\n");
 		errno = EROFS;
 		return -1;
 	}
@@ -2294,17 +2294,17 @@ int ntfs_volume_rename(ntfs_volume *vol, const ntfschar *label, int label_len)
 		if (errno != ENOENT) {
 			err = errno;
 			ntfs_log_perror("Lookup of $VOLUME_NAME attribute "
-				"failed");
+					"failed");
 			goto err_out;
 		}
 
 		/* The volume name attribute does not exist.  Need to add it. */
 		if (ntfs_attr_add(vol->vol_ni, AT_VOLUME_NAME, AT_UNNAMED, 0,
-			(const u8*) label, label_len))
+					(const u8*) label, label_len))
 		{
 			err = errno;
 			ntfs_log_perror("Encountered error while adding "
-				"$VOLUME_NAME attribute");
+					"$VOLUME_NAME attribute");
 			goto err_out;
 		}
 	}
@@ -2322,7 +2322,7 @@ int ntfs_volume_rename(ntfs_volume *vol, const ntfschar *label, int label_len)
 			if (ntfs_attr_truncate(na, label_len)) {
 				err = errno;
 				ntfs_log_perror("Error resizing resident "
-					"attribute");
+						"attribute");
 				goto err_out;
 			}
 		}
@@ -2332,13 +2332,13 @@ int ntfs_volume_rename(ntfs_volume *vol, const ntfschar *label, int label_len)
 			if (written == -1) {
 				err = errno;
 				ntfs_log_perror("Error when writing "
-					"$VOLUME_NAME data");
+						"$VOLUME_NAME data");
 				goto err_out;
 			}
 			else if (written != label_len) {
 				err = EIO;
 				ntfs_log_error("Partial write when writing "
-					"$VOLUME_NAME data.");
+						"$VOLUME_NAME data.");
 				goto err_out;
 
 			}

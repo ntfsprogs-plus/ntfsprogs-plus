@@ -91,14 +91,14 @@ static BOOL ntfs_check_restart_page_header(RESTART_PAGE_HEADER *rp, s64 pos)
 	 * Nevertheless, do all the relevant checks before rejecting.
 	 */
 	if (((rp->major_ver != const_cpu_to_sle16(1))
-			 || (rp->minor_ver != const_cpu_to_sle16(1)))
-	   && ((rp->major_ver != const_cpu_to_sle16(2))
-			 || (rp->minor_ver != const_cpu_to_sle16(0)))) {
+				|| (rp->minor_ver != const_cpu_to_sle16(1)))
+			&& ((rp->major_ver != const_cpu_to_sle16(2))
+				|| (rp->minor_ver != const_cpu_to_sle16(0)))) {
 		ntfs_log_error("$LogFile version %i.%i is not "
 				"supported.\n   (This driver supports version "
 				"1.1 and 2.0 only.)\n",
-					(int)sle16_to_cpu(rp->major_ver),
-					(int)sle16_to_cpu(rp->minor_ver));
+				(int)sle16_to_cpu(rp->major_ver),
+				(int)sle16_to_cpu(rp->minor_ver));
 		return FALSE;
 	}
 	/*
@@ -134,7 +134,7 @@ skip_usa_checks:
 	 */
 	ra_ofs = le16_to_cpu(rp->restart_area_offset);
 	if (ra_ofs & 7 || (have_usa ? ra_ofs < usa_end :
-			ra_ofs < offsetof(RESTART_PAGE_HEADER, usn)) ||
+				ra_ofs < offsetof(RESTART_PAGE_HEADER, usn)) ||
 			ra_ofs > logfile_system_page_size) {
 		ntfs_log_error("$LogFile restart page specifies "
 				"inconsistent restart area offset.\n");
@@ -197,7 +197,7 @@ static BOOL ntfs_check_restart_area(RESTART_PAGE_HEADER *rp)
 	ca_ofs = le16_to_cpu(ra->client_array_offset);
 	if (((ca_ofs + 7) & ~7) != ca_ofs ||
 			ra_ofs + ca_ofs > (u16)(NTFS_BLOCK_SIZE -
-			sizeof(u16))) {
+				sizeof(u16))) {
 		ntfs_log_error("$LogFile restart area specifies "
 				"inconsistent client array offset.\n");
 		return FALSE;
@@ -208,7 +208,7 @@ static BOOL ntfs_check_restart_area(RESTART_PAGE_HEADER *rp)
 	 * Also, the calculated length must not exceed the specified length.
 	 */
 	ra_len = ca_ofs + le16_to_cpu(ra->log_clients) *
-			sizeof(LOG_CLIENT_RECORD);
+		sizeof(LOG_CLIENT_RECORD);
 	if ((u32)(ra_ofs + ra_len) > le32_to_cpu(rp->system_page_size) ||
 			(u32)(ra_ofs + le16_to_cpu(ra->restart_area_length)) >
 			le32_to_cpu(rp->system_page_size) ||
@@ -225,11 +225,11 @@ static BOOL ntfs_check_restart_area(RESTART_PAGE_HEADER *rp)
 	 * overflowing the client array.
 	 */
 	if ((ra->client_free_list != LOGFILE_NO_CLIENT &&
-			le16_to_cpu(ra->client_free_list) >=
-			le16_to_cpu(ra->log_clients)) ||
+				le16_to_cpu(ra->client_free_list) >=
+				le16_to_cpu(ra->log_clients)) ||
 			(ra->client_in_use_list != LOGFILE_NO_CLIENT &&
-			le16_to_cpu(ra->client_in_use_list) >=
-			le16_to_cpu(ra->log_clients))) {
+			 le16_to_cpu(ra->client_in_use_list) >=
+			 le16_to_cpu(ra->log_clients))) {
 		ntfs_log_error("$LogFile restart area specifies "
 				"overflowing client free and/or in use lists.\n");
 		return FALSE;
@@ -290,14 +290,14 @@ static BOOL ntfs_check_log_client_array(RESTART_PAGE_HEADER *rp)
 	u32 offset_clients;
 
 	ntfs_log_trace("Entering.\n");
-		/* The restart area must be fully within page */
+	/* The restart area must be fully within page */
 	if ((le16_to_cpu(rp->restart_area_offset) + sizeof(RESTART_AREA))
 			> le32_to_cpu(rp->system_page_size))
 		goto err_out;
 	ra = (RESTART_AREA*)((u8*)rp + le16_to_cpu(rp->restart_area_offset));
 	offset_clients = le16_to_cpu(rp->restart_area_offset)
-			+ le16_to_cpu(ra->client_array_offset);
-		/* The clients' records must begin within page */
+		+ le16_to_cpu(ra->client_array_offset);
+	/* The clients' records must begin within page */
 	if (offset_clients >= le32_to_cpu(rp->system_page_size))
 		goto err_out;
 	ca = (LOG_CLIENT_RECORD*)((u8*)ra +
@@ -318,7 +318,7 @@ check_list:
 			idx = le16_to_cpu(cr->next_client)) {
 		if (!nr_clients || idx >= le16_to_cpu(ra->log_clients))
 			goto err_out;
-			/* The client record must be fully within page */
+		/* The client record must be fully within page */
 		if ((offset_clients + (idx + 1)*sizeof(LOG_CLIENT_RECORD))
 				> le32_to_cpu(rp->system_page_size))
 			goto err_out;
@@ -398,9 +398,9 @@ static int ntfs_check_and_load_restart_page(ntfs_attr *log_na,
 	 * and shorter than the full log size
 	 */
 	if ((le32_to_cpu(rp->system_page_size)
-			> (u32)(le16_to_cpu(rp->usa_count) - 1)*NTFS_BLOCK_SIZE)
-	   || (le32_to_cpu(rp->system_page_size)
-			> le64_to_cpu(log_na->data_size)))
+				> (u32)(le16_to_cpu(rp->usa_count) - 1)*NTFS_BLOCK_SIZE)
+			|| (le32_to_cpu(rp->system_page_size)
+				> le64_to_cpu(log_na->data_size)))
 		return (EINVAL);
 	trp = ntfs_malloc(le32_to_cpu(rp->system_page_size));
 	if (!trp)
@@ -413,7 +413,7 @@ static int ntfs_check_and_load_restart_page(ntfs_attr *log_na,
 	if (le32_to_cpu(rp->system_page_size) <= NTFS_BLOCK_SIZE)
 		memcpy(trp, rp, le32_to_cpu(rp->system_page_size));
 	else if (ntfs_attr_pread(log_na, pos,
-			le32_to_cpu(rp->system_page_size), trp) !=
+				le32_to_cpu(rp->system_page_size), trp) !=
 			le32_to_cpu(rp->system_page_size)) {
 		err = errno;
 		ntfs_log_error("Failed to read whole restart page into the "
@@ -428,7 +428,7 @@ static int ntfs_check_and_load_restart_page(ntfs_attr *log_na,
 	 */
 	if ((!ntfs_is_chkd_record(trp->magic) || le16_to_cpu(trp->usa_count))
 			&& ntfs_mst_post_read_fixup((NTFS_RECORD*)trp,
-			le32_to_cpu(rp->system_page_size))) {
+				le32_to_cpu(rp->system_page_size))) {
 		/*
 		 * A multi sector tranfer error was detected.  We only need to
 		 * abort if the restart page contents exceed the multi sector
@@ -438,7 +438,7 @@ static int ntfs_check_and_load_restart_page(ntfs_attr *log_na,
 				le16_to_cpu(ra->restart_area_length) >
 				NTFS_BLOCK_SIZE - (int)sizeof(u16)) {
 			ntfs_log_error("Multi sector transfer error "
-				   "detected in $LogFile restart page.\n");
+					"detected in $LogFile restart page.\n");
 			err = EINVAL;
 			goto err_out;
 		}
@@ -601,7 +601,7 @@ BOOL ntfs_check_logfile(ntfs_attr *log_na, RESTART_PAGE_HEADER **rp)
 		 * find a valid one further in the file.
 		 */
 		if (err != EINVAL)
-		      goto err_out;
+			goto err_out;
 		/* Continue looking. */
 		if (!pos)
 			pos = NTFS_BLOCK_SIZE >> 1;
@@ -620,7 +620,7 @@ is_empty:
 		if (rstr2_ph)
 			ntfs_log_error("BUG: rstr2_ph isn't NULL!\n");
 		ntfs_log_error("Did not find any restart pages in "
-			   "$LogFile and it was not empty.\n");
+				"$LogFile and it was not empty.\n");
 		return FALSE;
 	}
 	/* If both restart pages were found, use the more recent one. */
@@ -705,8 +705,8 @@ BOOL ntfs_is_logfile_clean(ntfs_attr *log_na, RESTART_PAGE_HEADER *rp)
 	if (ra->client_in_use_list != LOGFILE_NO_CLIENT &&
 			!(ra->flags & RESTART_VOLUME_IS_CLEAN)) {
 		ntfs_log_error("The disk contains an unclean file system (%d, "
-			       "%d).\n", le16_to_cpu(ra->client_in_use_list),
-			       le16_to_cpu(ra->flags));
+				"%d).\n", le16_to_cpu(ra->client_in_use_list),
+				le16_to_cpu(ra->flags));
 		return FALSE;
 	}
 	/* $LogFile indicates a clean shutdown. */

@@ -87,9 +87,9 @@ static int ntfs_need_ea(ntfs_inode *ni, ATTR_TYPES type, int size, int flags)
 			 */
 			if (ni->vol->major_ver >= 3) {
 				res = ntfs_attr_add(ni,	type,
-					AT_UNNAMED,0,&dummy,(s64)size);
+						AT_UNNAMED,0,&dummy,(s64)size);
 				if (!res) {
-					    NInoFileNameSetDirty(ni);
+					NInoFileNameSetDirty(ni);
 				}
 				NInoSetDirty(ni);
 			} else {
@@ -125,14 +125,14 @@ static void restore_ea_info(ntfs_attr *nai, const EA_INFORMATION *old_ea_info)
 				old_ea_info);
 		if ((size_t)written != sizeof(EA_INFORMATION)) {
 			ntfs_log_error("Could not restore the EA_INFORMATION,"
-				" possible inconsistency in inode %lld\n",
-				(long long)nai->ni->mft_no);
+					" possible inconsistency in inode %lld\n",
+					(long long)nai->ni->mft_no);
 		}
 	} else {
 		if (ntfs_attr_rm(nai)) {
 			ntfs_log_error("Could not delete the EA_INFORMATION,"
-				" possible inconsistency in inode %lld\n",
-				(long long)nai->ni->mft_no);
+					" possible inconsistency in inode %lld\n",
+					(long long)nai->ni->mft_no);
 		}
 	}
 	errno = olderrno;
@@ -143,8 +143,8 @@ static void restore_ea_info(ntfs_attr *nai, const EA_INFORMATION *old_ea_info)
  */
 
 static int ntfs_update_ea(ntfs_inode *ni, const char *value, size_t size,
-			const EA_INFORMATION *ea_info,
-			const EA_INFORMATION *old_ea_info)
+		const EA_INFORMATION *ea_info,
+		const EA_INFORMATION *old_ea_info)
 {
 	ntfs_attr *na;
 	ntfs_attr *nai;
@@ -155,23 +155,23 @@ static int ntfs_update_ea(ntfs_inode *ni, const char *value, size_t size,
 	if (nai) {
 		na = ntfs_attr_open(ni, AT_EA, AT_UNNAMED, 0);
 		if (na) {
-				/*
-				 * Set EA_INFORMATION first, it is easier to
-				 * restore the old value, if setting EA fails.
-				 */
+			/*
+			 * Set EA_INFORMATION first, it is easier to
+			 * restore the old value, if setting EA fails.
+			 */
 			if (ntfs_attr_pwrite(nai, 0, sizeof(EA_INFORMATION),
 						ea_info)
 					!= (s64)sizeof(EA_INFORMATION)) {
 				res = -errno;
 			} else {
 				if (((na->data_size > (s64)size)
-					&& ntfs_attr_truncate(na, size))
-				    || (ntfs_attr_pwrite(na, 0, size, value)
+							&& ntfs_attr_truncate(na, size))
+						|| (ntfs_attr_pwrite(na, 0, size, value)
 							!= (s64)size)) {
 					res = -errno;
-                                        if (old_ea_info)
+					if (old_ea_info)
 						restore_ea_info(nai,
-							old_ea_info);
+								old_ea_info);
 				}
 			}
 			ntfs_attr_close(na);
@@ -205,7 +205,7 @@ int ntfs_get_ntfs_ea(ntfs_inode *ni, char *value, size_t size)
 
 	if (ntfs_attr_exist(ni, AT_EA, AT_UNNAMED, 0)) {
 		ea_buf = ntfs_attr_readall(ni, AT_EA, (ntfschar*)NULL, 0,
-					&ea_size);
+				&ea_size);
 		if (ea_buf) {
 			if (value && (ea_size <= (s64)size))
 				memcpy(value, ea_buf, ea_size);
@@ -254,7 +254,7 @@ int ntfs_set_ntfs_ea(ntfs_inode *ni, const char *value, size_t size, int flags)
 
 	res = -1;
 	if (value && (size > 0)) {
-					/* do consistency checks */
+		/* do consistency checks */
 		offs = 0;
 		ok = TRUE;
 		ea_count = 0;
@@ -263,21 +263,21 @@ int ntfs_set_ntfs_ea(ntfs_inode *ni, const char *value, size_t size, int flags)
 		while (ok && (offs < size)) {
 			p_ea = (const EA_ATTR*)&value[offs];
 			nextoffs = offs + le32_to_cpu(p_ea->next_entry_offset);
-				/* null offset to next not allowed */
+			/* null offset to next not allowed */
 			ok = (nextoffs > offs)
-			    && (nextoffs <= size)
-			    && !(nextoffs & 3)
-			    && p_ea->name_length
+				&& (nextoffs <= size)
+				&& !(nextoffs & 3)
+				&& p_ea->name_length
 				/* zero sized value are allowed */
-			    && ((offs + offsetof(EA_ATTR,name)
-				+ p_ea->name_length + 1
-				+ le16_to_cpu(p_ea->value_length))
-				    <= nextoffs)
-			    && ((offs + offsetof(EA_ATTR,name)
-				+ p_ea->name_length + 1
-				+ le16_to_cpu(p_ea->value_length))
-				    >= (nextoffs - 3))
-			    && !p_ea->name[p_ea->name_length];
+				&& ((offs + offsetof(EA_ATTR,name)
+							+ p_ea->name_length + 1
+							+ le16_to_cpu(p_ea->value_length))
+						<= nextoffs)
+				&& ((offs + offsetof(EA_ATTR,name)
+							+ p_ea->name_length + 1
+							+ le16_to_cpu(p_ea->value_length))
+						>= (nextoffs - 3))
+				&& !p_ea->name[p_ea->name_length];
 			/* name not checked, as chkdsk accepts any chars */
 			if (ok) {
 				if (p_ea->flags & NEED_EA)
@@ -305,19 +305,19 @@ int ntfs_set_ntfs_ea(ntfs_inode *ni, const char *value, size_t size, int flags)
 
 			old_ea_size = 0;
 			old_ea_info = NULL;
-				/* Try to save the old EA_INFORMATION */
+			/* Try to save the old EA_INFORMATION */
 			if (ntfs_attr_exist(ni, AT_EA_INFORMATION,
-							AT_UNNAMED, 0)) {
+						AT_UNNAMED, 0)) {
 				old_ea_info = ntfs_attr_readall(ni,
-					AT_EA_INFORMATION,
-					(ntfschar*)NULL, 0, &old_ea_size);
+						AT_EA_INFORMATION,
+						(ntfschar*)NULL, 0, &old_ea_size);
 			}
 			/*
 			 * no EA or EA_INFORMATION : add them
 			 */
 			if (!ntfs_need_ea(ni, AT_EA_INFORMATION,
-					sizeof(EA_INFORMATION), flags)
-			    && !ntfs_need_ea(ni, AT_EA, 0, flags)) {
+						sizeof(EA_INFORMATION), flags)
+					&& !ntfs_need_ea(ni, AT_EA, 0, flags)) {
 				res = ntfs_update_ea(ni, value, size,
 						&ea_info, old_ea_info);
 			} else {
@@ -364,24 +364,24 @@ int ntfs_remove_ntfs_ea(ntfs_inode *ni)
 			if (na) {
 				/* Try to save the old EA_INFORMATION */
 				old_ea_info = ntfs_attr_readall(ni,
-					 AT_EA_INFORMATION,
-					 (ntfschar*)NULL, 0, &old_ea_size);
+						AT_EA_INFORMATION,
+						(ntfschar*)NULL, 0, &old_ea_size);
 				res = ntfs_attr_rm(na);
 				NInoFileNameSetDirty(ni);
 				if (!res) {
 					res = ntfs_attr_rm(nai);
 					if (res && old_ea_info) {
-					/*
-					 * Failed to remove the EA, try to
-					 * restore the EA_INFORMATION
-					 */
+						/*
+						 * Failed to remove the EA, try to
+						 * restore the EA_INFORMATION
+						 */
 						restore_ea_info(nai,
-							old_ea_info);
+								old_ea_info);
 					}
 				} else {
 					ntfs_log_error("Failed to remove the"
-						" EA_INFORMATION from inode %lld\n",
-						(long long)ni->mft_no);
+							" EA_INFORMATION from inode %lld\n",
+							(long long)ni->mft_no);
 				}
 				free(old_ea_info);
 				ntfs_attr_close(na);
@@ -435,7 +435,7 @@ int ntfs_ea_check_wsldev(ntfs_inode *ni, dev_t *rdevp)
 	}
 
 	lth = ntfs_get_ntfs_ea(ni, buf, bufsize);
-		/* retry if short buf */
+	/* retry if short buf */
 
 	if (lth > bufsize) {
 		free(buf);
@@ -452,15 +452,15 @@ int ntfs_ea_check_wsldev(ntfs_inode *ni, dev_t *rdevp)
 			p_ea = (const EA_ATTR*)&buf[offset];
 			next = le32_to_cpu(p_ea->next_entry_offset);
 			found = ((next > (int)(sizeof(lxdev) + sizeof(device)))
-				&& (p_ea->name_length == (sizeof(lxdev) - 1))
-				&& (p_ea->value_length
-					== const_cpu_to_le16(sizeof(device)))
-				&& !memcmp(p_ea->name, lxdev, sizeof(lxdev)));
+					&& (p_ea->name_length == (sizeof(lxdev) - 1))
+					&& (p_ea->value_length
+						== const_cpu_to_le16(sizeof(device)))
+					&& !memcmp(p_ea->name, lxdev, sizeof(lxdev)));
 			if (!found)
 				offset += next;
 		} while (!found && (next > 0) && (offset < lth));
 		if (found) {
-				/* beware of alignment */
+			/* beware of alignment */
 			memcpy(&device, &p_ea->name[p_ea->name_length + 1],
 					sizeof(device));
 			*rdevp = makedev(le32_to_cpu(device.major),
@@ -499,7 +499,7 @@ int ntfs_ea_set_wsl_not_symlink(ntfs_inode *ni, mode_t type, dev_t dev)
 	memset(&attr, 0, sizeof(attr));
 	mode = cpu_to_le32((u32)(type | 0644));
 	attr.mod.base.next_entry_offset
-			= const_cpu_to_le32(sizeof(attr.mod));
+		= const_cpu_to_le32(sizeof(attr.mod));
 	attr.mod.base.flags = 0;
 	attr.mod.base.name_length = sizeof(lxmod) - 1;
 	attr.mod.base.value_length = const_cpu_to_le16(sizeof(mode));
@@ -518,7 +518,7 @@ int ntfs_ea_set_wsl_not_symlink(ntfs_inode *ni, mode_t type, dev_t dev)
 		memcpy(attr.dev.name, lxdev, sizeof(lxdev));
 		memcpy(attr.dev.value, &device, sizeof(device));
 		len += sizeof(attr.dev);
-		}
+	}
 	res = ntfs_set_ntfs_ea(ni, (char*)&attr, len, 0);
 	return (res);
 }

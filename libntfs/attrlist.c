@@ -147,13 +147,17 @@ int ntfs_attrlist_entry_add(ntfs_inode *ni, ATTR_RECORD *attr)
 		err = errno;
 		goto err_out;
 	}
-	if (!ntfs_attr_lookup(attr->type, (attr->name_length) ? (ntfschar*)
-			((u8*)attr + le16_to_cpu(attr->name_offset)) :
-			AT_UNNAMED, attr->name_length, CASE_SENSITIVE,
-			(attr->non_resident) ? sle64_to_cpu(attr->lowest_vcn) :
-			0, (attr->non_resident) ? NULL : ((u8*)attr +
-			le16_to_cpu(attr->value_offset)), (attr->non_resident) ?
-			0 : le32_to_cpu(attr->value_length), ctx)) {
+	if (!ntfs_attr_lookup(attr->type,
+				(attr->name_length) ?
+					(ntfschar*) ((u8*)attr + le16_to_cpu(attr->name_offset)) :
+					AT_UNNAMED,
+				attr->name_length, CASE_SENSITIVE,
+				(attr->non_resident) ?
+					sle64_to_cpu(attr->lowest_vcn) : 0,
+				(attr->non_resident) ?
+					NULL : ((u8*)attr + le16_to_cpu(attr->value_offset)),
+				(attr->non_resident) ?
+					0 : le32_to_cpu(attr->value_length), ctx)) {
 		/* Found some extent, check it to be before new extent. */
 		if (ctx->al_entry->lowest_vcn == attr->lowest_vcn) {
 			err = EEXIST;
@@ -294,8 +298,9 @@ int ntfs_attrlist_entry_rm(ntfs_attr_search_ctx *ctx)
 
 	/* Copy entries from old attribute list to new. */
 	memcpy(new_al, base_ni->attr_list, (u8*)ale - base_ni->attr_list);
-	memcpy(new_al + ((u8*)ale - base_ni->attr_list), (u8*)ale + le16_to_cpu(
-		ale->length), new_al_len - ((u8*)ale - base_ni->attr_list));
+	memcpy(new_al + ((u8*)ale - base_ni->attr_list),
+			(u8*)ale + le16_to_cpu(ale->length),
+			new_al_len - ((u8*)ale - base_ni->attr_list));
 
 	/* Set new runlist. */
 	free(base_ni->attr_list);

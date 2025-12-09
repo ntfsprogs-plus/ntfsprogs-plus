@@ -50,8 +50,8 @@ extern int ntfs_mft_records_read(const ntfs_volume *vol, const MFT_REF mref,
 static __inline__ int ntfs_mft_record_read(const ntfs_volume *vol,
 		const MFT_REF mref, MFT_RECORD *b)
 {
-	int ret; 
-	
+	int ret;
+
 	ntfs_log_enter("Entering for inode %lld\n", (long long)MREF(mref));
 	ret = ntfs_mft_records_read(vol, mref, 1, b);
 	ntfs_log_leave("\n");
@@ -85,8 +85,8 @@ extern int ntfs_mft_records_write(const ntfs_volume *vol, const MFT_REF mref,
 static __inline__ int ntfs_mft_record_write(const ntfs_volume *vol,
 		const MFT_REF mref, MFT_RECORD *b)
 {
-	int ret; 
-	
+	int ret;
+
 	ntfs_log_enter("Entering for inode %lld\n", (long long)MREF(mref));
 	ret = ntfs_mft_records_write(vol, mref, 1, b);
 	ntfs_log_leave("\n");

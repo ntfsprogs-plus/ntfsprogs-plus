@@ -36,7 +36,7 @@
 #ifdef HAVE_SYS_PARAM_H
 #include <sys/param.h>
 #endif
-	/* Do not #include <sys/mount.h> here : conflicts with <linux/fs.h> */
+/* Do not #include <sys/mount.h> here : conflicts with <linux/fs.h> */
 #ifdef HAVE_MNTENT_H
 #include <mntent.h>
 #endif
@@ -86,8 +86,8 @@ extern int parse_errors;
 	do { \
 		ntfs_log_info("Parse #%d: " FORMAT, parse_count++, ##ARGS); \
 		if (fsck_errors) \
-			ntfs_log_info(" (left:%d, errors:%d, fixed:%d)", \
-				fsck_errors - fsck_fixes, fsck_errors, fsck_fixes); \
+		ntfs_log_info(" (left:%d, errors:%d, fixed:%d)", \
+			fsck_errors - fsck_fixes, fsck_errors, fsck_fixes); \
 		ntfs_log_info("\n"); \
 	} while (0)
 
@@ -95,10 +95,10 @@ extern int parse_errors;
 #define fsck_end_step() \
 	do { \
 		if ((fsck_errors - fsck_fixes) != parse_errors) \
-			parse_errors = (fsck_errors - fsck_fixes); \
+		parse_errors = (fsck_errors - fsck_fixes); \
 		if (parse_errors) \
-			ntfs_log_info("Parse #%d Errors remains: %d\n", \
-					parse_count - 1, parse_errors); \
+		ntfs_log_info("Parse #%d Errors remains: %d\n", \
+			parse_count - 1, parse_errors); \
 	} while (0)
 
 /**
@@ -119,7 +119,7 @@ enum {
 
 	NTFS_MNT_MAY_RDONLY             = 0x02000000, /* Allow fallback to ro */
 	NTFS_MNT_FORENSIC               = 0x04000000, /* No modification during
-	                                               * mount. */
+						       * mount. */
 	NTFS_MNT_EXCLUSIVE              = 0x08000000,
 	NTFS_MNT_RECOVER                = 0x10000000,
 	NTFS_MNT_IGNORE_HIBERFILE       = 0x20000000,
@@ -347,9 +347,9 @@ struct _ntfs_volume {
 	s32 attrdef_len;	/* Size of the attribute definition table in
 				   bytes. */
 
-	s64 free_clusters; 	/* Track the number of free clusters which
+	s64 free_clusters;	/* Track the number of free clusters which
 				   greatly improves statfs() performance */
-	s64 free_mft_records; 	/* Same for free mft records (see above) */
+	s64 free_mft_records;	/* Same for free mft records (see above) */
 	BOOL efs_raw;		/* volume is mounted for raw access to
 				   efs-encrypted files */
 	ntfs_volume_special_files special_files; /* Implementation of special files */

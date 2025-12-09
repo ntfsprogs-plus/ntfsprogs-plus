@@ -247,25 +247,25 @@ COLLATE ntfs_get_collate_function(COLLATION_RULES cr)
 	COLLATE collate;
 
 	switch (cr) {
-	case COLLATION_BINARY :
-		collate = ntfs_collate_binary;
-		break;
-	case COLLATION_FILE_NAME :
-		collate = ntfs_collate_file_name;
-		break;
-	case COLLATION_NTOFS_SECURITY_HASH :
-		collate = ntfs_collate_ntofs_security_hash;
-		break;
-	case COLLATION_NTOFS_ULONG :
-		collate = ntfs_collate_ntofs_ulong;
-		break;
-	case COLLATION_NTOFS_ULONGS :
-		collate = ntfs_collate_ntofs_ulongs;
-		break;
-	default :
-		errno = EOPNOTSUPP;
-		collate = (COLLATE)NULL;
-		break;
+		case COLLATION_BINARY :
+			collate = ntfs_collate_binary;
+			break;
+		case COLLATION_FILE_NAME :
+			collate = ntfs_collate_file_name;
+			break;
+		case COLLATION_NTOFS_SECURITY_HASH :
+			collate = ntfs_collate_ntofs_security_hash;
+			break;
+		case COLLATION_NTOFS_ULONG :
+			collate = ntfs_collate_ntofs_ulong;
+			break;
+		case COLLATION_NTOFS_ULONGS :
+			collate = ntfs_collate_ntofs_ulongs;
+			break;
+		default :
+			errno = EOPNOTSUPP;
+			collate = (COLLATE)NULL;
+			break;
 	}
 	return (collate);
 }

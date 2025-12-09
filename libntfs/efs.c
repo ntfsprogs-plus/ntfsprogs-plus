@@ -76,10 +76,10 @@ int ntfs_get_efs_info(ntfs_inode *ni, char *value, size_t size)
 	if (ni) {
 		if (ni->flags & FILE_ATTR_ENCRYPTED) {
 			efs_info = (EFS_ATTR_HEADER*)ntfs_attr_readall(ni,
-				AT_LOGGED_UTILITY_STREAM,(ntfschar*)NULL, 0,
-				&attr_size);
+					AT_LOGGED_UTILITY_STREAM,(ntfschar*)NULL, 0,
+					&attr_size);
 			if (efs_info
-			    && (le32_to_cpu(efs_info->length) == attr_size)) {
+					&& (le32_to_cpu(efs_info->length) == attr_size)) {
 				if (attr_size <= (s64)size) {
 					if (value)
 						memcpy(value,efs_info,attr_size);
@@ -97,11 +97,11 @@ int ntfs_get_efs_info(ntfs_inode *ni, char *value, size_t size)
 				if (efs_info) {
 					free(efs_info);
 					ntfs_log_error("Bad efs_info for inode %lld\n",
-						(long long)ni->mft_no);
+							(long long)ni->mft_no);
 				} else {
 					ntfs_log_error("Could not get efsinfo"
-						" for inode %lld\n",
-						(long long)ni->mft_no);
+							" for inode %lld\n",
+							(long long)ni->mft_no);
 				}
 				errno = EIO;
 				attr_size = 0;
@@ -109,7 +109,7 @@ int ntfs_get_efs_info(ntfs_inode *ni, char *value, size_t size)
 		} else {
 			errno = ENODATA;
 			ntfs_log_trace("Inode %lld is not encrypted\n",
-				(long long)ni->mft_no);
+					(long long)ni->mft_no);
 		}
 	}
 	return (attr_size ? (int)attr_size : -errno);
@@ -148,34 +148,34 @@ static int fixup_loop(ntfs_inode *ni)
 		}
 		cnt = 0;
 		while (!restart && !res
-			&& !ntfs_attr_lookup(AT_DATA, NULL, 0,
-				   CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+				&& !ntfs_attr_lookup(AT_DATA, NULL, 0,
+					CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 			cnt++;
 			a = ctx->attr;
 			na = ntfs_attr_open(ctx->ntfs_ino, AT_DATA,
-				(ntfschar*)((u8*)a + le16_to_cpu(a->name_offset)),
-				a->name_length);
+					(ntfschar*)((u8*)a + le16_to_cpu(a->name_offset)),
+					a->name_length);
 			if (!na) {
 				ntfs_log_error("can't open DATA Attribute\n");
 				res = -1;
 			}
 			if (na && !(ctx->attr->flags & ATTR_IS_ENCRYPTED)) {
 				if (!NAttrNonResident(na)
-				   && ntfs_attr_make_non_resident(na, ctx)) {
-				/*
-				 * ntfs_attr_make_non_resident fails if there
-				 * is not enough space in the MFT record.
-				 * When this happens, force making non-resident
-				 * so that some other attribute is expelled.
-				 */
+						&& ntfs_attr_make_non_resident(na, ctx)) {
+					/*
+					 * ntfs_attr_make_non_resident fails if there
+					 * is not enough space in the MFT record.
+					 * When this happens, force making non-resident
+					 * so that some other attribute is expelled.
+					 */
 					if (ntfs_attr_force_non_resident(na)) {
 						res = -1;
 					} else {
-					/* make sure there is some progress */
+						/* make sure there is some progress */
 						if (cnt <= maxcnt) {
 							errno = EIO;
 							ntfs_log_error("Multiple failure"
-								" making non resident\n");
+									" making non resident\n");
 							res = -1;
 						} else {
 							ntfs_attr_put_search_ctx(ctx);
@@ -186,13 +186,13 @@ static int fixup_loop(ntfs_inode *ni)
 					}
 				}
 				if (!restart && !res
-				    && ntfs_efs_fixup_attribute(ctx, na)) {
+						&& ntfs_efs_fixup_attribute(ctx, na)) {
 					ntfs_log_error("Error in efs fixup of AT_DATA Attribute\n");
 					res = -1;
 				}
 			}
-		if (na)
-			ntfs_attr_close(na);
+			if (na)
+				ntfs_attr_close(na);
 		}
 	} while (restart && !res);
 	if (ctx)
@@ -207,7 +207,7 @@ static int fixup_loop(ntfs_inode *ni)
  */
 
 int ntfs_set_efs_info(ntfs_inode *ni, const char *value, size_t size,
-			int flags)
+		int flags)
 
 {
 	int res;
@@ -230,27 +230,27 @@ int ntfs_set_efs_info(ntfs_inode *ni, const char *value, size_t size,
 				 * TODO : decompress first.
 				 */
 				ntfs_log_error("Inode %lld cannot be encrypted and compressed\n",
-					(long long)ni->mft_no);
+						(long long)ni->mft_no);
 				errno = EIO;
 			}
 			return -1;
 		}
 		info_header = (const EFS_ATTR_HEADER*)value;
-			/* make sure we get a likely efsinfo */
+		/* make sure we get a likely efsinfo */
 		if (le32_to_cpu(info_header->length) != size) {
 			errno = EINVAL;
 			return (-1);
 		}
 		if (!ntfs_attr_exist(ni,AT_LOGGED_UTILITY_STREAM,
-				(ntfschar*)NULL,0)) {
+					(ntfschar*)NULL,0)) {
 			if (!(flags & XATTR_REPLACE)) {
-			/*
-			 * no logged_utility_stream attribute : add one,
-			 * apparently, this does not feed the new value in
-			 */
+				/*
+				 * no logged_utility_stream attribute : add one,
+				 * apparently, this does not feed the new value in
+				 */
 				res = ntfs_attr_add(ni,AT_LOGGED_UTILITY_STREAM,
-					logged_utility_stream_name,4,
-					(u8*)NULL,(s64)size);
+						logged_utility_stream_name,4,
+						(u8*)NULL,(s64)size);
 			} else {
 				errno = ENODATA;
 				res = -1;
@@ -264,17 +264,17 @@ int ntfs_set_efs_info(ntfs_inode *ni, const char *value, size_t size,
 			 * open and update the existing efs data
 			 */
 			na = ntfs_attr_open(ni, AT_LOGGED_UTILITY_STREAM,
-				logged_utility_stream_name, 4);
+					logged_utility_stream_name, 4);
 			if (na) {
 				/* resize attribute */
 				res = ntfs_attr_truncate(na, (s64)size);
 				/* overwrite value if any */
 				if (!res && value) {
 					written = (int)ntfs_attr_pwrite(na,
-						 (s64)0, (s64)size, value);
+							(s64)0, (s64)size, value);
 					if (written != (s64)size) {
 						ntfs_log_error("Failed to "
-							"update efs data\n");
+								"update efs data\n");
 						errno = EIO;
 						res = -1;
 					}
@@ -287,10 +287,10 @@ int ntfs_set_efs_info(ntfs_inode *ni, const char *value, size_t size,
 			/* Don't handle AT_DATA Attribute(s) if inode is a directory */
 			if (!(ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)) {
 				/* iterate over AT_DATA attributes */
-                        	/* set encrypted flag, truncate attribute to match padding bytes */
+				/* set encrypted flag, truncate attribute to match padding bytes */
 
-			if (fixup_loop(ni))
-				return -1;
+				if (fixup_loop(ni))
+					return -1;
 			}
 			ni->flags |= FILE_ATTR_ENCRYPTED;
 			NInoSetDirty(ni);
@@ -335,19 +335,19 @@ int ntfs_efs_fixup_attribute(ntfs_attr_search_ctx *ctx, ntfs_attr *na)
 		}
 		close_ctx = TRUE;
 		if (ntfs_attr_lookup(AT_DATA, na->name, na->name_len,
-				CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+					CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 			ntfs_log_error("attr lookup for AT_DATA attribute failed in efs fixup\n");
 			goto err_out;
 		}
 	} else {
 		if (!NAttrNonResident(na)) {
 			ntfs_log_error("Cannot make non resident"
-				" when a context has been allocated\n");
+					" when a context has been allocated\n");
 			goto err_out;
 		}
 	}
 
-		/* no extra bytes are added to void attributes */
+	/* no extra bytes are added to void attributes */
 	oldsize = na->data_size;
 	if (oldsize) {
 		/* make sure size is valid for a raw encrypted stream */
@@ -364,7 +364,7 @@ int ntfs_efs_fixup_attribute(ntfs_attr_search_ctx *ctx, ntfs_attr *na)
 		if (padding_length > 511 || padding_length > na->data_size-2) {
 			errno = EINVAL;
 			ntfs_log_error("invalid padding length %d for data_size %lld\n",
-				 padding_length, (long long)oldsize);
+					padding_length, (long long)oldsize);
 			goto err_out;
 		}
 		newsize = oldsize - padding_length - 2;
@@ -387,9 +387,9 @@ int ntfs_efs_fixup_attribute(ntfs_attr_search_ctx *ctx, ntfs_attr *na)
 	 * resident.
 	 */
 	if (!NAttrNonResident(na)
-	    && ntfs_attr_make_non_resident(na, ctx)) {
+			&& ntfs_attr_make_non_resident(na, ctx)) {
 		if (!close_ctx
-		    || ntfs_attr_force_non_resident(na)) {
+				|| ntfs_attr_force_non_resident(na)) {
 			ntfs_log_error("Error making DATA attribute non-resident\n");
 			goto err_out;
 		} else {
@@ -401,7 +401,7 @@ int ntfs_efs_fixup_attribute(ntfs_attr_search_ctx *ctx, ntfs_attr *na)
 			 */
 			ntfs_attr_reinit_search_ctx(ctx);
 			if (ntfs_attr_lookup(AT_DATA, na->name, na->name_len,
-					CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+						CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 				ntfs_log_error("attr lookup for AT_DATA attribute failed in efs fixup\n");
 				goto err_out;
 			}

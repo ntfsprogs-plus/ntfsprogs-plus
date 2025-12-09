@@ -152,7 +152,7 @@ static void fix_big_endian(char *p, int size)
  */
 
 static int le_acl_to_cpu(const struct LE_POSIX_ACL *le_acl, size_t size,
-				struct POSIX_ACL *acl)
+		struct POSIX_ACL *acl)
 {
 	int i;
 	int cnt;
@@ -174,7 +174,7 @@ static int le_acl_to_cpu(const struct LE_POSIX_ACL *le_acl, size_t size,
  */
 
 int cpu_to_le_acl(const struct POSIX_ACL *acl, size_t size,
-			struct LE_POSIX_ACL *le_acl)
+		struct LE_POSIX_ACL *le_acl)
 {
 	int i;
 	int cnt;
@@ -200,7 +200,7 @@ int cpu_to_le_acl(const struct POSIX_ACL *acl, size_t size,
  */
 
 enum SYSTEMXATTRS ntfs_xattr_system_type(const char *name,
-			ntfs_volume *vol)
+		ntfs_volume *vol)
 {
 	struct XATTRNAME *p;
 	enum SYSTEMXATTRS ret;
@@ -222,9 +222,9 @@ enum SYSTEMXATTRS ntfs_xattr_system_type(const char *name,
 	}
 #else /* XATTR_MAPPINGS */
 	if (!p->name
-	    && vol
-	    && vol->efs_raw
-	    && !strcmp(nf_ns_alt_xattr_efsinfo,name))
+			&& vol
+			&& vol->efs_raw
+			&& !strcmp(nf_ns_alt_xattr_efsinfo,name))
 		ret = XATTR_NTFS_EFSINFO;
 #endif /* XATTR_MAPPINGS */
 	return (ret);
@@ -249,7 +249,7 @@ static int basicread(void *fileid, char *buf, size_t size, off_t offs __attribut
 static int localread(void *fileid, char *buf, size_t size, off_t offs)
 {
 	return (ntfs_attr_data_read((ntfs_inode*)fileid,
-			AT_UNNAMED, 0, buf, size, offs));
+				AT_UNNAMED, 0, buf, size, offs));
 }
 
 /*
@@ -260,7 +260,7 @@ static int localread(void *fileid, char *buf, size_t size, off_t offs)
  *	Returns pointer to item, or NULL when there is no more
  *	Note : errors are logged, but not returned
 // TODO partially share with acls.c
- */
+*/
 
 static struct XATTRMAPPING *getmappingitem(FILEREADER reader, void *fileid,
 		off_t *poffs, char *buf, int *psrc, s64 *psize)
@@ -280,12 +280,12 @@ static struct XATTRMAPPING *getmappingitem(FILEREADER reader, void *fileid,
 	do {
 		gotend = 0;
 		while ((src < *psize)
-		       && (buf[src] != '\n')) {
-				/* ignore spaces */
+				&& (buf[src] != '\n')) {
+			/* ignore spaces */
 			if ((dst < LINESZ)
-			    && (buf[src] != '\r')
-			    && (buf[src] != '\t')
-			    && (buf[src] != ' '))
+					&& (buf[src] != '\r')
+					&& (buf[src] != '\t')
+					&& (buf[src] != ' '))
 				maptext[dst++] = buf[src];
 			src++;
 		}
@@ -302,7 +302,7 @@ static struct XATTRMAPPING *getmappingitem(FILEREADER reader, void *fileid,
 	} while (*psize && ((maptext[0] == '#') || !gotend));
 	item = (struct XATTRMAPPING*)NULL;
 	if (gotend) {
-			/* decompose into system name and user name */
+		/* decompose into system name and user name */
 		ps = maptext;
 		pu = strchr(maptext,':');
 		if (pu) {
@@ -310,7 +310,7 @@ static struct XATTRMAPPING *getmappingitem(FILEREADER reader, void *fileid,
 			pe = strchr(pu,':');
 			if (pe)
 				*pe = 0;
-				/* check name validity */
+			/* check name validity */
 			if ((strlen(pu) < 6) || strncmp(pu,"user.",5))
 				pu = (char*)NULL;
 			xattr = ntfs_xattr_system_type(ps,
@@ -320,8 +320,8 @@ static struct XATTRMAPPING *getmappingitem(FILEREADER reader, void *fileid,
 		}
 		if (pu) {
 			item = (struct XATTRMAPPING*)ntfs_malloc(
-				sizeof(struct XATTRMAPPING)
-				+ strlen(pu));
+					sizeof(struct XATTRMAPPING)
+					+ strlen(pu));
 			if (item) {
 				item->xattr = xattr;
 				strcpy(item->name,pu);
@@ -351,7 +351,7 @@ static struct XATTRMAPPING *getmappingitem(FILEREADER reader, void *fileid,
  */
 
 static struct XATTRMAPPING *ntfs_read_xattr_mapping(FILEREADER reader,
-				void *fileid)
+		void *fileid)
 {
 	char buf[BUFSZ];
 	struct XATTRMAPPING *item;
@@ -371,13 +371,13 @@ static struct XATTRMAPPING *ntfs_read_xattr_mapping(FILEREADER reader,
 		src = 0;
 		do {
 			item = getmappingitem(reader, fileid, &offs,
-				buf, &src, &size);
+					buf, &src, &size);
 			if (item) {
 				/* check no double mapping */
 				duplicated = FALSE;
 				for (current=firstitem; current; current=current->next)
 					if ((current->xattr == item->xattr)
-					    || !strcmp(current->name,item->name))
+							|| !strcmp(current->name,item->name))
 						duplicated = TRUE;
 				if (duplicated) {
 					free(item);
@@ -404,7 +404,7 @@ static struct XATTRMAPPING *ntfs_read_xattr_mapping(FILEREADER reader,
  */
 
 struct XATTRMAPPING *ntfs_xattr_build_mapping(ntfs_volume *vol,
-			const char *xattrmap_path)
+		const char *xattrmap_path)
 {
 	struct XATTRMAPPING *firstmapping;
 	struct XATTRMAPPING *mapping;
@@ -480,9 +480,9 @@ void ntfs_xattr_free_mapping(struct XATTRMAPPING *mapping)
  */
 
 int ntfs_xattr_system_getxattr(struct SECURITY_CONTEXT *scx,
-			enum SYSTEMXATTRS attr,
-			ntfs_inode *ni, ntfs_inode *dir_ni,
-			char *value, size_t size)
+		enum SYSTEMXATTRS attr,
+		ntfs_inode *ni, ntfs_inode *dir_ni,
+		char *value, size_t size)
 {
 	int res;
 	int i;
@@ -502,10 +502,10 @@ int ntfs_xattr_system_getxattr(struct SECURITY_CONTEXT *scx,
 		acl = (struct POSIX_ACL*)ntfs_malloc(size);
 		if (acl) {
 			res = ntfs_get_posix_acl(scx, ni,
-				nf_ns_xattr_posix_access, (char*)acl, size);
+					nf_ns_xattr_posix_access, (char*)acl, size);
 			if (res > 0) {
 				if (cpu_to_le_acl(acl,res,
-						(struct LE_POSIX_ACL*)value))
+							(struct LE_POSIX_ACL*)value))
 					res = -errno;
 			}
 			free(acl);
@@ -516,10 +516,10 @@ int ntfs_xattr_system_getxattr(struct SECURITY_CONTEXT *scx,
 		acl = (struct POSIX_ACL*)ntfs_malloc(size);
 		if (acl) {
 			res = ntfs_get_posix_acl(scx, ni,
-				nf_ns_xattr_posix_default, (char*)acl, size);
+					nf_ns_xattr_posix_default, (char*)acl, size);
 			if (res > 0) {
 				if (cpu_to_le_acl(acl,res,
-						(struct LE_POSIX_ACL*)value))
+							(struct LE_POSIX_ACL*)value))
 					res = -errno;
 			}
 			free(acl);
@@ -607,9 +607,9 @@ int ntfs_xattr_system_getxattr(struct SECURITY_CONTEXT *scx,
  */
 
 int ntfs_xattr_system_setxattr(struct SECURITY_CONTEXT *scx,
-			enum SYSTEMXATTRS attr,
-			ntfs_inode *ni, ntfs_inode *dir_ni,
-			const char *value, size_t size, int flags)
+		enum SYSTEMXATTRS attr,
+		ntfs_inode *ni, ntfs_inode *dir_ni,
+		const char *value, size_t size, int flags)
 {
 	int res;
 	int i;
@@ -630,10 +630,10 @@ int ntfs_xattr_system_setxattr(struct SECURITY_CONTEXT *scx,
 		acl = (struct POSIX_ACL*)ntfs_malloc(size);
 		if (acl) {
 			if (!le_acl_to_cpu((const struct LE_POSIX_ACL*)value,
-					size, acl)) {
+						size, acl)) {
 				res = ntfs_set_posix_acl(scx ,ni ,
-					nf_ns_xattr_posix_access,
-					(char*)acl, size, flags);
+						nf_ns_xattr_posix_access,
+						(char*)acl, size, flags);
 			} else
 				res = -errno;
 			free(acl);
@@ -644,10 +644,10 @@ int ntfs_xattr_system_setxattr(struct SECURITY_CONTEXT *scx,
 		acl = (struct POSIX_ACL*)ntfs_malloc(size);
 		if (acl) {
 			if (!le_acl_to_cpu((const struct LE_POSIX_ACL*)value,
-					size, acl)) {
+						size, acl)) {
 				res = ntfs_set_posix_acl(scx ,ni ,
-					nf_ns_xattr_posix_default,
-					(char*)acl, size, flags);
+						nf_ns_xattr_posix_default,
+						(char*)acl, size, flags);
 			} else
 				res = -errno;
 			free(acl);
@@ -657,11 +657,11 @@ int ntfs_xattr_system_setxattr(struct SECURITY_CONTEXT *scx,
 #else
 	case XATTR_POSIX_ACC :
 		res = ntfs_set_posix_acl(scx ,ni , nf_ns_xattr_posix_access,
-					value, size, flags);
+				value, size, flags);
 		break;
 	case XATTR_POSIX_DEF :
 		res = ntfs_set_posix_acl(scx, ni, nf_ns_xattr_posix_default,
-					value, size, flags);
+				value, size, flags);
 		break;
 #endif
 #endif
@@ -692,9 +692,9 @@ int ntfs_xattr_system_setxattr(struct SECURITY_CONTEXT *scx,
 		break;
 	case XATTR_NTFS_DOS_NAME:
 		if (dir_ni)
-		/* warning : this closes both inodes */
+			/* warning : this closes both inodes */
 			res = ntfs_set_ntfs_dos_name(ni, dir_ni, value,
-						size, flags);
+					size, flags);
 		else {
 			errno = EINVAL;
 			res = -errno;
@@ -715,7 +715,7 @@ int ntfs_xattr_system_setxattr(struct SECURITY_CONTEXT *scx,
 		break;
 	case XATTR_NTFS_CRTIME:
 		res = ntfs_inode_set_times(ni, value,
-			(size >= sizeof(u64) ? sizeof(u64) : size), flags);
+				(size >= sizeof(u64) ? sizeof(u64) : size), flags);
 		break;
 	case XATTR_NTFS_CRTIME_BE:
 		if (value && (size >= sizeof(u64))) {
@@ -737,8 +737,8 @@ int ntfs_xattr_system_setxattr(struct SECURITY_CONTEXT *scx,
 }
 
 int ntfs_xattr_system_removexattr(struct SECURITY_CONTEXT *scx,
-			enum SYSTEMXATTRS attr,
-			ntfs_inode *ni, ntfs_inode *dir_ni)
+		enum SYSTEMXATTRS attr,
+		ntfs_inode *ni, ntfs_inode *dir_ni)
 {
 	int res;
 
@@ -748,61 +748,61 @@ int ntfs_xattr_system_removexattr(struct SECURITY_CONTEXT *scx,
 		 * Removal of NTFS ACL, ATTRIB, EFSINFO or TIMES
 		 * is never allowed
 		 */
-	case XATTR_NTFS_ACL :
-	case XATTR_NTFS_ATTRIB :
-	case XATTR_NTFS_ATTRIB_BE :
-	case XATTR_NTFS_EFSINFO :
-	case XATTR_NTFS_TIMES :
-	case XATTR_NTFS_TIMES_BE :
-	case XATTR_NTFS_CRTIME :
-	case XATTR_NTFS_CRTIME_BE :
-		res = -EPERM;
-		break;
+		case XATTR_NTFS_ACL :
+		case XATTR_NTFS_ATTRIB :
+		case XATTR_NTFS_ATTRIB_BE :
+		case XATTR_NTFS_EFSINFO :
+		case XATTR_NTFS_TIMES :
+		case XATTR_NTFS_TIMES_BE :
+		case XATTR_NTFS_CRTIME :
+		case XATTR_NTFS_CRTIME_BE :
+			res = -EPERM;
+			break;
 #if POSIXACLS
-	case XATTR_POSIX_ACC :
-	case XATTR_POSIX_DEF :
-		if (ni) {
-			if (!ntfs_allowed_as_owner(scx, ni)
-			   || ntfs_remove_posix_acl(scx, ni,
-					(attr == XATTR_POSIX_ACC ?
-					nf_ns_xattr_posix_access :
-					nf_ns_xattr_posix_default)))
+		case XATTR_POSIX_ACC :
+		case XATTR_POSIX_DEF :
+			if (ni) {
+				if (!ntfs_allowed_as_owner(scx, ni)
+						|| ntfs_remove_posix_acl(scx, ni,
+							(attr == XATTR_POSIX_ACC ?
+							 nf_ns_xattr_posix_access :
+							 nf_ns_xattr_posix_default)))
+					res = -errno;
+			} else
 				res = -errno;
-		} else
-			res = -errno;
-		break;
+			break;
 #endif
-	case XATTR_NTFS_REPARSE_DATA :
-		if (ni) {
-			if (!ntfs_allowed_as_owner(scx, ni)
-			    || ntfs_remove_ntfs_reparse_data(ni))
+		case XATTR_NTFS_REPARSE_DATA :
+			if (ni) {
+				if (!ntfs_allowed_as_owner(scx, ni)
+						|| ntfs_remove_ntfs_reparse_data(ni))
+					res = -errno;
+			} else
 				res = -errno;
-		} else
-			res = -errno;
-		break;
-	case XATTR_NTFS_OBJECT_ID :
-		if (ni) {
-			if (!ntfs_allowed_as_owner(scx, ni)
-			    || ntfs_remove_ntfs_object_id(ni))
+			break;
+		case XATTR_NTFS_OBJECT_ID :
+			if (ni) {
+				if (!ntfs_allowed_as_owner(scx, ni)
+						|| ntfs_remove_ntfs_object_id(ni))
+					res = -errno;
+			} else
 				res = -errno;
-		} else
-			res = -errno;
-		break;
-	case XATTR_NTFS_DOS_NAME:
-		if (ni && dir_ni) {
-			if (ntfs_remove_ntfs_dos_name(ni,dir_ni))
+			break;
+		case XATTR_NTFS_DOS_NAME:
+			if (ni && dir_ni) {
+				if (ntfs_remove_ntfs_dos_name(ni,dir_ni))
+					res = -errno;
+				/* ni and dir_ni have been closed */
+			} else
 				res = -errno;
-			/* ni and dir_ni have been closed */
-		} else
+			break;
+		case XATTR_NTFS_EA :
+			res = ntfs_remove_ntfs_ea(ni);
+			break;
+		default :
+			errno = EOPNOTSUPP;
 			res = -errno;
-		break;
-	case XATTR_NTFS_EA :
-		res = ntfs_remove_ntfs_ea(ni);
-		break;
-	default :
-		errno = EOPNOTSUPP;
-		res = -errno;
-		break;
+			break;
 	}
 	return (res);
 }

@@ -46,9 +46,9 @@ typedef enum {
 	/* The NI_AttrList* tests only make sense for base inodes. */
 	NI_AttrList,		/* 1: Mft record contains an attribute list. */
 	NI_AttrListDirty,	/* 1: Attribute list needs to be written to the
-				      mft record and then to disk. */
+						   mft record and then to disk. */
 	NI_FileNameDirty,	/* 1: FILE_NAME attributes need to be updated
-				      in the index. */
+						   in the index. */
 	NI_v3_Extensions,	/* 1: JPA v3.x extensions present. */
 	NI_TimesSet,		/* 1: Use times which were set */
 	NI_KnownSize,		/* 1: Set if sizes are meaningful */
@@ -59,9 +59,9 @@ typedef enum {
 #define clear_nino_flag(ni, flag)	  clear_bit(NI_##flag, (ni)->state)
 
 #define test_and_set_nino_flag(ni, flag)	\
-				   test_and_set_bit(NI_##flag, (ni)->state)
+	test_and_set_bit(NI_##flag, (ni)->state)
 #define test_and_clear_nino_flag(ni, flag)	\
-				 test_and_clear_bit(NI_##flag, (ni)->state)
+	test_and_clear_bit(NI_##flag, (ni)->state)
 
 #define NInoDirty(ni)				  test_nino_flag(ni, Dirty)
 #define NInoSetDirty(ni)			   set_nino_flag(ni, Dirty)
@@ -79,9 +79,9 @@ typedef enum {
 #define clear_nino_al_flag(ni, flag)	clear_nino_flag(ni, AttrList##flag)
 
 #define test_and_set_nino_al_flag(ni, flag)	\
-				 test_and_set_nino_flag(ni, AttrList##flag)
+	test_and_set_nino_flag(ni, AttrList##flag)
 #define test_and_clear_nino_al_flag(ni, flag)	\
-			       test_and_clear_nino_flag(ni, AttrList##flag)
+	test_and_clear_nino_flag(ni, AttrList##flag)
 
 #define NInoAttrListDirty(ni)			    test_nino_al_flag(ni, Dirty)
 #define NInoAttrListSetDirty(ni)		     set_nino_al_flag(ni, Dirty)
@@ -93,9 +93,9 @@ typedef enum {
 #define NInoFileNameSetDirty(ni)               set_nino_flag(ni, FileNameDirty)
 #define NInoFileNameClearDirty(ni)           clear_nino_flag(ni, FileNameDirty)
 #define NInoFileNameTestAndSetDirty(ni)		\
-				      test_and_set_nino_flag(ni, FileNameDirty)
+	test_and_set_nino_flag(ni, FileNameDirty)
 #define NInoFileNameTestAndClearDirty(ni)	\
-				    test_and_clear_nino_flag(ni, FileNameDirty)
+	test_and_clear_nino_flag(ni, FileNameDirty)
 
 /**
  * struct _ntfs_inode - The NTFS in-memory inode structure.
@@ -108,9 +108,9 @@ struct _ntfs_inode {
 	MFT_RECORD *mrec;	/* The actual mft record of the inode. */
 	ntfs_volume *vol;	/* Pointer to the ntfs volume of this inode. */
 	unsigned long state;	/* NTFS specific flags describing this inode.
-				   See ntfs_inode_state_bits above. */
+							   See ntfs_inode_state_bits above. */
 	FILE_ATTR_FLAGS flags;	/* Flags describing the file.
-				   (Copy from STANDARD_INFORMATION) */
+							   (Copy from STANDARD_INFORMATION) */
 	/*
 	 * Attribute list support (for use by the attribute lookup functions).
 	 * Setup during ntfs_open_inode() for all inodes with attribute lists.
@@ -120,15 +120,15 @@ struct _ntfs_inode {
 	u8 *attr_list;		/* Attribute list value itself. */
 	/* Below fields are always valid. */
 	s32 nr_extents;		/* For a base mft record, the number of
-				   attached extent inodes (0 if none), for
-				   extent records this is -1. */
+						   attached extent inodes (0 if none), for
+						   extent records this is -1. */
 	union {		/* This union is only used if nr_extents != 0. */
 		ntfs_inode **extent_nis;/* For nr_extents > 0, array of the
-					   ntfs inodes of the extent mft
-					   records belonging to this base
-					   inode which have been loaded. */
+								   ntfs inodes of the extent mft
+								   records belonging to this base
+								   inode which have been loaded. */
 		ntfs_inode *base_ni;	/* For nr_extents == -1, the ntfs
-					   inode of the base mft record. */
+								   inode of the base mft record. */
 	};
 
 	/* Below fields are valid only for base inode. */
@@ -141,13 +141,13 @@ struct _ntfs_inode {
 	 * flag KnownSize is set.
 	 */
 	s64 data_size;		/* Data size of unnamed DATA attribute
-				   (or INDEX_ROOT for directories) */
+						   (or INDEX_ROOT for directories) */
 	s64 allocated_size;	/* Allocated size stored in the filename
-				   index. (NOTE: Equal to allocated size of
-				   the unnamed data attribute for normal or
-				   encrypted files and to compressed size
-				   of the unnamed data attribute for sparse or
-				   compressed files.) */
+						   index. (NOTE: Equal to allocated size of
+						   the unnamed data attribute for normal or
+						   encrypted files and to compressed size
+						   of the unnamed data attribute for sparse or
+						   compressed files.) */
 
 	/*
 	 * These four fields are copy of relevant fields from
@@ -158,8 +158,8 @@ struct _ntfs_inode {
 	ntfs_time last_data_change_time;
 	ntfs_time last_mft_change_time;
 	ntfs_time last_access_time;
-				/* NTFS 3.x extensions added by JPA */
-				/* only if NI_v3_Extensions is set in state */
+	/* NTFS 3.x extensions added by JPA */
+	/* only if NI_v3_Extensions is set in state */
 	le32 owner_id;
 	le32 security_id;
 	le64 quota_charged;
@@ -219,7 +219,7 @@ extern int ntfs_inode_badclus_bad(u64 mft_no, ATTR_RECORD *a);
 extern int ntfs_inode_get_times(ntfs_inode *ni, char *value, size_t size);
 
 extern int ntfs_inode_set_times(ntfs_inode *ni, const char *value,
-			size_t size, int flags);
+		size_t size, int flags);
 
 /* debugging */
 #define debug_double_inode(num, type)

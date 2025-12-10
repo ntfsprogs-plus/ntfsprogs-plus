@@ -154,25 +154,25 @@ u64 orphan_cnt;
 /**
  * usage
  */
-__attribute__((noreturn))
+	__attribute__((noreturn))
 static void usage(int error)
 {
 	ntfs_log_info("%s v%s\n\n"
-		      "Usage: %s [options] device\n"
-		      "-a, --repair-auto	auto-repair. no questions\n"
-		      "-p,			auto-repair. no questions\n"
-		      "-C,			just check volume dirty\n"
-		      "-n, --repair-no		just check the consistency and no fix\n"
-		      "-q, --quiet		No progress bar\n"
-		      "-r, --repair		Repair interactively\n"
-		      "-y, --repair-yes		all yes about all question\n"
-		      "-v, --verbose		verbose\n"
-		      "-V, --version		version\n\n"
-		      "NOTE: -a/-p, -C, -n, -r, -y options are mutually exclusive with each other options\n\n"
-		      "For example: %s /dev/sda1\n"
-		      "For example: %s -C /dev/sda1\n"
-		      "For example: %s -a /dev/sda1\n\n",
-		      NTFS_PROGS, VERSION, NTFS_PROGS, NTFS_PROGS, NTFS_PROGS, NTFS_PROGS);
+		"Usage: %s [options] device\n"
+		"-a, --repair-auto	auto-repair. no questions\n"
+		"-p,			auto-repair. no questions\n"
+		"-C,			just check volume dirty\n"
+		"-n, --repair-no		just check the consistency and no fix\n"
+		"-q, --quiet		No progress bar\n"
+		"-r, --repair		Repair interactively\n"
+		"-y, --repair-yes		all yes about all question\n"
+		"-v, --verbose		verbose\n"
+		"-V, --version		version\n\n"
+		"NOTE: -a/-p, -C, -n, -r, -y options are mutually exclusive with each other options\n\n"
+		"For example: %s /dev/sda1\n"
+		"For example: %s -C /dev/sda1\n"
+		"For example: %s -a /dev/sda1\n\n",
+		NTFS_PROGS, VERSION, NTFS_PROGS, NTFS_PROGS, NTFS_PROGS, NTFS_PROGS);
 	exit(error ? RETURN_USAGE_OR_SYNTAX_ERROR : 0);
 }
 
@@ -1057,7 +1057,7 @@ stack_of:
 		}
 
 		while (!ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
-						CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+					CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 			fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
 					le16_to_cpu(ctx->attr->value_offset));
 
@@ -1229,15 +1229,15 @@ static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 	}
 
 	if (!ntfs_is_file_record(mrec_temp_buf->magic) ||
-	    !(mrec_temp_buf->flags & MFT_RECORD_IN_USE)) {
+			!(mrec_temp_buf->flags & MFT_RECORD_IN_USE)) {
 		ntfs_log_verbose("Record(%"PRId64") unused. Skipping.\n",
 				mft_num);
 		return;
 	}
 
 	ntfs_log_error("Record(%"PRId64") used. "
-		       "Mark the mft record as not in use.\n",
-		       mft_num);
+			"Mark the mft record as not in use.\n",
+			mft_num);
 	mrec_temp_buf->flags &= ~MFT_RECORD_IN_USE;
 	seq_no = le16_to_cpu(mrec_temp_buf->sequence_number);
 	if (seq_no == 0xffff)
@@ -1264,7 +1264,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	is_used = check_mftrec_in_use(vol, mft_num, 0);
 	if (is_used < 0) {
 		ntfs_log_error("Error getting bit value for record %"PRId64".\n",
-			mft_num);
+				mft_num);
 		return;
 	} else if (!is_used) {
 		if (mft_num < FILE_Extend) {
@@ -1490,7 +1490,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	if (!fn) {
 		/* NOT FOUND MFT/$FN */
 		filename = ntfs_attr_name_get(ie_fn->file_name,
-					      ie_fn->file_name_length);
+				ie_fn->file_name_length);
 		ntfs_log_error("Filename(%s) in index entry of parent(%"PRIu64") "
 				"was not found in inode(%"PRIu64")\n",
 				filename, ictx->ni->mft_no, ni->mft_no);
@@ -1511,17 +1511,17 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 
 	/* check parent MFT reference */
 	if (idx_pdir != mft_pdir ||
-		idx_pdir_seq != mft_pdir_seq ||
-		mft_pdir != ictx->ni->mft_no) {
-			filename = ntfs_attr_name_get(ie_fn->file_name,
-						      ie_fn->file_name_length);
-			ntfs_log_error("Parent MFT reference is different "
-					"(IDX/$FN:%"PRIu64"-%u MFT/$FN:%"PRIu64"-%u) "
-					"on inode(%"PRIu64", %s), parent(%"PRIu64")\n",
-					idx_pdir, idx_pdir_seq, mft_pdir, mft_pdir_seq,
-					ni->mft_no, filename, ictx->ni->mft_no);
-			ret = STATUS_ERROR;
-			goto out;
+			idx_pdir_seq != mft_pdir_seq ||
+			mft_pdir != ictx->ni->mft_no) {
+		filename = ntfs_attr_name_get(ie_fn->file_name,
+				ie_fn->file_name_length);
+		ntfs_log_error("Parent MFT reference is different "
+				"(IDX/$FN:%"PRIu64"-%u MFT/$FN:%"PRIu64"-%u) "
+				"on inode(%"PRIu64", %s), parent(%"PRIu64")\n",
+				idx_pdir, idx_pdir_seq, mft_pdir, mft_pdir_seq,
+				ni->mft_no, filename, ictx->ni->mft_no);
+		ret = STATUS_ERROR;
+		goto out;
 	}
 
 	/*
@@ -1539,7 +1539,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		if (ntfs_attr_lookup(AT_REPARSE_POINT, AT_UNNAMED, 0,
 					CASE_SENSITIVE, 0, NULL, 0, _ctx)) {
 			filename = ntfs_attr_name_get(ie_fn->file_name,
-						      ie_fn->file_name_length);
+					ie_fn->file_name_length);
 			ntfs_log_error("MFT flag set as reparse file, but there's no "
 					"MFT/$REPARSE_POINT attribute on inode(%"PRIu64":%s)",
 					ni->mft_no, filename);
@@ -1557,7 +1557,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 
 		if (ie_fn->reparse_point_tag != rpp->reparse_tag) {
 			filename = ntfs_attr_name_get(ie_fn->file_name,
-						      ie_fn->file_name_length);
+					ie_fn->file_name_length);
 			pctx->filename = filename;
 			fsck_err_found();
 			ntfs_print_problem(vol, PR_MFT_REPARSE_TAG_MISMATCH, &pctx);
@@ -1580,7 +1580,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
 		if (!(ie_fn->file_attributes & FILE_ATTR_I30_INDEX_PRESENT)) {
 			filename = ntfs_attr_name_get(ie_fn->file_name,
-						      ie_fn->file_name_length);
+					ie_fn->file_name_length);
 			pctx.filename = filename;
 			fsck_err_found();
 			if (ntfs_fix_problem(vol, PR_MFT_FLAG_MISMATCH, &pctx)) {
@@ -1597,7 +1597,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 				ni->allocated_size != 0 || ni->data_size != 0) {
 			if (!filename)
 				filename = ntfs_attr_name_get(ie_fn->file_name,
-							      ie_fn->file_name_length);
+						ie_fn->file_name_length);
 			pctx.filename = filename;
 			fsck_err_found();
 			if (ntfs_fix_problem(vol, PR_DIR_NONZERO_SIZE, &pctx)) {
@@ -1626,7 +1626,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	/* check $FN size fields */
 	if (ni->allocated_size != sle64_to_cpu(ie_fn->allocated_size)) {
 		filename = ntfs_attr_name_get(ie_fn->file_name,
-					      ie_fn->file_name_length);
+				ie_fn->file_name_length);
 		pctx.filename = filename;
 		fsck_err_found();
 		ntfs_print_problem(vol, PR_MFT_ALLOCATED_SIZE_MISMATCH, &pctx);
@@ -1640,7 +1640,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	 */
 	if (ni->data_size != sle64_to_cpu(ie_fn->data_size)) {
 		filename = ntfs_attr_name_get(ie_fn->file_name,
-					      ie_fn->file_name_length);
+				ie_fn->file_name_length);
 		pctx.filename = filename;
 		fsck_err_found();
 		ntfs_print_problem(vol, PR_MFT_DATA_SIZE_MISMATCH, &pctx);
@@ -1989,7 +1989,7 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 			/* TODO: last_vcn value should be recalculated */
 			/* Get the last vcn in the attribute. */
 			last_vcn = sle64_to_cpu(attr->allocated_size) >>
-					vol->cluster_size_bits;
+				vol->cluster_size_bits;
 		}
 
 		highest_vcn = sle64_to_cpu(attr->highest_vcn);
@@ -3031,7 +3031,7 @@ static inline int ntfsck_is_directory(FILE_NAME_ATTR *ie_fn)
  * next entry.
  */
 static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
-			       ntfs_index_context *ictx)
+		ntfs_index_context *ictx)
 {
 	ntfs_inode *ni;
 	struct dir *dir;
@@ -3283,7 +3283,7 @@ out:
 }
 
 static void ntfsck_validate_index_blocks(ntfs_volume *vol,
-					 ntfs_index_context *ictx)
+		ntfs_index_context *ictx)
 {
 	ntfs_attr *bmp_na = NULL;
 	INDEX_ALLOCATION *ia;
@@ -3329,7 +3329,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	}
 
 	memcpy(ir_buf, (u8 *)&ir->index + le32_to_cpu(ir->index.entries_offset),
-		       ir_size);
+			ir_size);
 
 	/* check entries in INDEX_ROOT */
 	ie = (INDEX_ENTRY *)ir_buf;
@@ -3339,7 +3339,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 			ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
 		/* check length bound */
 		if ((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end ||
-		    (u8 *)ie + le16_to_cpu(ie->length) > index_end) {
+				(u8 *)ie + le16_to_cpu(ie->length) > index_end) {
 			ntfs_log_error("Index root entry out of bounds in"
 					" inode %"PRId64"\n", ni->mft_no);
 			goto initialize_index;
@@ -3361,7 +3361,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 		/* The file name must not overflow from the entry */
 		if (ntfs_index_entry_inconsistent(vol, ie, COLLATION_FILE_NAME,
-				ni->mft_no, NULL) < 0) {
+					ni->mft_no, NULL) < 0) {
 			ntfs_log_error("Index entry(%p) of inode(%"PRIu64
 					") is inconsistent\n", ie, ni->mft_no);
 			goto initialize_index;
@@ -3780,7 +3780,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		ntfs_attr_reinit_search_ctx(ctx);
 		/* Find the index root attribute in the mft record. */
 		if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4,
-				     CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+					CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 			ntfs_log_perror("Index root attribute missing in directory inode "
 					"%"PRId64"", dir_ni->mft_no);
 			goto err_continue;
@@ -3796,7 +3796,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
 			/* read $IA */
 			ictx->ia_na = ntfs_attr_open(dir_ni, AT_INDEX_ALLOCATION,
-							ictx->name, ictx->name_len);
+					ictx->name, ictx->name_len);
 			if (!ictx->ia_na) {
 				ntfs_log_perror("Failed to open index allocation of inode "
 						"%"PRIu64"", dir_ni->mft_no);
@@ -3855,7 +3855,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		while ((next = ntfs_index_next(next, ictx)) != NULL) {
 check_index:
 			if (!ntfs_fsck_mftbmp_get(vol,
-					MREF(le64_to_cpu(next->indexed_file))))
+						MREF(le64_to_cpu(next->indexed_file))))
 				progress_update(&prog, ++checked_cnt);
 
 			ret = ntfsck_check_index(vol, next, ictx);
@@ -3931,7 +3931,7 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 
 	// For each mft record, verify that it contains a valid file record.
 	nr_mft_records = vol->mft_na->initialized_size >>
-			vol->mft_record_size_bits;
+		vol->mft_record_size_bits;
 	ntfs_log_verbose("Checking %"PRId64" MFT records.\n", nr_mft_records);
 
 	progress_init(&prog, 0, nr_mft_records, 1000, pb_flags);
@@ -3999,12 +3999,12 @@ static inline BOOL ntfsck_opened_ni_vol(s64 mft_num)
 	BOOL is_opened = FALSE;
 
 	switch (mft_num) {
-	case FILE_MFT:
-	case FILE_MFTMirr:
-	case FILE_Volume:
-	case FILE_Bitmap:
-	case FILE_Secure:
-		is_opened = TRUE;
+		case FILE_MFT:
+		case FILE_MFTMirr:
+		case FILE_Volume:
+		case FILE_Bitmap:
+		case FILE_Secure:
+			is_opened = TRUE;
 	}
 
 	return is_opened;
@@ -4015,20 +4015,20 @@ static ntfs_inode *ntfsck_get_opened_ni_vol(ntfs_volume *vol, s64 mft_num)
 	ntfs_inode *ni = NULL;
 
 	switch (mft_num) {
-	case FILE_MFT:
-		ni = vol->mft_ni;
-		break;
-	case FILE_MFTMirr:
-		ni = vol->mftmirr_ni;
-		break;
-	case FILE_Volume:
-		ni = vol->vol_ni;
-		break;
-	case FILE_Bitmap:
-		ni = vol->lcnbmp_ni;
-		break;
-	case FILE_Secure:
-		ni = vol->secure_ni;
+		case FILE_MFT:
+			ni = vol->mft_ni;
+			break;
+		case FILE_MFTMirr:
+			ni = vol->mftmirr_ni;
+			break;
+		case FILE_Volume:
+			ni = vol->vol_ni;
+			break;
+		case FILE_Bitmap:
+			ni = vol->lcnbmp_ni;
+			break;
+		case FILE_Secure:
+			ni = vol->secure_ni;
 	}
 
 	return ni;
@@ -4054,7 +4054,7 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 		/* TODO: check sub-directory */
 		ntfsck_check_inode_non_resident(ni, 1);
 		break;
-	case FILE_Bitmap: {
+	case FILE_Bitmap:
 		s64 max_lcnbmp_size;
 
 		if (ntfs_attr_map_whole_runlist(vol->lcnbmp_na)) {
@@ -4107,7 +4107,6 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 			}
 		}
 		break;
-	}
 	}
 
 	return 0;
@@ -4500,7 +4499,7 @@ static int ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
 	is_used = check_mftrec_in_use(vol, mft_num, 0);
 	if (is_used < 0) {
 		ntfs_log_error("Error getting bit value for record %"PRId64".\n",
-			mft_num);
+				mft_num);
 		return STATUS_ERROR;
 	} else if (!is_used) {
 		if (mft_num < FILE_Extend) {
@@ -4553,7 +4552,7 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 
 	// For each mft record, verify that it contains a valid file record.
 	nr_mft_records = vol->mft_na->initialized_size >>
-			vol->mft_record_size_bits;
+		vol->mft_record_size_bits;
 	ntfs_log_verbose("Scanning maximum %"PRId64" MFT records.\n", nr_mft_records);
 
 	ntfs_print_message(vol, PR_PRE_SCAN_MFT, &pctx);
@@ -4605,8 +4604,8 @@ int main(int argc, char **argv)
 					check_dirty_only == TRUE) {
 conflict_option:
 				ntfs_log_error("\n%s: "
-				"Only one of the optinos -a/-p, -C, -n, -r or -y may be specified.\n",
-				NTFS_PROGS);
+						"Only one of the optinos -a/-p, -C, -n, -r or -y may be specified.\n",
+						NTFS_PROGS);
 
 				exit(RETURN_USAGE_OR_SYNTAX_ERROR);
 			}
@@ -4615,8 +4614,8 @@ conflict_option:
 			break;
 		case 'C':	/* exclusive with others */
 			if (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
-							NTFS_MNT_FS_ASK_REPAIR |
-							NTFS_MNT_FS_YES_REPAIR)) {
+						NTFS_MNT_FS_ASK_REPAIR |
+						NTFS_MNT_FS_YES_REPAIR)) {
 				goto conflict_option;
 			}
 
@@ -4664,8 +4663,8 @@ conflict_option:
 			break;
 		case 'v':
 			option.verbose = 1;
-                        ntfs_log_set_levels(NTFS_LOG_LEVEL_VERBOSE);
-                        break;
+			ntfs_log_set_levels(NTFS_LOG_LEVEL_VERBOSE);
+			break;
 		case 'V':
 			version();
 			break;
@@ -4677,9 +4676,9 @@ conflict_option:
 
 	/* If not set fsck repair option, set default fsck flags to ASK mode. */
 	if (!(option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
-				NTFS_MNT_FS_NO_REPAIR |
-				NTFS_MNT_FS_ASK_REPAIR |
-				NTFS_MNT_FS_YES_REPAIR))) {
+					NTFS_MNT_FS_NO_REPAIR |
+					NTFS_MNT_FS_ASK_REPAIR |
+					NTFS_MNT_FS_YES_REPAIR))) {
 		option.flags |= NTFS_MNT_FS_ASK_REPAIR;
 	}
 

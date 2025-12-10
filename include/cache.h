@@ -38,7 +38,7 @@ struct CACHED_INODE {
 	const char *pathname;
 	size_t varsize;
 	union ALIGNMENT payload[0];
-		/* above fields must match "struct CACHED_GENERIC" */
+	/* above fields must match "struct CACHED_GENERIC" */
 	u64 inum;
 } ;
 
@@ -48,7 +48,7 @@ struct CACHED_NIDATA {
 	const char *pathname;	/* not used */
 	size_t varsize;		/* not used */
 	union ALIGNMENT payload[0];
-		/* above fields must match "struct CACHED_GENERIC" */
+	/* above fields must match "struct CACHED_GENERIC" */
 	u64 inum;
 	ntfs_inode *ni;
 } ;
@@ -59,7 +59,7 @@ struct CACHED_LOOKUP {
 	const char *name;
 	size_t namesize;
 	union ALIGNMENT payload[0];
-		/* above fields must match "struct CACHED_GENERIC" */
+	/* above fields must match "struct CACHED_GENERIC" */
 	u64 parent;
 	u64 inum;
 } ;
@@ -70,7 +70,7 @@ enum {
 } ;
 
 typedef int (*cache_compare)(const struct CACHED_GENERIC *cached,
-				const struct CACHED_GENERIC *item);
+		const struct CACHED_GENERIC *item);
 typedef void (*cache_free)(const struct CACHED_GENERIC *cached);
 typedef int (*cache_hash)(const struct CACHED_GENERIC *cached);
 
@@ -96,20 +96,20 @@ struct CACHE_HEADER {
 	struct CACHED_GENERIC entry[0];
 } ;
 
-	/* cast to generic, avoiding gcc warnings */
+/* cast to generic, avoiding gcc warnings */
 #define GENERIC(pstr) ((const struct CACHED_GENERIC*)(const void*)(pstr))
 
 struct CACHED_GENERIC *ntfs_fetch_cache(struct CACHE_HEADER *cache,
-			const struct CACHED_GENERIC *wanted,
-			cache_compare compare);
+		const struct CACHED_GENERIC *wanted,
+		cache_compare compare);
 struct CACHED_GENERIC *ntfs_enter_cache(struct CACHE_HEADER *cache,
-			const struct CACHED_GENERIC *item,
-			cache_compare compare);
+		const struct CACHED_GENERIC *item,
+		cache_compare compare);
 int ntfs_invalidate_cache(struct CACHE_HEADER *cache,
-			const struct CACHED_GENERIC *item,
-			cache_compare compare, int flags);
+		const struct CACHED_GENERIC *item,
+		cache_compare compare, int flags);
 int ntfs_remove_cache(struct CACHE_HEADER *cache,
-			struct CACHED_GENERIC *item, int flags);
+		struct CACHED_GENERIC *item, int flags);
 
 void ntfs_create_lru_caches(ntfs_volume *vol);
 void ntfs_free_lru_caches(ntfs_volume *vol);

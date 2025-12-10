@@ -188,6 +188,6 @@ static __inline__ void ntfs_list_splice(struct ntfs_list_head *list,
  */
 #define ntfs_list_for_each_safe(pos, n, head) \
 	for (pos = (head)->next, n = pos->next; pos != (head); \
-		pos = n, n = pos->next)
+			pos = n, n = pos->next)
 
 #endif /* defined _NTFS_LIST_H */

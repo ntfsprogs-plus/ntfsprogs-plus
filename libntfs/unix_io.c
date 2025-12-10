@@ -143,7 +143,7 @@ static int ntfs_device_unix_io_open(struct ntfs_device *dev, int flags)
 	*(int*)dev->d_private = open(dev->d_name, flags);
 	if (*(int*)dev->d_private == -1) {
 		err = errno;
-			/* if permission error and rw, retry read-only */
+		/* if permission error and rw, retry read-only */
 		if ((err == EACCES) && ((flags & O_RDWR) == O_RDWR))
 			err = EROFS;
 
@@ -154,7 +154,7 @@ static int ntfs_device_unix_io_open(struct ntfs_device *dev, int flags)
 		goto err_out;
 	}
 #ifdef HAVE_LINUX_FS_H
-		/* Check whether the device was forced read-only */
+	/* Check whether the device was forced read-only */
 	if (NDevBlock(dev) && ((flags & O_RDWR) == O_RDWR)) {
 		int r;
 		int state;
@@ -165,7 +165,7 @@ static int ntfs_device_unix_io_open(struct ntfs_device *dev, int flags)
 			if (close(DEV_FD(dev)))
 				err = errno;
 			goto err_out;
-   		}
+		}
 	}
 #endif
 

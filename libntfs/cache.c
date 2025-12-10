@@ -61,7 +61,7 @@
  */
 
 static void inserthashindex(struct CACHE_HEADER *cache,
-			struct CACHED_GENERIC *current)
+		struct CACHED_GENERIC *current)
 {
 	int h;
 	struct HASH_ENTRY *link;
@@ -89,8 +89,8 @@ static void inserthashindex(struct CACHE_HEADER *cache,
 			}
 		} else {
 			ntfs_log_error("Illegal hash value,"
-						" cache %s hashing dropped\n",
-						cache->name);
+					" cache %s hashing dropped\n",
+					cache->name);
 			cache->dohash = (cache_hash)NULL;
 		}
 	}
@@ -101,7 +101,7 @@ static void inserthashindex(struct CACHE_HEADER *cache,
  */
 
 static void drophashindex(struct CACHE_HEADER *cache,
-			const struct CACHED_GENERIC *current, int hash)
+		const struct CACHED_GENERIC *current, int hash)
 {
 	struct HASH_ENTRY *link;
 	struct HASH_ENTRY *previous;
@@ -160,7 +160,7 @@ struct CACHED_GENERIC *ntfs_fetch_cache(struct CACHE_HEADER *cache,
 			 * locate the entry if present
 			 */
 			h = cache->dohash(wanted);
-		        link = cache->first_hash[h];
+			link = cache->first_hash[h];
 			while (link && compare(link->entry, wanted))
 				link = link->next;
 			if (link)
@@ -173,18 +173,18 @@ struct CACHED_GENERIC *ntfs_fetch_cache(struct CACHE_HEADER *cache,
 			 */
 			current = cache->most_recent_entry;
 			while (current
-				   && compare(current, wanted)) {
+					&& compare(current, wanted)) {
 				current = current->next;
-				}
+			}
 		}
 		if (current) {
 			previous = current->previous;
 			cache->hits++;
 			if (previous) {
-			/*
-			 * found and not at head of list, unlink from current
-			 * position and relink as head of list
-			 */
+				/*
+				 * found and not at head of list, unlink from current
+				 * position and relink as head of list
+				 */
 				previous->next = current->next;
 				if (current->next)
 					current->next->previous
@@ -194,7 +194,7 @@ struct CACHED_GENERIC *ntfs_fetch_cache(struct CACHE_HEADER *cache,
 						= current->previous;
 				current->next = cache->most_recent_entry;
 				current->previous
-						= (struct CACHED_GENERIC*)NULL;
+					= (struct CACHED_GENERIC*)NULL;
 				cache->most_recent_entry->previous = current;
 				cache->most_recent_entry = current;
 			}
@@ -210,8 +210,8 @@ struct CACHED_GENERIC *ntfs_fetch_cache(struct CACHE_HEADER *cache,
  */
 
 struct CACHED_GENERIC *ntfs_enter_cache(struct CACHE_HEADER *cache,
-			const struct CACHED_GENERIC *item,
-			cache_compare compare)
+		const struct CACHED_GENERIC *item,
+		cache_compare compare)
 {
 	struct CACHED_GENERIC *current;
 	struct CACHED_GENERIC *before;
@@ -226,7 +226,7 @@ struct CACHED_GENERIC *ntfs_enter_cache(struct CACHE_HEADER *cache,
 			 * find out whether the entry if present
 			 */
 			h = cache->dohash(item);
-		        link = cache->first_hash[h];
+			link = cache->first_hash[h];
 			while (link && compare(link->entry, item))
 				link = link->next;
 			if (link) {
@@ -239,12 +239,12 @@ struct CACHED_GENERIC *ntfs_enter_cache(struct CACHE_HEADER *cache,
 			 * and find out whether the entry is already in list
 			 * As we normally go to the end, no statistics is
 			 * kept.
-		 	 */
+			 */
 			current = cache->most_recent_entry;
 			while (current
-			   && compare(current, item)) {
+					&& compare(current, item)) {
 				current = current->next;
-				}
+			}
 		}
 
 		if (!current) {
@@ -260,8 +260,7 @@ struct CACHED_GENERIC *ntfs_enter_cache(struct CACHE_HEADER *cache,
 				current = cache->free_entry;
 				cache->free_entry = cache->free_entry->next;
 				if (item->varsize) {
-					current->variable = ntfs_malloc(
-						item->varsize);
+					current->variable = ntfs_malloc(item->varsize);
 				} else
 					current->variable = (void*)NULL;
 				current->varsize = item->varsize;
@@ -274,18 +273,18 @@ struct CACHED_GENERIC *ntfs_enter_cache(struct CACHE_HEADER *cache,
 				before->next = (struct CACHED_GENERIC*)NULL;
 				if (cache->dohash)
 					drophashindex(cache,current,
-						cache->dohash(current));
+							cache->dohash(current));
 				if (cache->dofree)
 					cache->dofree(current);
 				cache->oldest_entry = current->previous;
 				if (item->varsize) {
 					if (current->varsize)
 						current->variable = realloc(
-							current->variable,
-							item->varsize);
+								current->variable,
+								item->varsize);
 					else
 						current->variable = ntfs_malloc(
-							item->varsize);
+								item->varsize);
 				} else {
 					if (current->varsize)
 						free(current->variable);
@@ -302,7 +301,7 @@ struct CACHED_GENERIC *ntfs_enter_cache(struct CACHE_HEADER *cache,
 			if (item->varsize) {
 				if (current->variable) {
 					memcpy(current->variable,
-						item->variable, item->varsize);
+							item->variable, item->varsize);
 				} else {
 					/*
 					 * no more memory for variable part
@@ -360,7 +359,7 @@ static void do_invalidate(struct CACHE_HEADER *cache,
 	if (current->variable)
 		free(current->variable);
 	current->varsize = 0;
-   }
+}
 
 
 /*
@@ -394,7 +393,7 @@ int ntfs_invalidate_cache(struct CACHE_HEADER *cache,
 			 * find out whether the entry if present
 			 */
 			h = cache->dohash(item);
-		        link = cache->first_hash[h];
+			link = cache->first_hash[h];
 			while (link) {
 				if (compare(link->entry, item))
 					link = link->next;
@@ -404,23 +403,23 @@ int ntfs_invalidate_cache(struct CACHE_HEADER *cache,
 					if (current) {
 						drophashindex(cache,current,h);
 						do_invalidate(cache,
-							current,flags);
+								current,flags);
 						count++;
 					}
 				}
 			}
 		}
 		if ((flags & CACHE_NOHASH) || !cache->dohash) {
-				/*
-				 * Search sequentially in LRU list
-				 */
+			/*
+			 * Search sequentially in LRU list
+			 */
 			current = cache->most_recent_entry;
 			while (current) {
 				if (!compare(current, item)) {
 					next = current->next;
 					if (cache->dohash)
 						drophashindex(cache,current,
-						    cache->dohash(current));
+								cache->dohash(current));
 					do_invalidate(cache,current,flags);
 					current = next;
 					count++;
@@ -474,9 +473,9 @@ static void ntfs_free_cache(struct CACHE_HEADER *cache)
  */
 
 static struct CACHE_HEADER *ntfs_create_cache(const char *name,
-			cache_free dofree, cache_hash dohash,
-			int full_item_size,
-			int item_count, int max_hash)
+		cache_free dofree, cache_hash dohash,
+		int full_item_size,
+		int item_count, int max_hash)
 {
 	struct CACHE_HEADER *cache;
 	struct CACHED_GENERIC *pc;
@@ -490,10 +489,10 @@ static struct CACHE_HEADER *ntfs_create_cache(const char *name,
 	size = sizeof(struct CACHE_HEADER) + item_count*full_item_size;
 	if (max_hash)
 		size += item_count*sizeof(struct HASH_ENTRY)
-			 + max_hash*sizeof(struct HASH_ENTRY*);
+			+ max_hash*sizeof(struct HASH_ENTRY*);
 	cache = (struct CACHE_HEADER*)ntfs_malloc(size);
 	if (cache) {
-				/* header */
+		/* header */
 		cache->name = name;
 		cache->dofree = dofree;
 		if (dohash && max_hash) {
@@ -514,19 +513,19 @@ static struct CACHE_HEADER *ntfs_create_cache(const char *name,
 		pc = &cache->entry[0];
 		for (i=0; i<(item_count - 1); i++) {
 			qc = (struct CACHED_GENERIC*)((char*)pc
-							 + full_item_size);
+					+ full_item_size);
 			pc->next = qc;
 			pc->variable = (void*)NULL;
 			pc->varsize = 0;
 			pc = qc;
 		}
-			/* special for the last entry */
+		/* special for the last entry */
 		pc->next =  (struct CACHED_GENERIC*)NULL;
 		pc->variable = (void*)NULL;
 		pc->varsize = 0;
 
 		if (max_hash) {
-				/* chain the hash entries */
+			/* chain the hash entries */
 			ph = (struct HASH_ENTRY*)(((char*)pc) + full_item_size);
 			cache->free_hash = ph;
 			for (i=0; i<(item_count - 1); i++) {
@@ -534,11 +533,11 @@ static struct CACHE_HEADER *ntfs_create_cache(const char *name,
 				ph->next = qh;
 				ph = qh;
 			}
-				/* special for the last entry */
+			/* special for the last entry */
 			if (item_count) {
 				ph->next =  (struct HASH_ENTRY*)NULL;
 			}
-				/* create and initialize the hash indexes */
+			/* create and initialize the hash indexes */
 			px = (struct HASH_ENTRY**)&ph[1];
 			cache->first_hash = px;
 			for (i=0; i<max_hash; i++)
@@ -561,30 +560,30 @@ static struct CACHE_HEADER *ntfs_create_cache(const char *name,
 void ntfs_create_lru_caches(ntfs_volume *vol)
 {
 #if CACHE_INODE_SIZE
-		 /* inode cache */
+	/* inode cache */
 	vol->xinode_cache = ntfs_create_cache("inode",(cache_free)NULL,
-		ntfs_dir_inode_hash, sizeof(struct CACHED_INODE),
-		CACHE_INODE_SIZE, 2*CACHE_INODE_SIZE);
+			ntfs_dir_inode_hash, sizeof(struct CACHED_INODE),
+			CACHE_INODE_SIZE, 2*CACHE_INODE_SIZE);
 #endif
 #if CACHE_NIDATA_SIZE
-		 /* idata cache */
+	/* idata cache */
 	vol->nidata_cache = ntfs_create_cache("nidata",
-		ntfs_inode_nidata_free, ntfs_inode_nidata_hash,
-		sizeof(struct CACHED_NIDATA),
-		CACHE_NIDATA_SIZE, 2*CACHE_NIDATA_SIZE);
+			ntfs_inode_nidata_free, ntfs_inode_nidata_hash,
+			sizeof(struct CACHED_NIDATA),
+			CACHE_NIDATA_SIZE, 2*CACHE_NIDATA_SIZE);
 #endif
 #if CACHE_LOOKUP_SIZE
-		 /* lookup cache */
+	/* lookup cache */
 	vol->lookup_cache = ntfs_create_cache("lookup",
-		(cache_free)NULL, ntfs_dir_lookup_hash,
-		sizeof(struct CACHED_LOOKUP),
-		CACHE_LOOKUP_SIZE, 2*CACHE_LOOKUP_SIZE);
+			(cache_free)NULL, ntfs_dir_lookup_hash,
+			sizeof(struct CACHED_LOOKUP),
+			CACHE_LOOKUP_SIZE, 2*CACHE_LOOKUP_SIZE);
 #endif
 	vol->securid_cache = ntfs_create_cache("securid",(cache_free)NULL,
-		(cache_hash)NULL,sizeof(struct CACHED_SECURID), CACHE_SECURID_SIZE, 0);
+			(cache_hash)NULL,sizeof(struct CACHED_SECURID), CACHE_SECURID_SIZE, 0);
 #if CACHE_LEGACY_SIZE
 	vol->legacy_cache = ntfs_create_cache("legacy",(cache_free)NULL,
-		(cache_hash)NULL, sizeof(struct CACHED_PERMISSIONS_LEGACY), CACHE_LEGACY_SIZE, 0);
+			(cache_hash)NULL, sizeof(struct CACHED_PERMISSIONS_LEGACY), CACHE_LEGACY_SIZE, 0);
 #endif
 }
 

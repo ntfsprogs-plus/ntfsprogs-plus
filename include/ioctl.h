@@ -30,6 +30,6 @@
  * some commands (e.g. FITRIM) do not fit in a signed 32 bit field.
  */
 int ntfs_ioctl(ntfs_inode *ni, unsigned long cmd, void *arg,
-                        unsigned int flags, void *data);
+		unsigned int flags, void *data);
 
 #endif /* IOCTL_H */

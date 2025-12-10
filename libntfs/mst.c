@@ -63,7 +63,7 @@ is_valid_record(u32 size, u16 usa_ofs, u16 usa_count)
  *		record in @b will have been set to "BAAD".
  */
 int ntfs_mst_post_read_fixup_warn(NTFS_RECORD *b, const u32 size,
-					BOOL warn)
+		BOOL warn)
 {
 	u16 usa_ofs, usa_count, usn;
 	u16 *usa_pos, *data_pos;
@@ -79,7 +79,7 @@ int ntfs_mst_post_read_fixup_warn(NTFS_RECORD *b, const u32 size,
 		if (warn) {
 			ntfs_log_perror("%s: magic: 0x%08lx  size: %ld "
 					"  usa_ofs: %d  usa_count: %u",
-					 __FUNCTION__,
+					__FUNCTION__,
 					(long)le32_to_cpu(*(le32 *)b),
 					(long)size, (int)usa_ofs,
 					(unsigned int)usa_count);
@@ -113,9 +113,9 @@ int ntfs_mst_post_read_fixup_warn(NTFS_RECORD *b, const u32 size,
 			 */
 			errno = EIO;
 			ntfs_log_perror("Incomplete multi-sector transfer: "
-				"magic: 0x%08x  size: %d  usa_ofs: %d  usa_count:"
-				" %d  data: %d  usn: %d", le32_to_cpu(*(le32 *)b), size,
-				usa_ofs, usa_count, *data_pos, usn);
+					"magic: 0x%08x  size: %d  usa_ofs: %d  usa_count:"
+					" %d  data: %d  usn: %d", le32_to_cpu(*(le32 *)b), size,
+					usa_ofs, usa_count, *data_pos, usn);
 			b->magic = magic_BAAD;
 			return -1;
 		}

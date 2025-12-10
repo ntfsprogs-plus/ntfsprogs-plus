@@ -29,8 +29,8 @@
 #ifndef NO_NTFS_DEVICE_DEFAULT_IO_OPS
 
 #if defined(linux) || defined(__uClinux__) || defined(__sun) \
-		|| defined(__APPLE__) || defined(__DARWIN__)
-  /* Make sure the presence of <windows.h> means compiling for Windows */
+	|| defined(__APPLE__) || defined(__DARWIN__)
+/* Make sure the presence of <windows.h> means compiling for Windows */
 #undef HAVE_WINDOWS_H
 #endif
 

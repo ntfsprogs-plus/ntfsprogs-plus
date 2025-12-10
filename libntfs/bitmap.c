@@ -47,8 +47,8 @@
 
 /* GENMASK macro from linux code */
 #define GENMASK(h, l) \
-	 (((~(0UL)) - ((1UL) << (l)) + 1) & \
-	  (~(0UL) >> (BITS_PER_LONG - 1 - (h))))
+	(((~(0UL)) - ((1UL) << (l)) + 1) & \
+	 (~(0UL) >> (BITS_PER_LONG - 1 - (h))))
 
 #define BITMAP_FIRST_WORD_MASK(start) (~0UL << ((start) & (BITS_PER_LONG - 1)))
 #define BITMAP_LAST_WORD_MASK(nbits) (~0UL >> (-(nbits) & (BITS_PER_LONG - 1)))
@@ -121,7 +121,7 @@ char ntfs_bit_get_and_set(u8 *bitmap, const u64 bit, const u8 new_value)
  * On success return 0 and on error return -1 with errno set to the error code.
  */
 static int ntfs_bitmap_set_bits_in_run(ntfs_attr *na, s64 start_bit,
-				       s64 count, int value)
+		s64 count, int value)
 {
 	s64 bufsize, br, tmp;
 	u8 *buf, *lastbyte_buf;
@@ -130,7 +130,7 @@ static int ntfs_bitmap_set_bits_in_run(ntfs_attr *na, s64 start_bit,
 	if (!na || start_bit < 0 || count < 0) {
 		errno = EINVAL;
 		ntfs_log_perror("%s: Invalid argument (%p, %lld, %lld)",
-			__FUNCTION__, na, (long long)start_bit, (long long)count);
+				__FUNCTION__, na, (long long)start_bit, (long long)count);
 		return -1;
 	}
 
@@ -200,8 +200,8 @@ static int ntfs_bitmap_set_bits_in_run(ntfs_attr *na, s64 start_bit,
 					if (br >= 0)
 						errno = EIO;
 					ntfs_log_perror("Reading of last byte "
-						"failed (%lld). Leaving inconsistent "
-						"metadata", (long long)br);
+							"failed (%lld). Leaving inconsistent "
+							"metadata", (long long)br);
 					goto free_err_out;
 				}
 				/* and set/clear the appropriate bits in it. */
@@ -226,8 +226,8 @@ static int ntfs_bitmap_set_bits_in_run(ntfs_attr *na, s64 start_bit,
 			if (br >= 0)
 				errno = EIO;
 			ntfs_log_perror("Failed to write buffer to bitmap "
-				"(%lld != %lld). Leaving inconsistent metadata",
-				(long long)br, (long long)bufsize);
+					"(%lld != %lld). Leaving inconsistent metadata",
+					(long long)br, (long long)bufsize);
 			goto free_err_out;
 		}
 
@@ -249,8 +249,8 @@ static int ntfs_bitmap_set_bits_in_run(ntfs_attr *na, s64 start_bit,
 		if (lastbyte && count != 0) {
 			// FIXME: Eeek! BUG!
 			ntfs_log_error("Last buffer but count is not zero "
-				       "(%lld). Leaving inconsistent metadata.\n",
-				       (long long)count);
+					"(%lld). Leaving inconsistent metadata.\n",
+					(long long)count);
 			errno = EIO;
 			goto free_err_out;
 		}
@@ -279,7 +279,7 @@ int ntfs_bitmap_set_run(ntfs_attr *na, s64 start_bit, s64 count)
 	int ret;
 
 	ntfs_log_enter("Set from bit %lld, count %lld\n",
-		       (long long)start_bit, (long long)count);
+			(long long)start_bit, (long long)count);
 	ret = ntfs_bitmap_set_bits_in_run(na, start_bit, count, 1);
 	ntfs_log_leave("\n");
 	return ret;
@@ -301,7 +301,7 @@ int ntfs_bitmap_clear_run(ntfs_attr *na, s64 start_bit, s64 count)
 	int ret;
 
 	ntfs_log_enter("Clear from bit %lld, count %lld\n",
-		       (long long)start_bit, (long long)count);
+			(long long)start_bit, (long long)count);
 	ret = ntfs_bitmap_set_bits_in_run(na, start_bit, count, 0);
 	ntfs_log_leave("\n");
 	return ret;
@@ -434,7 +434,7 @@ unsigned long ntfs_find_first_zero_bit(const unsigned long *addr, unsigned long 
  */
 static inline
 unsigned long ntfs_find_next_zero_bit(const unsigned long *addr, unsigned long size,
-				 unsigned long offset)
+		unsigned long offset)
 {
 	if (size > 0 && size <= BITS_PER_LONG) {
 		unsigned long val;

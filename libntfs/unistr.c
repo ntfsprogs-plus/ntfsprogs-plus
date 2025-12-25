@@ -133,7 +133,7 @@ BOOL ntfs_names_are_equal(const ntfschar *s1, size_t s1_len,
 	if (ic == CASE_SENSITIVE)
 		return ntfs_ucsncmp(s1, s2, s1_len) ? FALSE: TRUE;
 	return ntfs_ucsncasecmp(s1, s2, s1_len, upcase, upcase_size) ? FALSE:
-								       TRUE;
+		TRUE;
 }
 
 /*
@@ -549,7 +549,7 @@ fail:
  * Return -1 with errno set if string has invalid byte sequence or too long.
  */
 static int ntfs_utf16_to_utf8(const ntfschar *ins, const int ins_len,
-			      char **outs, int outs_len)
+		char **outs, int outs_len)
 {
 #if defined(__APPLE__) || defined(__DARWIN__)
 #ifdef ENABLE_NFCONV
@@ -587,8 +587,8 @@ static int ntfs_utf16_to_utf8(const ntfschar *ins, const int ins_len,
 	t = *outs;
 
 	for (i = 0; i < ins_len && ins[i]; i++) {
-	    unsigned short c = le16_to_cpu(ins[i]);
-			/* size not double-checked */
+		unsigned short c = le16_to_cpu(ins[i]);
+		/* size not double-checked */
 		if (halfpair) {
 			if ((c >= 0xdc00) && (c < 0xe000)) {
 				*t++ = 0xf0 + (((halfpair + 64) >> 8) & 7);
@@ -616,14 +616,14 @@ static int ntfs_utf16_to_utf8(const ntfschar *ins, const int ins_len,
 			}
 		} else if (c < 0x80) {
 			*t++ = c;
-	    	} else {
+		} else {
 			if (c < 0x800) {
-			   	*t++ = (0xc0 | ((c >> 6) & 0x3f));
-			        *t++ = 0x80 | (c & 0x3f);
+				*t++ = (0xc0 | ((c >> 6) & 0x3f));
+				*t++ = 0x80 | (c & 0x3f);
 			} else if (c < 0xd800) {
-			   	*t++ = 0xe0 | (c >> 12);
-			   	*t++ = 0x80 | ((c >> 6) & 0x3f);
-		        	*t++ = 0x80 | (c & 0x3f);
+				*t++ = 0xe0 | (c >> 12);
+				*t++ = 0x80 | ((c >> 6) & 0x3f);
+				*t++ = 0x80 | (c & 0x3f);
 			} else if (c < 0xdc00)
 				halfpair = c;
 #if ALLOW_BROKEN_UNICODE
@@ -636,10 +636,10 @@ static int ntfs_utf16_to_utf8(const ntfschar *ins, const int ins_len,
 			else if (c >= 0xe000) {
 				*t++ = 0xe0 | (c >> 12);
 				*t++ = 0x80 | ((c >> 6) & 0x3f);
-			        *t++ = 0x80 | (c & 0x3f);
+				*t++ = 0x80 | (c & 0x3f);
 			} else
 				goto fail;
-	        }
+		}
 	}
 #if ALLOW_BROKEN_UNICODE
 	if (halfpair) { /* ending with a single surrogate */
@@ -743,52 +743,52 @@ fail:
  */
 static int utf8_to_unicode(u32 *wc, const char *s)
 {
-    	unsigned int byte = *((const unsigned char *)s);
+	unsigned int byte = *((const unsigned char *)s);
 
-					/* single byte */
+	/* single byte */
 	if (byte == 0) {
 		*wc = (u32) 0;
 		return 0;
 	} else if (byte < 0x80) {
 		*wc = (u32) byte;
 		return 1;
-					/* double byte */
+		/* double byte */
 	} else if (byte < 0xc2) {
 		goto fail;
 	} else if (byte < 0xE0) {
 		if ((s[1] & 0xC0) == 0x80) {
 			*wc = ((u32)(byte & 0x1F) << 6)
-			    | ((u32)(s[1] & 0x3F));
+				| ((u32)(s[1] & 0x3F));
 			return 2;
 		} else
 			goto fail;
-					/* three-byte */
+		/* three-byte */
 	} else if (byte < 0xF0) {
 		if (((s[1] & 0xC0) == 0x80) && ((s[2] & 0xC0) == 0x80)) {
 			*wc = ((u32)(byte & 0x0F) << 12)
-			    | ((u32)(s[1] & 0x3F) << 6)
-			    | ((u32)(s[2] & 0x3F));
+				| ((u32)(s[1] & 0x3F) << 6)
+				| ((u32)(s[2] & 0x3F));
 			/* Check valid ranges */
 #if ALLOW_BROKEN_UNICODE
 			if (((*wc >= 0x800) && (*wc <= 0xD7FF))
-			  || ((*wc >= 0xD800) && (*wc <= 0xDFFF))
-			  || ((*wc >= 0xe000) && (*wc <= 0xFFFF)))
+					|| ((*wc >= 0xD800) && (*wc <= 0xDFFF))
+					|| ((*wc >= 0xe000) && (*wc <= 0xFFFF)))
 				return 3;
 #else
 			if (((*wc >= 0x800) && (*wc <= 0xD7FF))
-			  || ((*wc >= 0xe000) && (*wc <= 0xFFFD)))
+					|| ((*wc >= 0xe000) && (*wc <= 0xFFFD)))
 				return 3;
 #endif /* ALLOW_BROKEN_UNICODE */
 		}
 		goto fail;
-					/* four-byte */
+		/* four-byte */
 	} else if (byte < 0xF5) {
 		if (((s[1] & 0xC0) == 0x80) && ((s[2] & 0xC0) == 0x80)
-		  && ((s[3] & 0xC0) == 0x80)) {
+				&& ((s[3] & 0xC0) == 0x80)) {
 			*wc = ((u32)(byte & 0x07) << 18)
-			    | ((u32)(s[1] & 0x3F) << 12)
-			    | ((u32)(s[2] & 0x3F) << 6)
-			    | ((u32)(s[3] & 0x3F));
+				| ((u32)(s[1] & 0x3F) << 12)
+				| ((u32)(s[2] & 0x3F) << 6)
+				| ((u32)(s[3] & 0x3F));
 			/* Check valid ranges */
 			if ((*wc <= 0x10ffff) && (*wc >= 0x10000))
 				return 4;
@@ -1113,7 +1113,7 @@ int ntfs_mbstoucs(const char *ins, ntfschar **outs)
 		}
 		/* Make sure we are not overflowing the NTFS Unicode set. */
 		if ((unsigned long)wc >= (unsigned long)(1 <<
-				(8 * sizeof(ntfschar)))) {
+					(8 * sizeof(ntfschar)))) {
 			errno = EILSEQ;
 			goto err_out;
 		}
@@ -1148,7 +1148,7 @@ err_out:
  */
 
 char *ntfs_uppercase_mbs(const char *low,
-			const ntfschar *upcase, u32 upcase_size)
+		const ntfschar *upcase, u32 upcase_size)
 {
 	int size;
 	char *upp;
@@ -1182,7 +1182,7 @@ char *ntfs_uppercase_mbs(const char *low,
 					*t++ = 0x80 | ((wc >> 6) & 0x3f);
 					*t++ = 0x80 | (wc & 0x3f);
 				}
-			s += n;
+				s += n;
 			}
 		} while (n > 0);
 		if (n < 0) {
@@ -1220,51 +1220,51 @@ void ntfs_upcase_table_build(ntfschar *uc, u32 uc_len)
 	 *	This is the table as defined by Windows XP
 	 */
 	static int uc_run_table[][3] = { /* Start, End, Add */
-	{0x0061, 0x007B,  -32}, {0x0451, 0x045D, -80}, {0x1F70, 0x1F72,  74},
-	{0x00E0, 0x00F7,  -32}, {0x045E, 0x0460, -80}, {0x1F72, 0x1F76,  86},
-	{0x00F8, 0x00FF,  -32}, {0x0561, 0x0587, -48}, {0x1F76, 0x1F78, 100},
-	{0x0256, 0x0258, -205}, {0x1F00, 0x1F08,   8}, {0x1F78, 0x1F7A, 128},
-	{0x028A, 0x028C, -217}, {0x1F10, 0x1F16,   8}, {0x1F7A, 0x1F7C, 112},
-	{0x03AC, 0x03AD,  -38}, {0x1F20, 0x1F28,   8}, {0x1F7C, 0x1F7E, 126},
-	{0x03AD, 0x03B0,  -37}, {0x1F30, 0x1F38,   8}, {0x1FB0, 0x1FB2,   8},
-	{0x03B1, 0x03C2,  -32}, {0x1F40, 0x1F46,   8}, {0x1FD0, 0x1FD2,   8},
-	{0x03C2, 0x03C3,  -31}, {0x1F51, 0x1F52,   8}, {0x1FE0, 0x1FE2,   8},
-	{0x03C3, 0x03CC,  -32}, {0x1F53, 0x1F54,   8}, {0x1FE5, 0x1FE6,   7},
-	{0x03CC, 0x03CD,  -64}, {0x1F55, 0x1F56,   8}, {0x2170, 0x2180, -16},
-	{0x03CD, 0x03CF,  -63}, {0x1F57, 0x1F58,   8}, {0x24D0, 0x24EA, -26},
-	{0x0430, 0x0450,  -32}, {0x1F60, 0x1F68,   8}, {0xFF41, 0xFF5B, -32},
-	{0}
+		{0x0061, 0x007B,  -32}, {0x0451, 0x045D, -80}, {0x1F70, 0x1F72,  74},
+		{0x00E0, 0x00F7,  -32}, {0x045E, 0x0460, -80}, {0x1F72, 0x1F76,  86},
+		{0x00F8, 0x00FF,  -32}, {0x0561, 0x0587, -48}, {0x1F76, 0x1F78, 100},
+		{0x0256, 0x0258, -205}, {0x1F00, 0x1F08,   8}, {0x1F78, 0x1F7A, 128},
+		{0x028A, 0x028C, -217}, {0x1F10, 0x1F16,   8}, {0x1F7A, 0x1F7C, 112},
+		{0x03AC, 0x03AD,  -38}, {0x1F20, 0x1F28,   8}, {0x1F7C, 0x1F7E, 126},
+		{0x03AD, 0x03B0,  -37}, {0x1F30, 0x1F38,   8}, {0x1FB0, 0x1FB2,   8},
+		{0x03B1, 0x03C2,  -32}, {0x1F40, 0x1F46,   8}, {0x1FD0, 0x1FD2,   8},
+		{0x03C2, 0x03C3,  -31}, {0x1F51, 0x1F52,   8}, {0x1FE0, 0x1FE2,   8},
+		{0x03C3, 0x03CC,  -32}, {0x1F53, 0x1F54,   8}, {0x1FE5, 0x1FE6,   7},
+		{0x03CC, 0x03CD,  -64}, {0x1F55, 0x1F56,   8}, {0x2170, 0x2180, -16},
+		{0x03CD, 0x03CF,  -63}, {0x1F57, 0x1F58,   8}, {0x24D0, 0x24EA, -26},
+		{0x0430, 0x0450,  -32}, {0x1F60, 0x1F68,   8}, {0xFF41, 0xFF5B, -32},
+		{0}
 	};
 	static int uc_dup_table[][2] = { /* Start, End */
-	{0x0100, 0x012F}, {0x01A0, 0x01A6}, {0x03E2, 0x03EF}, {0x04CB, 0x04CC},
-	{0x0132, 0x0137}, {0x01B3, 0x01B7}, {0x0460, 0x0481}, {0x04D0, 0x04EB},
-	{0x0139, 0x0149}, {0x01CD, 0x01DD}, {0x0490, 0x04BF}, {0x04EE, 0x04F5},
-	{0x014A, 0x0178}, {0x01DE, 0x01EF}, {0x04BF, 0x04BF}, {0x04F8, 0x04F9},
-	{0x0179, 0x017E}, {0x01F4, 0x01F5}, {0x04C1, 0x04C4}, {0x1E00, 0x1E95},
-	{0x018B, 0x018B}, {0x01FA, 0x0218}, {0x04C7, 0x04C8}, {0x1EA0, 0x1EF9},
-	{0}
+		{0x0100, 0x012F}, {0x01A0, 0x01A6}, {0x03E2, 0x03EF}, {0x04CB, 0x04CC},
+		{0x0132, 0x0137}, {0x01B3, 0x01B7}, {0x0460, 0x0481}, {0x04D0, 0x04EB},
+		{0x0139, 0x0149}, {0x01CD, 0x01DD}, {0x0490, 0x04BF}, {0x04EE, 0x04F5},
+		{0x014A, 0x0178}, {0x01DE, 0x01EF}, {0x04BF, 0x04BF}, {0x04F8, 0x04F9},
+		{0x0179, 0x017E}, {0x01F4, 0x01F5}, {0x04C1, 0x04C4}, {0x1E00, 0x1E95},
+		{0x018B, 0x018B}, {0x01FA, 0x0218}, {0x04C7, 0x04C8}, {0x1EA0, 0x1EF9},
+		{0}
 	};
 	static int uc_byte_table[][2] = { /* Offset, Value */
-	{0x00FF, 0x0178}, {0x01AD, 0x01AC}, {0x01F3, 0x01F1}, {0x0269, 0x0196},
-	{0x0183, 0x0182}, {0x01B0, 0x01AF}, {0x0253, 0x0181}, {0x026F, 0x019C},
-	{0x0185, 0x0184}, {0x01B9, 0x01B8}, {0x0254, 0x0186}, {0x0272, 0x019D},
-	{0x0188, 0x0187}, {0x01BD, 0x01BC}, {0x0259, 0x018F}, {0x0275, 0x019F},
-	{0x018C, 0x018B}, {0x01C6, 0x01C4}, {0x025B, 0x0190}, {0x0283, 0x01A9},
-	{0x0192, 0x0191}, {0x01C9, 0x01C7}, {0x0260, 0x0193}, {0x0288, 0x01AE},
-	{0x0199, 0x0198}, {0x01CC, 0x01CA}, {0x0263, 0x0194}, {0x0292, 0x01B7},
-	{0x01A8, 0x01A7}, {0x01DD, 0x018E}, {0x0268, 0x0197},
-	{0}
+		{0x00FF, 0x0178}, {0x01AD, 0x01AC}, {0x01F3, 0x01F1}, {0x0269, 0x0196},
+		{0x0183, 0x0182}, {0x01B0, 0x01AF}, {0x0253, 0x0181}, {0x026F, 0x019C},
+		{0x0185, 0x0184}, {0x01B9, 0x01B8}, {0x0254, 0x0186}, {0x0272, 0x019D},
+		{0x0188, 0x0187}, {0x01BD, 0x01BC}, {0x0259, 0x018F}, {0x0275, 0x019F},
+		{0x018C, 0x018B}, {0x01C6, 0x01C4}, {0x025B, 0x0190}, {0x0283, 0x01A9},
+		{0x0192, 0x0191}, {0x01C9, 0x01C7}, {0x0260, 0x0193}, {0x0288, 0x01AE},
+		{0x0199, 0x0198}, {0x01CC, 0x01CA}, {0x0263, 0x0194}, {0x0292, 0x01B7},
+		{0x01A8, 0x01A7}, {0x01DD, 0x018E}, {0x0268, 0x0197},
+		{0}
 	};
 
-/*
- *		Changes which were applied to later Windows versions
- *
- *   md5 for $UpCase from Winxp : 6fa3db2468275286210751e869d36373
- *                        Vista : 2f03b5a69d486ff3864cecbd07f24440
- *                        Win8 :  7ff498a44e45e77374cc7c962b1b92f2
- */
+	/*
+	 *		Changes which were applied to later Windows versions
+	 *
+	 *   md5 for $UpCase from Winxp : 6fa3db2468275286210751e869d36373
+	 *                        Vista : 2f03b5a69d486ff3864cecbd07f24440
+	 *                        Win8 :  7ff498a44e45e77374cc7c962b1b92f2
+	 */
 	static const struct NEWUPPERCASE newuppercase[] = {
-						/* from Windows 6.0 (Vista) */
+		/* from Windows 6.0 (Vista) */
 		{ 0x37b, 0x37d, 0x82, 1, 6, 0 },
 		{ 0x1f80, 0x1f87, 0x8, 1, 6, 0 },
 		{ 0x1f90, 0x1f97, 0x8, 1, 6, 0 },
@@ -1305,7 +1305,7 @@ void ntfs_upcase_table_build(ntfschar *uc, u32 uc_len)
 		{ 0x1fb3, 0x1fb3, 0x9, 1, 6, 0 },
 		{ 0x214e, 0x214e, -0x1c, 1, 6, 0 },
 		{ 0x2184, 0x2184, -0x1, 1, 6, 0 },
-						/* from Windows 6.1 (Win7) */
+		/* from Windows 6.1 (Win7) */
 		{ 0x23a, 0x23e,  0x0, 4, 6, 1 },
 		{ 0x250, 0x250,  0x2a1f, 2, 6, 1 },
 		{ 0x251, 0x251,  0x2a1c, 2, 6, 1 },
@@ -1315,7 +1315,7 @@ void ntfs_upcase_table_build(ntfschar *uc, u32 uc_len)
 		{ 0x3c2, 0x3c2,  0x0, 2, 6, 1 },
 		{ 0x3d7, 0x3d7, -0x8, 2, 6, 1 },
 		{ 0x515, 0x523, -0x1, 2, 6, 1 },
-			/* below, -0x75fc stands for 0x8a04 and truncation */
+		/* below, -0x75fc stands for 0x8a04 and truncation */
 		{ 0x1d79, 0x1d79, -0x75fc, 2, 6, 1 },
 		{ 0x1efb, 0x1eff, -0x1, 2, 6, 1 },
 		{ 0x1fc3, 0x1ff3,  0x9, 48, 6, 1 },
@@ -1331,7 +1331,7 @@ void ntfs_upcase_table_build(ntfschar *uc, u32 uc_len)
 		{ 0xa77a, 0xa77c, -0x1, 2, 6, 1 },
 		{ 0xa77f, 0xa787, -0x1, 2, 6, 1 },
 		{ 0xa78c, 0xa78c, -0x1, 2, 6, 1 },
-							/* end mark */
+		/* end mark */
 		{ 0 }
 	} ;
 
@@ -1360,8 +1360,8 @@ void ntfs_upcase_table_build(ntfschar *uc, u32 uc_len)
 	for (r=0; newuppercase[r].first; r++) {
 		puc = &newuppercase[r];
 		if ((puc->osmajor < UPCASE_MAJOR)
-		  || ((puc->osmajor == UPCASE_MAJOR)
-		     && (puc->osminor <= UPCASE_MINOR))) {
+				|| ((puc->osmajor == UPCASE_MAJOR)
+					&& (puc->osminor <= UPCASE_MINOR))) {
 			off = puc->diff;
 			for (i = puc->first; i <= puc->last; i += puc->step)
 				uc[i] = cpu_to_le16(i + off);
@@ -1492,23 +1492,23 @@ BOOL ntfs_forbidden_chars(const ntfschar *name, int len, BOOL strict)
 	int ch;
 	int i;
 	static const u32 mainset = (1L << ('\"' - 0x20))
-			| (1L << ('*' - 0x20))
-			| (1L << ('/' - 0x20))
-			| (1L << (':' - 0x20))
-			| (1L << ('<' - 0x20))
-			| (1L << ('>' - 0x20))
-			| (1L << ('?' - 0x20));
+		| (1L << ('*' - 0x20))
+		| (1L << ('/' - 0x20))
+		| (1L << (':' - 0x20))
+		| (1L << ('<' - 0x20))
+		| (1L << ('>' - 0x20))
+		| (1L << ('?' - 0x20));
 
 	forbidden = (len == 0) ||
-		    (strict && (name[len-1] == const_cpu_to_le16(' ') ||
-				name[len-1] == const_cpu_to_le16('.')));
+		(strict && (name[len-1] == const_cpu_to_le16(' ') ||
+					name[len-1] == const_cpu_to_le16('.')));
 	for (i=0; i<len; i++) {
 		ch = le16_to_cpu(name[i]);
 		if ((ch < 0x20)
-		    || ((ch < 0x40)
-			&& ((1L << (ch - 0x20)) & mainset))
-		    || (ch == '\\')
-		    || (ch == '|'))
+				|| ((ch < 0x40)
+					&& ((1L << (ch - 0x20)) & mainset))
+				|| (ch == '\\')
+				|| (ch == '|'))
 			forbidden = TRUE;
 	}
 	if (forbidden)
@@ -1531,23 +1531,23 @@ BOOL ntfs_forbidden_chars(const ntfschar *name, int len, BOOL strict)
  */
 
 BOOL ntfs_forbidden_names(ntfs_volume *vol, const ntfschar *name, int len,
-			  BOOL strict)
+		BOOL strict)
 {
 	BOOL forbidden;
 	int h;
 	static const ntfschar dot = const_cpu_to_le16('.');
 	static const ntfschar con[] = { const_cpu_to_le16('c'),
-			const_cpu_to_le16('o'), const_cpu_to_le16('n') };
+		const_cpu_to_le16('o'), const_cpu_to_le16('n') };
 	static const ntfschar prn[] = { const_cpu_to_le16('p'),
-			const_cpu_to_le16('r'), const_cpu_to_le16('n') };
+		const_cpu_to_le16('r'), const_cpu_to_le16('n') };
 	static const ntfschar aux[] = { const_cpu_to_le16('a'),
-			const_cpu_to_le16('u'), const_cpu_to_le16('x') };
+		const_cpu_to_le16('u'), const_cpu_to_le16('x') };
 	static const ntfschar nul[] = { const_cpu_to_le16('n'),
-			const_cpu_to_le16('u'), const_cpu_to_le16('l') };
+		const_cpu_to_le16('u'), const_cpu_to_le16('l') };
 	static const ntfschar com[] = { const_cpu_to_le16('c'),
-			const_cpu_to_le16('o'), const_cpu_to_le16('m') };
+		const_cpu_to_le16('o'), const_cpu_to_le16('m') };
 	static const ntfschar lpt[] = { const_cpu_to_le16('l'),
-			const_cpu_to_le16('p'), const_cpu_to_le16('t') };
+		const_cpu_to_le16('p'), const_cpu_to_le16('t') };
 
 	forbidden = ntfs_forbidden_chars(name, len, strict);
 	if (!forbidden && (len >= 3)) {
@@ -1556,46 +1556,46 @@ BOOL ntfs_forbidden_names(ntfs_volume *vol, const ntfschar *name, int len,
 		 * may be one of CO PR AU NU LP or lowercase variants.
 		 */
 		h = ((le16_to_cpu(name[0]) & 31)*48)
-				^ ((le16_to_cpu(name[1]) & 31)*165);
+			^ ((le16_to_cpu(name[1]) & 31)*165);
 		if ((h % 23) == 17) {
 			/* do a full check, depending on the third char */
 			switch (le16_to_cpu(name[2]) & ~0x20) {
 			case 'N' :
 				if (((len == 3) || (name[3] == dot))
-				    && (!ntfs_ucsncasecmp(name, con, 3,
-						vol->upcase, vol->upcase_len)
-					|| !ntfs_ucsncasecmp(name, prn, 3,
-						vol->upcase, vol->upcase_len)))
+						&& (!ntfs_ucsncasecmp(name, con, 3,
+								vol->upcase, vol->upcase_len)
+							|| !ntfs_ucsncasecmp(name, prn, 3,
+								vol->upcase, vol->upcase_len)))
 					forbidden = TRUE;
 				break;
 			case 'X' :
 				if (((len == 3) || (name[3] == dot))
-				    && !ntfs_ucsncasecmp(name, aux, 3,
-						vol->upcase, vol->upcase_len))
+						&& !ntfs_ucsncasecmp(name, aux, 3,
+							vol->upcase, vol->upcase_len))
 					forbidden = TRUE;
 				break;
 			case 'L' :
 				if (((len == 3) || (name[3] == dot))
-				    && !ntfs_ucsncasecmp(name, nul, 3,
-						vol->upcase, vol->upcase_len))
+						&& !ntfs_ucsncasecmp(name, nul, 3,
+							vol->upcase, vol->upcase_len))
 					forbidden = TRUE;
 				break;
 			case 'M' :
 				if ((len > 3)
-				    && (le16_to_cpu(name[3]) >= '1')
-				    && (le16_to_cpu(name[3]) <= '9')
-				    && ((len == 4) || (name[4] == dot))
-				    && !ntfs_ucsncasecmp(name, com, 3,
-						vol->upcase, vol->upcase_len))
+						&& (le16_to_cpu(name[3]) >= '1')
+						&& (le16_to_cpu(name[3]) <= '9')
+						&& ((len == 4) || (name[4] == dot))
+						&& !ntfs_ucsncasecmp(name, com, 3,
+							vol->upcase, vol->upcase_len))
 					forbidden = TRUE;
 				break;
 			case 'T' :
 				if ((len > 3)
-				    && (le16_to_cpu(name[3]) >= '1')
-				    && (le16_to_cpu(name[3]) <= '9')
-				    && ((len == 4) || (name[4] == dot))
-				    && !ntfs_ucsncasecmp(name, lpt, 3,
-						vol->upcase, vol->upcase_len))
+						&& (le16_to_cpu(name[3]) >= '1')
+						&& (le16_to_cpu(name[3]) <= '9')
+						&& ((len == 4) || (name[4] == dot))
+						&& !ntfs_ucsncasecmp(name, lpt, 3,
+							vol->upcase, vol->upcase_len))
 					forbidden = TRUE;
 				break;
 			}
@@ -1616,8 +1616,8 @@ BOOL ntfs_forbidden_names(ntfs_volume *vol, const ntfschar *name, int len,
  */
 
 BOOL ntfs_collapsible_chars(ntfs_volume *vol,
-			const ntfschar *shortname, int shortlen,
-			const ntfschar *longname, int longlen)
+		const ntfschar *shortname, int shortlen,
+		const ntfschar *longname, int longlen)
 {
 	BOOL collapsible;
 	unsigned int ch;
@@ -1629,10 +1629,10 @@ BOOL ntfs_collapsible_chars(ntfs_volume *vol,
 		ch = le16_to_cpu(longname[i]);
 		cs = le16_to_cpu(shortname[i]);
 		if ((cs != ch)
-		    && ((ch >= vol->upcase_len)
-			|| (cs >= vol->upcase_len)
-			|| (vol->upcase[cs] != vol->upcase[ch])))
-				collapsible = FALSE;
+				&& ((ch >= vol->upcase_len)
+					|| (cs >= vol->upcase_len)
+					|| (vol->upcase[cs] != vol->upcase[ch])))
+			collapsible = FALSE;
 	}
 	return (collapsible);
 }
@@ -1646,7 +1646,7 @@ int ntfs_set_char_encoding(const char *locale)
 {
 	use_utf8 = 0;
 	if (!locale || strstr(locale,"utf8") || strstr(locale,"UTF8")
-	    || strstr(locale,"utf-8") || strstr(locale,"UTF-8"))
+			|| strstr(locale,"utf-8") || strstr(locale,"UTF-8"))
 		use_utf8 = 1;
 	else
 		if (setlocale(LC_ALL, locale))
@@ -1654,7 +1654,7 @@ int ntfs_set_char_encoding(const char *locale)
 		else {
 			ntfs_log_error("Invalid locale, encoding to UTF-8\n");
 			use_utf8 = 1;
-	 	}
+		}
 	return 0; /* always successful */
 }
 
@@ -1689,7 +1689,7 @@ int ntfs_macosx_normalize_utf8(const char *utf8_string, char **target,
 
 	/* Convert the UTF-8 string to a CFString. */
 	cfSourceString = CFStringCreateWithCString(kCFAllocatorDefault,
-		utf8_string, kCFStringEncodingUTF8);
+			utf8_string, kCFStringEncodingUTF8);
 	if (cfSourceString == NULL) {
 		ntfs_log_error("CFStringCreateWithCString failed!\n");
 		return -2;
@@ -1698,7 +1698,7 @@ int ntfs_macosx_normalize_utf8(const char *utf8_string, char **target,
 	/* Create a mutable string from cfSourceString that we are free to
 	 * modify. */
 	cfMutableString = CFStringCreateMutableCopy(kCFAllocatorDefault, 0,
-		cfSourceString);
+			cfSourceString);
 	CFRelease(cfSourceString); /* End-of-life. */
 	if (cfMutableString == NULL) {
 		ntfs_log_error("CFStringCreateMutableCopy failed!\n");
@@ -1707,45 +1707,45 @@ int ntfs_macosx_normalize_utf8(const char *utf8_string, char **target,
 
 	/* Normalize the mutable string to the desired normalization form. */
 	CFStringNormalize(cfMutableString, (composed != 0 ?
-		kCFStringNormalizationFormC : kCFStringNormalizationFormD));
+				kCFStringNormalizationFormC : kCFStringNormalizationFormD));
 
 	/* Store the resulting string in a '\0'-terminated UTF-8 encoded char*
 	 * buffer. */
 	rangeToProcess = CFRangeMake(0, CFStringGetLength(cfMutableString));
 	if (CFStringGetBytes(cfMutableString, rangeToProcess,
-		kCFStringEncodingUTF8, 0, false, NULL, 0,
-		&requiredBufferLength) > 0)
+				kCFStringEncodingUTF8, 0, false, NULL, 0,
+				&requiredBufferLength) > 0)
 	{
 		resultLength = sizeof(char) * (requiredBufferLength + 1);
 		result = ntfs_calloc(resultLength);
 
 		if (result != NULL) {
 			if (CFStringGetBytes(cfMutableString, rangeToProcess,
-				kCFStringEncodingUTF8, 0, false,
-				(UInt8*) result, resultLength - 1,
-				&requiredBufferLength) <= 0)
+						kCFStringEncodingUTF8, 0, false,
+						(UInt8*) result, resultLength - 1,
+						&requiredBufferLength) <= 0)
 			{
 				ntfs_log_error("Could not perform UTF-8 "
-					"conversion of normalized "
-					"CFMutableString.\n");
+						"conversion of normalized "
+						"CFMutableString.\n");
 				free(result);
 				result = NULL;
 			}
 		}
 		else {
 			ntfs_log_error("Could not perform a ntfs_calloc of %d "
-				"bytes for char *result.\n", resultLength);
+					"bytes for char *result.\n", resultLength);
 		}
 	}
 	else {
 		ntfs_log_error("Could not perform check for required length of "
-			"UTF-8 conversion of normalized CFMutableString.\n");
+				"UTF-8 conversion of normalized CFMutableString.\n");
 	}
 
 	CFRelease(cfMutableString);
 
 	if (result != NULL) {
-	 	*target = result;
+		*target = result;
 		return resultLength - 1;
 	}
 	else {

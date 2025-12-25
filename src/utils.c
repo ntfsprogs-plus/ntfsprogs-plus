@@ -77,11 +77,11 @@
 
 const char *ntfs_bugs = "Developers' email address: " NTFS_DEV_LIST "\n";
 const char *ntfs_gpl = "This program is free software, released under the GNU "
-	"General Public License\nand you are welcome to redistribute it under "
-	"certain conditions.  It comes with\nABSOLUTELY NO WARRANTY; for "
-	"details read the GNU General Public License to be\nfound in the file "
-	"\"COPYING\" distributed with this program, or online at:\n"
-	"http://www.gnu.org/copyleft/gpl.html\n";
+"General Public License\nand you are welcome to redistribute it under "
+"certain conditions.  It comes with\nABSOLUTELY NO WARRANTY; for "
+"details read the GNU General Public License to be\nfound in the file "
+"\"COPYING\" distributed with this program, or online at:\n"
+"http://www.gnu.org/copyleft/gpl.html\n";
 
 static const char *invalid_ntfs_msg =
 "The device '%s' doesn't have a valid NTFS.\n"
@@ -171,7 +171,7 @@ int ntfs_mbstoucs_libntfscompat(const char *ins,
 				 * because it emulates libntfs's mbstoucs more
 				 * closely. */
 				ntfschar *re_outs = realloc(*outs,
-					sizeof(ntfschar)*(tmpstr_len + 1));
+						sizeof(ntfschar)*(tmpstr_len + 1));
 				if(!re_outs)
 					tmpstr_len = -1;
 				else
@@ -181,7 +181,7 @@ int ntfs_mbstoucs_libntfscompat(const char *ins,
 			if(tmpstr_len >= 0) {
 				/* The extra character is the \0 terminator. */
 				memcpy(*outs, tmpstr,
-					sizeof(ntfschar)*(tmpstr_len + 1));
+						sizeof(ntfschar)*(tmpstr_len + 1));
 			}
 
 			free(tmpstr);
@@ -506,14 +506,14 @@ int utils_inode_get_name(ntfs_inode *inode, char *buffer, int bufsize)
 			}
 
 			if (ntfs_ucstombs(attr->file_name, attr->file_name_length,
-			    &names[i], 0) < 0) {
+						&names[i], 0) < 0) {
 				char *temp;
 				ntfs_log_error("Couldn't translate filename to current locale.\n");
 				temp = ntfs_malloc(30);
 				if (!temp)
 					return 0;
 				snprintf(temp, 30, "<MFT%llu>", (unsigned
-						long long)inode->mft_no);
+							long long)inode->mft_no);
 				names[i] = temp;
 			}
 
@@ -669,7 +669,7 @@ int utils_cluster_in_use(ntfs_volume *vol, long long lcn)
 
 	/* Does lcn lie in the section of $Bitmap we already have cached? */
 	if ((lcn < bmplcn)
-	    || (lcn >= (long long)(bmplcn + (sizeof(buffer) << 3)))) {
+			|| (lcn >= (long long)(bmplcn + (sizeof(buffer) << 3)))) {
 		ntfs_log_debug("Bit lies outside cache.\n");
 		attr = ntfs_attr_open(vol->lcnbmp_ni, AT_DATA, AT_UNNAMED, 0);
 		if (!attr) {
@@ -737,8 +737,8 @@ int check_mftrec_in_use(ntfs_volume *vol, MFT_REF mref, int force)
 
 	/* Does mref lie in the section of $Bitmap we already have cached? */
 	if (force ||
-		((s64)MREF(mref) < bmpmref) ||
-		((s64)MREF(mref) >= (s64)(bmpmref + (sizeof(buffer) << 3)))) {
+			((s64)MREF(mref) < bmpmref) ||
+			((s64)MREF(mref) >= (s64)(bmpmref + (sizeof(buffer) << 3)))) {
 
 		ntfs_log_debug("Bit lies outside cache.\n");
 
@@ -961,7 +961,7 @@ int mft_next_record(struct mft_search_ctx *ctx)
 	}
 
 	nr_mft_records = ctx->vol->mft_na->initialized_size >>
-			ctx->vol->mft_record_size_bits;
+		ctx->vol->mft_record_size_bits;
 
 	for (ctx->mft_num++; (s64)ctx->mft_num < nr_mft_records; ctx->mft_num++) {
 		int in_use;
@@ -986,13 +986,13 @@ int mft_next_record(struct mft_search_ctx *ctx)
 				r = ntfs_file_record_read(ctx->vol, (MFT_REF) ctx->mft_num, &mrec, NULL);
 				if (r || !mrec || !mrec->base_mft_record)
 					ntfs_log_error(
-						"Error reading inode %lld.\n",
-						(long long)ctx->mft_num);
+							"Error reading inode %lld.\n",
+							(long long)ctx->mft_num);
 				else {
 					ntfs_log_debug("Inode %lld is an "
-						"extent of inode %lld.\n",
-						(long long)ctx->mft_num,
-						(long long)MREF(le64_to_cpu(mrec->base_mft_record)));
+							"extent of inode %lld.\n",
+							(long long)ctx->mft_num,
+							(long long)MREF(le64_to_cpu(mrec->base_mft_record)));
 				}
 				free (mrec);
 				continue;
@@ -1064,7 +1064,7 @@ int mft_next_record(struct mft_search_ctx *ctx)
 
 			if (ntfs_attr_pread(mft, ctx->vol->mft_record_size * ctx->mft_num, ctx->vol->mft_record_size, ctx->inode->mrec) < ctx->vol->mft_record_size) {
 				ntfs_log_perror("Couldn't read MFT Record %llu",
-					(unsigned long long) ctx->mft_num);
+						(unsigned long long) ctx->mft_num);
 				// free / close
 				ntfs_attr_close(mft);
 				return -1;
@@ -1112,38 +1112,38 @@ char *ntfs_utils_reformat(char *out, int sz, const char *fmt)
 	state = F_INIT;
 	while (*f && ((i + 3) < sz)) {
 		switch (state) {
-		case F_INIT :
-			if (*f == '%')
-				state = F_PERCENT;
-			*p++ = *f++;
-			i++;
-			break;
-		case F_PERCENT :
-			if (*f == 'l') {
-				state = F_FIRST;
-				f++;
-			} else {
-				if (((*f < '0') || (*f > '9'))
-				    && (*f != '*') && (*f != '-'))
-					state = F_INIT;
+			case F_INIT :
+				if (*f == '%')
+					state = F_PERCENT;
 				*p++ = *f++;
 				i++;
-			}
-			break;
-		case F_FIRST :
-			if (*f == 'l') {
-				*p++ = 'I';
-				*p++ = '6';
-				*p++ = '4';
-				f++;
-				i += 3;
-			} else {
-				*p++ = 'l';
-				*p++ = *f++;
-				i += 2;
-			}
-			state = F_INIT;
-			break;
+				break;
+			case F_PERCENT :
+				if (*f == 'l') {
+					state = F_FIRST;
+					f++;
+				} else {
+					if (((*f < '0') || (*f > '9'))
+							&& (*f != '*') && (*f != '-'))
+						state = F_INIT;
+					*p++ = *f++;
+					i++;
+				}
+				break;
+			case F_FIRST :
+				if (*f == 'l') {
+					*p++ = 'I';
+					*p++ = '6';
+					*p++ = '4';
+					f++;
+					i += 3;
+				} else {
+					*p++ = 'l';
+					*p++ = *f++;
+					i += 2;
+				}
+				state = F_INIT;
+				break;
 		}
 	}
 	*p++ = 0;

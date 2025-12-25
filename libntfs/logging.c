@@ -315,7 +315,7 @@ void ntfs_log_set_handler(ntfs_log_handler *handler)
  *          num  Number of output characters
  */
 int ntfs_log_redirect(const char *function, const char *file,
-	int line, u32 level, void *data, const char *format, ...)
+		int line, u32 level, void *data, const char *format, ...)
 {
 	int olderr = errno;
 	int ret;
@@ -354,13 +354,13 @@ int ntfs_log_redirect(const char *function, const char *file,
 
 #ifdef HAVE_SYSLOG_H
 
-#define LOG_LINE_LEN 	512
+#define LOG_LINE_LEN	512
 
 int ntfs_log_handler_syslog(const char *function  __attribute__((unused)),
-			    const char *file __attribute__((unused)),
-			    int line __attribute__((unused)), u32 level,
-			    void *data __attribute__((unused)),
-			    const char *format, va_list args)
+		const char *file __attribute__((unused)),
+		int line __attribute__((unused)), u32 level,
+		void *data __attribute__((unused)),
+		const char *format, va_list args)
 {
 	char logbuf[LOG_LINE_LEN];
 	int ret, olderr = errno;
@@ -404,8 +404,8 @@ void ntfs_log_early_error(const char *format, ...)
 #ifdef HAVE_SYSLOG_H
 	openlog("ntfs-3g", LOG_PID, LOG_USER);
 	ntfs_log_handler_syslog(NULL, NULL, 0,
-		NTFS_LOG_LEVEL_ERROR, NULL,
-		format, args);
+			NTFS_LOG_LEVEL_ERROR, NULL,
+			format, args);
 #else
 	vfprintf(stderr,format,args);
 #endif
@@ -434,7 +434,7 @@ void ntfs_log_early_error(const char *format, ...)
  *          num  Number of output characters
  */
 int ntfs_log_handler_fprintf(const char *function, const char *file,
-	int line, u32 level, void *data, const char *format, va_list args)
+		int line, u32 level, void *data, const char *format, va_list args)
 {
 #ifdef DEBUG
 	int i;
@@ -458,7 +458,7 @@ int ntfs_log_handler_fprintf(const char *function, const char *file,
 		ret += fprintf(stream, " ");
 #endif
 	if ((ntfs_log.flags & NTFS_LOG_FLAG_ONLYNAME) &&
-	    (strchr(file, PATH_SEP)))		/* Abbreviate the filename */
+			(strchr(file, PATH_SEP)))		/* Abbreviate the filename */
 		file = strrchr(file, PATH_SEP) + 1;
 
 	if (ntfs_log.flags & NTFS_LOG_FLAG_PREFIX)	/* Prefix the output */
@@ -471,7 +471,7 @@ int ntfs_log_handler_fprintf(const char *function, const char *file,
 		ret += fprintf(stream, "(%d) ", line);
 
 	if ((ntfs_log.flags & NTFS_LOG_FLAG_FUNCTION) || /* Source function */
-	    (level & NTFS_LOG_LEVEL_TRACE) || (level & NTFS_LOG_LEVEL_ENTER))
+			(level & NTFS_LOG_LEVEL_TRACE) || (level & NTFS_LOG_LEVEL_ENTER))
 		ret += fprintf(stream, "%s(): ", function);
 
 	ret += vfprintf(stream, format, args);
@@ -504,8 +504,8 @@ int ntfs_log_handler_fprintf(const char *function, const char *file,
  * Returns:  0  Message wasn't logged
  */
 int ntfs_log_handler_null(const char *function __attribute__((unused)), const char *file __attribute__((unused)),
-	int line __attribute__((unused)), u32 level __attribute__((unused)), void *data __attribute__((unused)),
-	const char *format __attribute__((unused)), va_list args __attribute__((unused)))
+		int line __attribute__((unused)), u32 level __attribute__((unused)), void *data __attribute__((unused)),
+		const char *format __attribute__((unused)), va_list args __attribute__((unused)))
 {
 	return 0;
 }
@@ -532,7 +532,7 @@ int ntfs_log_handler_null(const char *function __attribute__((unused)), const ch
  *          num  Number of output characters
  */
 int ntfs_log_handler_stdout(const char *function, const char *file,
-	int line, u32 level, void *data, const char *format, va_list args)
+		int line, u32 level, void *data, const char *format, va_list args)
 {
 	if (!data)
 		data = stdout;
@@ -563,7 +563,7 @@ int ntfs_log_handler_stdout(const char *function, const char *file,
  *          num  Number of output characters
  */
 int ntfs_log_handler_outerr(const char *function, const char *file,
-	int line, u32 level, void *data, const char *format, va_list args)
+		int line, u32 level, void *data, const char *format, va_list args)
 {
 	if (!data)
 		data = ntfs_log_get_stream(level);
@@ -593,7 +593,7 @@ int ntfs_log_handler_outerr(const char *function, const char *file,
  *          num  Number of output characters
  */
 int ntfs_log_handler_stderr(const char *function, const char *file,
-	int line, u32 level, void *data, const char *format, va_list args)
+		int line, u32 level, void *data, const char *format, va_list args)
 {
 	if (!data)
 		data = stderr;

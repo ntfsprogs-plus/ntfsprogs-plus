@@ -1,5 +1,5 @@
 /*
- * security.h - Exports for handling security/ACLs in NTFS.  
+ * security.h - Exports for handling security/ACLs in NTFS.
  *              Originated from the Linux-NTFS project.
  *
  * Copyright (c) 2004      Anton Altaparmakov
@@ -75,7 +75,7 @@ struct CACHED_PERMISSIONS_LEGACY {
 	void *variable;
 	size_t varsize;
 	union ALIGNMENT payload[0];
-		/* above fields must match "struct CACHED_GENERIC" */
+	/* above fields must match "struct CACHED_GENERIC" */
 	u64 mft_no;
 	struct CACHED_PERMISSIONS perm;
 } ;
@@ -90,7 +90,7 @@ struct CACHED_SECURID {
 	void *variable;
 	size_t varsize;
 	union ALIGNMENT payload[0];
-		/* above fields must match "struct CACHED_GENERIC" */
+	/* above fields must match "struct CACHED_GENERIC" */
 	uid_t uid;
 	gid_t gid;
 	unsigned int dmode;
@@ -104,7 +104,7 @@ struct CACHED_SECURID {
 
 struct CACHED_PERMISSIONS_HEADER {
 	unsigned int last;
-			/* statistics for permissions */
+	/* statistics for permissions */
 	unsigned long p_writes;
 	unsigned long p_reads;
 	unsigned long p_hits;
@@ -146,20 +146,20 @@ struct SECURITY_CONTEXT {
 	gid_t gid; /* gid of user requesting (not the mounter) */
 	pid_t tid; /* thread id of thread requesting */
 	mode_t umask; /* umask of requesting thread */
-	} ;
+} ;
 
 #if POSIXACLS
 
 /*
  *		       Posix ACL structures
  */
-  
+
 struct POSIX_ACE {
 	u16 tag;
 	u16 perms;
-	s32 id;   
+	s32 id;
 } __attribute__((__packed__));
-        
+
 struct POSIX_ACL {
 	u8 version;
 	u8 flags;
@@ -176,12 +176,12 @@ struct POSIX_SECURITY {
 	u16 filler;
 	struct POSIX_ACL acl;
 } ;
-        
+
 /*
  *		Posix tags, cpu-endian 16 bits
  */
-   
-enum {  
+
+enum {
 	POSIX_ACL_USER_OBJ =	1,
 	POSIX_ACL_USER =	2,
 	POSIX_ACL_GROUP_OBJ =	4,
@@ -192,12 +192,12 @@ enum {
 } ;
 
 #define POSIX_ACL_EXTENSIONS (POSIX_ACL_USER | POSIX_ACL_GROUP | POSIX_ACL_MASK)
-        
+
 /*
  *		Posix permissions, cpu-endian 16 bits
  */
-   
-enum {  
+
+enum {
 	POSIX_PERM_X =		1,
 	POSIX_PERM_W =		2,
 	POSIX_PERM_R =		4,
@@ -218,7 +218,7 @@ extern void ntfs_generate_guid(GUID *guid);
 extern int ntfs_sd_add_everyone(ntfs_inode *ni);
 
 extern le32 ntfs_security_hash(const SECURITY_DESCRIPTOR_RELATIVE *sd, 
-			       const u32 len);
+		const u32 len);
 
 int ntfs_build_mapping(struct SECURITY_CONTEXT *scx, const char *usermap_path,
 		BOOL allowdef);
@@ -266,23 +266,23 @@ int ntfs_set_inherited_posix(struct SECURITY_CONTEXT *scx,
 		ntfs_inode *ni, uid_t uid, gid_t gid,
 		ntfs_inode *dir_ni, mode_t mode);
 int ntfs_get_posix_acl(struct SECURITY_CONTEXT *scx, ntfs_inode *ni,
-			const char *name, char *value, size_t size);
+		const char *name, char *value, size_t size);
 int ntfs_set_posix_acl(struct SECURITY_CONTEXT *scx, ntfs_inode *ni,
-			const char *name, const char *value, size_t size,
-			int flags);
+		const char *name, const char *value, size_t size,
+		int flags);
 int ntfs_remove_posix_acl(struct SECURITY_CONTEXT *scx, ntfs_inode *ni,
-			const char *name);
+		const char *name);
 #endif
 
 int ntfs_get_ntfs_acl(struct SECURITY_CONTEXT *scx, ntfs_inode *ni,
-			char *value, size_t size);
+		char *value, size_t size);
 int ntfs_set_ntfs_acl(struct SECURITY_CONTEXT *scx, ntfs_inode *ni,
-			const char *value, size_t size, int flags); 
+		const char *value, size_t size, int flags); 
 
 int ntfs_get_ntfs_attrib(ntfs_inode *ni, char *value, size_t size);
 int ntfs_set_ntfs_attrib(ntfs_inode *ni,
-			const char *value, size_t size,	int flags);
-			
+		const char *value, size_t size,	int flags);
+
 
 /*
  *		Security API for direct access to security descriptors
@@ -310,8 +310,8 @@ enum {	OWNER_SECURITY_INFORMATION = 1,
 } ;
 
 int ntfs_get_file_security(struct SECURITY_API *scapi,
-                const char *path, u32 selection,  
-                char *buf, u32 buflen, u32 *psize);
+		const char *path, u32 selection,  
+		char *buf, u32 buflen, u32 *psize);
 int ntfs_set_file_security(struct SECURITY_API *scapi,
 		const char *path, u32 selection, const char *attr);
 int ntfs_get_file_attributes(struct SECURITY_API *scapi,
@@ -327,7 +327,7 @@ INDEX_ENTRY *ntfs_read_sii(struct SECURITY_API *scapi,
 INDEX_ENTRY *ntfs_read_sdh(struct SECURITY_API *scapi,
 		INDEX_ENTRY *entry);
 struct SECURITY_API *ntfs_initialize_file_security(const char *device,
-                                unsigned long flags);
+		unsigned long flags);
 BOOL ntfs_leave_file_security(struct SECURITY_API *scx);
 
 int ntfs_get_usid(struct SECURITY_API *scapi, uid_t uid, char *buf);

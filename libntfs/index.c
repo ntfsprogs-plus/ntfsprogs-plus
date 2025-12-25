@@ -88,10 +88,10 @@ int ntfs_ib_write(ntfs_index_context *icx, INDEX_BLOCK *ib)
 	ntfs_log_trace("vcn: %lld\n", (long long)vcn);
 
 	ret = ntfs_attr_mst_pwrite(icx->ia_na, ntfs_ib_vcn_to_pos(icx, vcn),
-				   1, icx->block_size, ib);
+			1, icx->block_size, ib);
 	if (ret != 1) {
 		ntfs_log_perror("Failed to write index block %lld, inode %llu",
-			(long long)vcn, (unsigned long long)icx->ni->mft_no);
+				(long long)vcn, (unsigned long long)icx->ni->mft_no);
 		return STATUS_ERROR;
 	}
 
@@ -100,12 +100,12 @@ int ntfs_ib_write(ntfs_index_context *icx, INDEX_BLOCK *ib)
 
 static int ntfs_icx_ib_write(ntfs_index_context *icx)
 {
-		if (ntfs_ib_write(icx, icx->ib))
-			return STATUS_ERROR;
+	if (ntfs_ib_write(icx, icx->ib))
+		return STATUS_ERROR;
 
-		icx->ib_dirty = FALSE;
+	icx->ib_dirty = FALSE;
 
-		return STATUS_OK;
+	return STATUS_OK;
 }
 
 /**
@@ -118,7 +118,7 @@ static int ntfs_icx_ib_write(ntfs_index_context *icx)
  * Return NULL if allocation failed.
  */
 ntfs_index_context *ntfs_index_ctx_get(ntfs_inode *ni,
-				       ntfschar *name, u32 name_len)
+		ntfschar *name, u32 name_len)
 {
 	ntfs_index_context *icx;
 
@@ -134,8 +134,8 @@ ntfs_index_context *ntfs_index_ctx_get(ntfs_inode *ni,
 	if (icx)
 		*icx = (ntfs_index_context) {
 			.ni = ni,
-			.name = name,
-			.name_len = name_len,
+				.name = name,
+				.name_len = name_len,
 		};
 	return icx;
 }
@@ -198,8 +198,8 @@ void ntfs_index_ctx_reinit(ntfs_index_context *icx)
 
 	*icx = (ntfs_index_context) {
 		.ni = icx->ni,
-		.name = icx->name,
-		.name_len = icx->name_len,
+			.name = icx->name,
+			.name_len = icx->name_len,
 	};
 }
 
@@ -345,7 +345,7 @@ static void ntfs_ie_delete(INDEX_HEADER *ih, INDEX_ENTRY *ie)
 	new_size = le32_to_cpu(ih->index_length) - le16_to_cpu(ie->length);
 	ih->index_length = cpu_to_le32(new_size);
 	memmove(ie, (u8 *)ie + le16_to_cpu(ie->length),
-		new_size - ((u8 *)ie - (u8 *)ih));
+			new_size - ((u8 *)ie - (u8 *)ih));
 }
 
 static void ntfs_ie_set_vcn(INDEX_ENTRY *ie, VCN vcn)
@@ -364,7 +364,7 @@ static void ntfs_ie_insert(INDEX_HEADER *ih, INDEX_ENTRY *ie, INDEX_ENTRY *pos)
 
 	ih->index_length = cpu_to_le32(le32_to_cpu(ih->index_length) + ie_size);
 	memmove((u8 *)pos + ie_size, pos,
-		le32_to_cpu(ih->index_length) - ((u8 *)pos - (u8 *)ih) - ie_size);
+			le32_to_cpu(ih->index_length) - ((u8 *)pos - (u8 *)ih) - ie_size);
 	memcpy(pos, ie, ie_size);
 }
 
@@ -401,7 +401,7 @@ static INDEX_ENTRY *ntfs_ie_dup_novcn(INDEX_ENTRY *ie)
 }
 
 INDEX_ROOT *ntfs_ir_lookup(ntfs_inode *ni, ntfschar *name,
-				  u32 name_len, ntfs_attr_search_ctx **ctx)
+		u32 name_len, ntfs_attr_search_ctx **ctx)
 {
 	ATTR_RECORD *a;
 	INDEX_ROOT *ir = NULL;
@@ -413,7 +413,7 @@ INDEX_ROOT *ntfs_ir_lookup(ntfs_inode *ni, ntfschar *name,
 		return NULL;
 
 	if (ntfs_attr_lookup(AT_INDEX_ROOT, name, name_len, CASE_SENSITIVE,
-			     0, NULL, 0, *ctx)) {
+				0, NULL, 0, *ctx)) {
 		ntfs_log_perror("Failed to lookup $INDEX_ROOT");
 		goto err_out;
 	}
@@ -474,7 +474,7 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 {
 	INDEX_HEADER *ih = &ib->index;
 	u32 ib_size = (unsigned)le32_to_cpu(ih->allocated_size)
-			+ offsetof(INDEX_BLOCK, index);
+		+ offsetof(INDEX_BLOCK, index);
 	BOOL fixed = FALSE;
 	problem_context_t pctx = {0, };
 
@@ -487,22 +487,22 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 
 	if (sle64_to_cpu(ib->index_block_vcn) != vcn) {
 		ntfs_log_error("%sCorrupt index block: VCN (%lld) is different "
-			       "from expected VCN (%lld) in inode %llu\n",
-			       fixed == TRUE ? "\n" : "",
-			       (long long)sle64_to_cpu(ib->index_block_vcn),
-			       (long long)vcn,
-			       (unsigned long long)inum);
+				"from expected VCN (%lld) in inode %llu\n",
+				fixed == TRUE ? "\n" : "",
+				(long long)sle64_to_cpu(ib->index_block_vcn),
+				(long long)vcn,
+				(unsigned long long)inum);
 		return -1;
 	}
 
 	if (ib_size != block_size) {
 		ntfs_log_error("%sCorrupt index block : VCN (%lld) of inode %llu "
-			       "has a size (%u) differing from the index "
-			       "specified size (%u)\n",
-			       fixed == TRUE ? "\n" : "",
-			       (long long)vcn,
-			       (unsigned long long)inum, ib_size,
-			       (unsigned int)block_size);
+				"has a size (%u) differing from the index "
+				"specified size (%u)\n",
+				fixed == TRUE ? "\n" : "",
+				(long long)vcn,
+				(unsigned long long)inum, ib_size,
+				(unsigned int)block_size);
 		return -1;
 	}
 
@@ -582,8 +582,8 @@ static ntfs_attr *ntfs_ia_open(ntfs_index_context *icx, ntfs_inode *ni)
  */
 
 int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
-			COLLATION_RULES collation_rule, u64 inum,
-			ntfs_index_context *ictx)
+		COLLATION_RULES collation_rule, u64 inum,
+		ntfs_index_context *ictx)
 {
 	int ret = 0;
 	problem_context_t pctx = {0, };
@@ -609,7 +609,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 	}
 
 	if (ie->length == cpu_to_le16(sizeof(INDEX_ENTRY_HEADER)) &&
-	    !ie->ie_flags) {
+			!ie->ie_flags) {
 		fsck_err_found();
 		if (ntfs_fix_problem(vol, PR_IE_END_FLAG_CORRUPTED, &pctx)) {
 			ie->ie_flags = INDEX_ENTRY_END;
@@ -638,7 +638,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 
 	if (ie->ie_flags & INDEX_ENTRY_NODE) {
 		if (((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) !=
-		    (le16_to_cpu(ie->length) - 8)) {
+				(le16_to_cpu(ie->length) - 8)) {
 			/* TODO: need to fix it */
 			ntfs_log_error("there is no vcn space in index node\n");
 			return -1;
@@ -646,7 +646,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 	}
 
 	if (((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) ==
-	    (le16_to_cpu(ie->length) - 8)) {
+			(le16_to_cpu(ie->length) - 8)) {
 		if (!(ie->ie_flags & INDEX_ENTRY_NODE)) {
 			fsck_err_found();
 			if (ntfs_fix_problem(vol, PR_IE_FLAG_SUB_NODE_CORRUPTED, &pctx)) {
@@ -662,30 +662,30 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 		return 0;
 
 	if (ie->key_length &&
-	    ((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key)) >
-	     le16_to_cpu(ie->length))) {
+			((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key)) >
+			 le16_to_cpu(ie->length))) {
 		ntfs_log_error("Overflow from index entry in inode %lld",
 				(long long)inum);
 		ret = -1;
 	} else {
 		if (collation_rule == COLLATION_FILE_NAME) {
 			if ((offsetof(INDEX_ENTRY, key.file_name.file_name)
-				    + ie->key.file_name.file_name_length
+						+ ie->key.file_name.file_name_length
 						* sizeof(ntfschar))
-				> le16_to_cpu(ie->length)) {
+					> le16_to_cpu(ie->length)) {
 				ntfs_log_error("File name overflow from index"
-					" entry in inode %lld",
-					(long long)inum);
+						" entry in inode %lld",
+						(long long)inum);
 				ret = -1;
 			}
 		} else {
 			if (ie->data_length
-				&& ((le16_to_cpu(ie->data_offset)
-				    + le16_to_cpu(ie->data_length))
-				    > le16_to_cpu(ie->length))) {
+					&& ((le16_to_cpu(ie->data_offset)
+							+ le16_to_cpu(ie->data_length))
+						> le16_to_cpu(ie->length))) {
 				ntfs_log_error("Data overflow from index"
-					" entry in inode %lld",
-					(long long)inum);
+						" entry in inode %lld",
+						(long long)inum);
 				ret = -1;
 			}
 		}
@@ -706,8 +706,8 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
  *   STATUS_ERROR with errno set if on unexpected error during lookup.
  */
 static int ntfs_ie_lookup(const void *key, const int key_len,
-			  ntfs_index_context *icx, INDEX_HEADER *ih,
-			  VCN *vcn, INDEX_ENTRY **ie_out)
+		ntfs_index_context *icx, INDEX_HEADER *ih,
+		VCN *vcn, INDEX_ENTRY **ie_out)
 {
 	INDEX_ENTRY *ie;
 	u8 *index_end;
@@ -724,11 +724,11 @@ static int ntfs_ie_lookup(const void *key, const int key_len,
 	for (ie = ntfs_ie_get_first(ih); ; ie = ntfs_ie_get_next(ie)) {
 		/* Bounds checks. */
 		if ((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end ||
-		    (u8 *)ie + le16_to_cpu(ie->length) > index_end) {
+				(u8 *)ie + le16_to_cpu(ie->length) > index_end) {
 			errno = ERANGE;
 			ntfs_log_error("Index entry out of bounds in inode "
-				       "%llu.\n",
-				       (unsigned long long)icx->ni->mft_no);
+					"%llu.\n",
+					(unsigned long long)icx->ni->mft_no);
 			return STATUS_ERROR;
 		}
 
@@ -757,10 +757,10 @@ static int ntfs_ie_lookup(const void *key, const int key_len,
 		}
 
 		rc = icx->collate(icx->ni->vol, key, key_len,
-					&ie->key, le16_to_cpu(ie->key_length));
+				&ie->key, le16_to_cpu(ie->key_length));
 		if (rc == NTFS_COLLATION_ERROR) {
 			ntfs_log_error("Collation error. Perhaps a filename "
-				       "contains invalid characters?\n");
+					"contains invalid characters?\n");
 			errno = ERANGE;
 			return STATUS_ERROR;
 		}
@@ -798,7 +798,7 @@ static int ntfs_ie_lookup(const void *key, const int key_len,
 	if (*vcn < 0) {
 		errno = EINVAL;
 		ntfs_log_perror("Negative vcn in inode %llu",
-			       	(unsigned long long)icx->ni->mft_no);
+				(unsigned long long)icx->ni->mft_no);
 		return STATUS_ERROR;
 	}
 
@@ -822,7 +822,7 @@ int ntfs_ib_read(ntfs_index_context *icx, VCN vcn, INDEX_BLOCK *dst)
 			ntfs_log_perror("Failed to read index block");
 		else
 			ntfs_log_error("Failed(%lld) to read full index block at "
-				       "%lld\n", (long long)ret, (long long)pos);
+					"%lld\n", (long long)ret, (long long)pos);
 		return -1;
 	}
 
@@ -925,7 +925,7 @@ int ntfs_index_lookup(const void *key, const int key_len, ntfs_index_context *ic
 		icx->vcn_size_bits = ni->vol->cluster_size_bits;
 	else
 		icx->vcn_size_bits = NTFS_BLOCK_SIZE_BITS;
-			/* get the appropriate collation function */
+	/* get the appropriate collation function */
 	icx->ir = ir;
 	icx->collate = ntfs_get_collate_function(ir->collation_rule);
 	if (!icx->collate) {
@@ -996,8 +996,8 @@ descend_into_child_node:
 
 	if ((ib->index.ih_flags & NODE_MASK) == LEAF_NODE) {
 		ntfs_log_error("Index entry with child node found in a leaf "
-			       "node in inode 0x%llx.\n",
-			       (unsigned long long)ni->mft_no);
+				"node in inode 0x%llx.\n",
+				(unsigned long long)ni->mft_no);
 		goto err_out;
 	}
 
@@ -1028,7 +1028,7 @@ done:
 }
 
 static INDEX_BLOCK *ntfs_ib_alloc(VCN ib_vcn, u32 ib_size,
-				  INDEX_HEADER_FLAGS node_type)
+		INDEX_HEADER_FLAGS node_type)
 {
 	INDEX_BLOCK *ib;
 	int ih_size = sizeof(INDEX_HEADER);
@@ -1049,10 +1049,10 @@ static INDEX_BLOCK *ntfs_ib_alloc(VCN ib_vcn, u32 ib_size,
 	ib->index_block_vcn = cpu_to_sle64(ib_vcn);
 
 	ib->index.entries_offset = cpu_to_le32((ih_size +
-			le16_to_cpu(ib->usa_count) * 2 + 7) & ~7);
+				le16_to_cpu(ib->usa_count) * 2 + 7) & ~7);
 	ib->index.index_length = const_cpu_to_le32(0);
 	ib->index.allocated_size = cpu_to_le32(ib_size -
-					       (sizeof(INDEX_BLOCK) - ih_size));
+			(sizeof(INDEX_BLOCK) - ih_size));
 	ib->index.ih_flags = node_type;
 
 	return ib;
@@ -1112,7 +1112,7 @@ static int ntfs_ibm_add(ntfs_index_context *icx)
 	 */
 	memset(bmp, 0, sizeof(bmp));
 	if (ntfs_attr_add(icx->ni, AT_BITMAP, icx->name, icx->name_len,
-			  bmp, sizeof(bmp))) {
+				bmp, sizeof(bmp))) {
 		ntfs_log_perror("Failed to add AT_BITMAP");
 		return STATUS_ERROR;
 	}
@@ -1221,7 +1221,7 @@ static VCN ntfs_ibm_get_free(ntfs_index_context *icx)
 	ntfs_log_trace("Entering\n");
 
 	bm = ntfs_attr_readall(icx->ni, AT_BITMAP,  icx->name, icx->name_len,
-			       &size);
+			&size);
 	if (!bm)
 		return (VCN)-1;
 
@@ -1300,7 +1300,7 @@ static void ntfs_ir_nill(INDEX_ROOT *ir)
 }
 
 static int ntfs_ib_copy_tail(ntfs_index_context *icx, INDEX_BLOCK *src,
-			     INDEX_ENTRY *median, VCN new_vcn)
+		INDEX_ENTRY *median, VCN new_vcn)
 {
 	u8 *ies_end;
 	INDEX_ENTRY *ie_head;		/* first entry after the median */
@@ -1310,7 +1310,7 @@ static int ntfs_ib_copy_tail(ntfs_index_context *icx, INDEX_BLOCK *src,
 	ntfs_log_trace("Entering\n");
 
 	dst = ntfs_ib_alloc(new_vcn, icx->block_size,
-			    src->index.ih_flags & NODE_MASK);
+			src->index.ih_flags & NODE_MASK);
 	if (!dst)
 		return STATUS_ERROR;
 
@@ -1321,7 +1321,7 @@ static int ntfs_ib_copy_tail(ntfs_index_context *icx, INDEX_BLOCK *src,
 	memcpy(ntfs_ie_get_first(&dst->index), ie_head, tail_size);
 
 	dst->index.index_length = cpu_to_le32(tail_size +
-					      le32_to_cpu(dst->index.entries_offset));
+			le32_to_cpu(dst->index.entries_offset));
 	ret = ntfs_ib_write(icx, dst);
 
 	free(dst);
@@ -1329,7 +1329,7 @@ static int ntfs_ib_copy_tail(ntfs_index_context *icx, INDEX_BLOCK *src,
 }
 
 static int ntfs_ib_cut_tail(ntfs_index_context *icx, INDEX_BLOCK *ib,
-			    INDEX_ENTRY *ie)
+		INDEX_ENTRY *ie)
 {
 	char *ies_start, *ies_end;
 	INDEX_ENTRY *ie_last;
@@ -1346,7 +1346,7 @@ static int ntfs_ib_cut_tail(ntfs_index_context *icx, INDEX_BLOCK *ib,
 	memcpy(ie, ie_last, le16_to_cpu(ie_last->length));
 
 	ib->index.index_length = cpu_to_le32(((char *)ie - ies_start) +
-		le16_to_cpu(ie->length) + le32_to_cpu(ib->index.entries_offset));
+			le16_to_cpu(ie->length) + le32_to_cpu(ib->index.entries_offset));
 
 	if (ntfs_ib_write(icx, ib))
 		return STATUS_ERROR;
@@ -1364,7 +1364,7 @@ static int ntfs_ia_add(ntfs_index_context *icx)
 	if (!ntfs_attr_exist(icx->ni, AT_INDEX_ALLOCATION, icx->name, icx->name_len)) {
 
 		if (ntfs_attr_add(icx->ni, AT_INDEX_ALLOCATION, icx->name,
-				  icx->name_len, NULL, 0)) {
+					icx->name_len, NULL, 0)) {
 			ntfs_log_perror("Failed to add AT_INDEX_ALLOCATION");
 			return -1;
 		}
@@ -1427,25 +1427,25 @@ retry :
 
 	ir->index.ih_flags = LARGE_INDEX;
 	ir->index.index_length = cpu_to_le32(le32_to_cpu(ir->index.entries_offset)
-					     + le16_to_cpu(ie->length));
+			+ le16_to_cpu(ie->length));
 	ir->index.allocated_size = ir->index.index_length;
 	ix_root_size = sizeof(INDEX_ROOT) - sizeof(INDEX_HEADER)
-			+ le32_to_cpu(ir->index.allocated_size);
+		+ le32_to_cpu(ir->index.allocated_size);
 	if (ntfs_resident_attr_value_resize(ctx->mrec, ctx->attr,
-					ix_root_size)) {
-			/*
-			 * When there is no space to build a non-resident
-			 * index, we may have to move the root to an extent
-			 */
+				ix_root_size)) {
+		/*
+		 * When there is no space to build a non-resident
+		 * index, we may have to move the root to an extent
+		 */
 		if ((errno == ENOSPC)
-		    && (ctx->al_entry || !ntfs_inode_add_attrlist(icx->ni))) {
+				&& (ctx->al_entry || !ntfs_inode_add_attrlist(icx->ni))) {
 			ntfs_attr_put_search_ctx(ctx);
 			ctx = (ntfs_attr_search_ctx*)NULL;
 			ir = ntfs_ir_lookup(icx->ni, icx->name, icx->name_len,
-							&ctx);
+					&ctx);
 			if (ir
-			    && !ntfs_attr_record_move_away(ctx, ix_root_size
-				    - le32_to_cpu(ctx->attr->value_length))) {
+					&& !ntfs_attr_record_move_away(ctx, ix_root_size
+						- le32_to_cpu(ctx->attr->value_length))) {
 				ntfs_attr_put_search_ctx(ctx);
 				ctx = (ntfs_attr_search_ctx*)NULL;
 				goto retry;
@@ -1552,7 +1552,7 @@ static int ntfs_ie_add_vcn(INDEX_ENTRY **ie)
 }
 
 static int ntfs_ih_insert(INDEX_HEADER *ih, INDEX_ENTRY *orig_ie, VCN new_vcn,
-			  int pos)
+		int pos)
 {
 	INDEX_ENTRY *ie_node, *ie;
 	int ret = STATUS_ERROR;
@@ -1604,7 +1604,7 @@ int ntfsck_update_index_entry(ntfs_index_context *ictx)
 }
 
 static int ntfs_ir_insert_median(ntfs_index_context *icx, INDEX_ENTRY *median,
-				 VCN new_vcn)
+		VCN new_vcn)
 {
 	u32 new_size;
 	int ret;
@@ -1616,7 +1616,7 @@ static int ntfs_ir_insert_median(ntfs_index_context *icx, INDEX_ENTRY *median,
 		return STATUS_ERROR;
 
 	new_size = le32_to_cpu(icx->ir->index.index_length) +
-			le16_to_cpu(median->length);
+		le16_to_cpu(median->length);
 	if (!(median->ie_flags & INDEX_ENTRY_NODE))
 		new_size += sizeof(VCN);
 
@@ -1629,7 +1629,7 @@ static int ntfs_ir_insert_median(ntfs_index_context *icx, INDEX_ENTRY *median,
 		return STATUS_ERROR;
 
 	return ntfs_ih_insert(&icx->ir->index, median, new_vcn,
-			      ntfs_icx_parent_pos(icx));
+			ntfs_icx_parent_pos(icx));
 }
 
 static int ntfs_ib_split(ntfs_index_context *icx, INDEX_BLOCK *ib);
@@ -1760,7 +1760,7 @@ int ntfs_ie_add(ntfs_index_context *icx, INDEX_ENTRY *ie)
 			break;
 
 		ntfs_log_trace("index block sizes: allocated: %d  needed: %d\n",
-			       allocated_size, new_size);
+				allocated_size, new_size);
 
 		if (icx->is_in_root) {
 			if (ntfs_ir_make_space(icx, new_size) == STATUS_ERROR)
@@ -1806,7 +1806,7 @@ int ntfs_index_add_filename(ntfs_inode *ni, FILE_NAME_ATTR *fn, MFT_REF mref)
 	}
 
 	fn_size = (fn->file_name_length * sizeof(ntfschar)) +
-			sizeof(FILE_NAME_ATTR);
+		sizeof(FILE_NAME_ATTR);
 	ie_size = (sizeof(INDEX_ENTRY_HEADER) + fn_size + 7) & ~7;
 
 	ie = ntfs_calloc(ie_size);
@@ -1832,7 +1832,7 @@ out:
 }
 
 static int ntfs_ih_takeout(ntfs_index_context *icx, INDEX_HEADER *ih,
-			   INDEX_ENTRY *ie, INDEX_BLOCK *ib)
+		INDEX_ENTRY *ie, INDEX_BLOCK *ib)
 {
 	INDEX_ENTRY *ie_roam = NULL;
 	INDEX_ENTRY *ie_dup = NULL;
@@ -1856,7 +1856,7 @@ static int ntfs_ih_takeout(ntfs_index_context *icx, INDEX_HEADER *ih,
 		 * while deleting an entry from root index
 		 */
 		freed_space = le32_to_cpu(ih->allocated_size)
-				- le32_to_cpu(ih->index_length);
+			- le32_to_cpu(ih->index_length);
 		if (full && (freed_space > 0) && !(freed_space & 7)) {
 			ntfs_ir_truncate(icx, le32_to_cpu(ih->index_length));
 			/* do nothing if truncation fails */
@@ -1921,7 +1921,7 @@ static void ntfs_ir_leafify(ntfs_index_context *icx, INDEX_HEADER *ih)
  *  in the INDEX_ROOT which is not the only one there.
  */
 static int ntfs_ih_reparent_end(ntfs_index_context *icx, INDEX_HEADER *ih,
-				INDEX_BLOCK *ib)
+		INDEX_BLOCK *ib)
 {
 	INDEX_ENTRY *ie, *ie_prev;
 
@@ -2260,7 +2260,7 @@ out:
  */
 
 INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
-			ntfs_index_context *ictx)
+		ntfs_index_context *ictx)
 {
 	INDEX_ENTRY *entry;
 	s64 vcn;
@@ -2318,7 +2318,7 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
  */
 
 INDEX_ENTRY *ntfs_index_walk_up(INDEX_ENTRY *ie,
-			ntfs_index_context *ictx)
+		ntfs_index_context *ictx)
 {
 	INDEX_ENTRY *entry;
 	s64 vcn;
@@ -2329,7 +2329,7 @@ INDEX_ENTRY *ntfs_index_walk_up(INDEX_ENTRY *ie,
 			ictx->pindex--;
 			if (!ictx->pindex) {
 
-					/* we have reached the root */
+				/* we have reached the root */
 
 				free(ictx->ib);
 				ictx->ib = (INDEX_BLOCK*)NULL;
@@ -2338,27 +2338,27 @@ INDEX_ENTRY *ntfs_index_walk_up(INDEX_ENTRY *ie,
 				if (ictx->actx)
 					free(ictx->actx);
 				ictx->ir = ntfs_ir_lookup(ictx->ni,
-					ictx->name, ictx->name_len,
-					&ictx->actx);
+						ictx->name, ictx->name_len,
+						&ictx->actx);
 				if (ictx->ir)
 					entry = ntfs_ie_get_by_pos(
-						&ictx->ir->index,
-						ictx->parent_pos[ictx->pindex]);
+							&ictx->ir->index,
+							ictx->parent_pos[ictx->pindex]);
 				else
 					entry = (INDEX_ENTRY*)NULL;
 			} else {
-					/* up into non-root node */
+				/* up into non-root node */
 				vcn = ictx->parent_vcn[ictx->pindex];
 				if (!ntfs_ib_read(ictx,vcn,ictx->ib)) {
 					entry = ntfs_ie_get_by_pos(
-						&ictx->ib->index,
-						ictx->parent_pos[ictx->pindex]);
+							&ictx->ib->index,
+							ictx->parent_pos[ictx->pindex]);
 				} else
 					entry = (INDEX_ENTRY*)NULL;
 			}
-		ictx->entry = entry;
+			ictx->entry = entry;
 		} while (entry && (ictx->pindex > 0)
-			 && (entry->ie_flags & INDEX_ENTRY_END));
+				&& (entry->ie_flags & INDEX_ENTRY_END));
 	} else
 		entry = (INDEX_ENTRY*)NULL;
 	return (entry);
@@ -2399,19 +2399,19 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 	int ret;
 	le16 flags;
 
-			/*
-                         * lookup() may have returned an invalid node
-			 * when searching for a partial key
-			 * if this happens, walk up
-			 */
+	/*
+	 * lookup() may have returned an invalid node
+	 * when searching for a partial key
+	 * if this happens, walk up
+	 */
 
 	if (ie->ie_flags & INDEX_ENTRY_END)
 		next = ntfs_index_walk_up(ie, ictx);
 	else {
-			/*
-			 * get next entry in same node
-                         * there is always one after any entry with data
-			 */
+		/*
+		 * get next entry in same node
+		 * there is always one after any entry with data
+		 */
 
 		next = (INDEX_ENTRY*)((char*)ie + le16_to_cpu(ie->length));
 		++ictx->parent_pos[ictx->pindex];
@@ -2428,20 +2428,20 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 			return NULL;
 		flags = next->ie_flags;
 
-			/* walk down if it has a subnode */
+		/* walk down if it has a subnode */
 
 		if (flags & INDEX_ENTRY_NODE) {
 			next = ntfs_index_walk_down(next,ictx);
 		} else {
 
-				/* walk up it has no subnode, nor data */
+			/* walk up it has no subnode, nor data */
 
 			if (flags & INDEX_ENTRY_END) {
 				next = ntfs_index_walk_up(next, ictx);
 			}
 		}
 	}
-		/* return NULL if stuck at end of a block */
+	/* return NULL if stuck at end of a block */
 
 	if (next && (next->ie_flags & INDEX_ENTRY_END))
 		next = (INDEX_ENTRY*)NULL;

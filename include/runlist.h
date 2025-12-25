@@ -50,10 +50,10 @@ struct _runlist_element {/* In memory vcn to lcn mapping structure element. */
 };
 
 extern runlist_element *ntfs_rl_extend(ntfs_attr *na, runlist_element *rl,
-			int more_entries);
+		int more_entries);
 
 extern runlist_element *ntfs_rl_replace(runlist_element *dst, int dsize,
-				       runlist_element *src, int ssize, int loc);
+		runlist_element *src, int ssize, int loc);
 
 extern LCN ntfs_rl_vcn_to_lcn(const runlist_element *rl, const VCN vcn);
 
@@ -89,8 +89,8 @@ extern int ntfs_rl_sparse(runlist *rl);
 extern s64 ntfs_rl_get_compressed_size(ntfs_volume *vol, runlist *rl);
 
 extern runlist_element *ntfs_rl_punch_hole(runlist_element *dst_rl, int dst_cnt,
-				    VCN start_vcn, s64 len,
-				    runlist_element **punch_rl);
+		VCN start_vcn, s64 len,
+		runlist_element **punch_rl);
 extern runlist *ntfs_copy_rl_clusters(ntfs_volume *vol, runlist *new_rl, int new_cnt,
 		runlist *orig_rl, int orig_cnt);
 

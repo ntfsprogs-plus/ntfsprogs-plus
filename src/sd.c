@@ -62,17 +62,17 @@ void init_system_file_sd(int sys_file_no, u8 **sd_val, int *sd_val_len)
 	aa_ace->flags = 0;
 	aa_ace->size = const_cpu_to_le16(0x14);
 	switch (sys_file_no) {
-	case FILE_AttrDef:
-	case FILE_Boot:
-		aa_ace->mask = SYNCHRONIZE | STANDARD_RIGHTS_READ |
-			FILE_READ_ATTRIBUTES | FILE_READ_EA | FILE_READ_DATA;
-		break;
-	default:
-		aa_ace->mask = SYNCHRONIZE | STANDARD_RIGHTS_WRITE |
-			FILE_WRITE_ATTRIBUTES | FILE_READ_ATTRIBUTES |
-			FILE_WRITE_EA | FILE_READ_EA | FILE_APPEND_DATA |
-			FILE_WRITE_DATA | FILE_READ_DATA;
-		break;
+		case FILE_AttrDef:
+		case FILE_Boot:
+			aa_ace->mask = SYNCHRONIZE | STANDARD_RIGHTS_READ |
+				FILE_READ_ATTRIBUTES | FILE_READ_EA | FILE_READ_DATA;
+			break;
+		default:
+			aa_ace->mask = SYNCHRONIZE | STANDARD_RIGHTS_WRITE |
+				FILE_WRITE_ATTRIBUTES | FILE_READ_ATTRIBUTES |
+				FILE_WRITE_EA | FILE_READ_EA | FILE_APPEND_DATA |
+				FILE_WRITE_DATA | FILE_READ_DATA;
+			break;
 	}
 	aa_ace->sid.revision = 1;
 	aa_ace->sid.sub_authority_count = 1;
@@ -84,7 +84,7 @@ void init_system_file_sd(int sys_file_no, u8 **sd_val, int *sd_val_len)
 	/* SECURITY_NT_SID_AUTHORITY (S-1-5) */
 	aa_ace->sid.identifier_authority.value[5] = 5;
 	aa_ace->sid.sub_authority[0] =
-			const_cpu_to_le32(SECURITY_LOCAL_SYSTEM_RID);
+		const_cpu_to_le32(SECURITY_LOCAL_SYSTEM_RID);
 	/*
 	 * Now at offset 0x30 within security descriptor, just after the first
 	 * ACE of the DACL. All system files, except the root directory, have
@@ -98,19 +98,19 @@ void init_system_file_sd(int sys_file_no, u8 **sd_val, int *sd_val_len)
 	aa_ace->size = const_cpu_to_le16(0x18);
 	/* Only $AttrDef and $Boot behave differently to everything else. */
 	switch (sys_file_no) {
-	case FILE_AttrDef:
-	case FILE_Boot:
-		aa_ace->mask = SYNCHRONIZE | STANDARD_RIGHTS_READ |
+		case FILE_AttrDef:
+		case FILE_Boot:
+			aa_ace->mask = SYNCHRONIZE | STANDARD_RIGHTS_READ |
 				FILE_READ_ATTRIBUTES | FILE_READ_EA |
 				FILE_READ_DATA;
-		break;
-	default:
-		aa_ace->mask = SYNCHRONIZE | STANDARD_RIGHTS_READ |
+			break;
+		default:
+			aa_ace->mask = SYNCHRONIZE | STANDARD_RIGHTS_READ |
 				FILE_WRITE_ATTRIBUTES |
 				FILE_READ_ATTRIBUTES | FILE_WRITE_EA |
 				FILE_READ_EA | FILE_APPEND_DATA |
 				FILE_WRITE_DATA | FILE_READ_DATA;
-		break;
+			break;
 	}
 	aa_ace->sid.revision = 1;
 	aa_ace->sid.sub_authority_count = 2;
@@ -123,9 +123,9 @@ void init_system_file_sd(int sys_file_no, u8 **sd_val, int *sd_val_len)
 	aa_ace->sid.identifier_authority.value[5] = 5;
 	sub_authorities = aa_ace->sid.sub_authority;
 	*sub_authorities++ =
-			const_cpu_to_le32(SECURITY_BUILTIN_DOMAIN_RID);
+		const_cpu_to_le32(SECURITY_BUILTIN_DOMAIN_RID);
 	*sub_authorities =
-			const_cpu_to_le32(DOMAIN_ALIAS_RID_ADMINS);
+		const_cpu_to_le32(DOMAIN_ALIAS_RID_ADMINS);
 	/*
 	 * Now at offset 0x48 into the security descriptor, as specified in the
 	 * security descriptor, we now have the owner SID.
@@ -204,10 +204,10 @@ void init_root_sd(u8 **sd_val, int *sd_val_len)
 	ace->flags = 0;
 	ace->size = const_cpu_to_le16(0x18);
 	ace->mask = STANDARD_RIGHTS_ALL | FILE_WRITE_ATTRIBUTES |
-			 FILE_LIST_DIRECTORY | FILE_WRITE_DATA |
-			 FILE_ADD_SUBDIRECTORY | FILE_READ_EA | FILE_WRITE_EA |
-			 FILE_TRAVERSE | FILE_DELETE_CHILD |
-			 FILE_READ_ATTRIBUTES;
+		FILE_LIST_DIRECTORY | FILE_WRITE_DATA |
+		FILE_ADD_SUBDIRECTORY | FILE_READ_EA | FILE_WRITE_EA |
+		FILE_TRAVERSE | FILE_DELETE_CHILD |
+		FILE_READ_ATTRIBUTES;
 	ace->sid.revision = SID_REVISION;
 	ace->sid.sub_authority_count = 0x02;
 	/* SECURITY_NT_SID_AUTHORITY (S-1-5) */
@@ -219,14 +219,14 @@ void init_root_sd(u8 **sd_val, int *sd_val_len)
 	ace->sid.identifier_authority.value[5] = 5;
 	sub_authorities = ace->sid.sub_authority;
 	*sub_authorities++ =
-			const_cpu_to_le32(SECURITY_BUILTIN_DOMAIN_RID);
+		const_cpu_to_le32(SECURITY_BUILTIN_DOMAIN_RID);
 	*sub_authorities = const_cpu_to_le32(DOMAIN_ALIAS_RID_ADMINS);
 
 	//ace2
 	ace = (ACCESS_ALLOWED_ACE*)((u8*)ace + le16_to_cpu(ace->size));
 	ace->type = ACCESS_ALLOWED_ACE_TYPE;
 	ace->flags = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE |
-			INHERIT_ONLY_ACE;
+		INHERIT_ONLY_ACE;
 	ace->size = const_cpu_to_le16(0x18);
 	ace->mask = GENERIC_ALL;
 	ace->sid.revision = SID_REVISION;
@@ -240,7 +240,7 @@ void init_root_sd(u8 **sd_val, int *sd_val_len)
 	ace->sid.identifier_authority.value[5] = 5;
 	sub_authorities = ace->sid.sub_authority;
 	*sub_authorities++ =
-			const_cpu_to_le32(SECURITY_BUILTIN_DOMAIN_RID);
+		const_cpu_to_le32(SECURITY_BUILTIN_DOMAIN_RID);
 	*sub_authorities = const_cpu_to_le32(DOMAIN_ALIAS_RID_ADMINS);
 
 	//ace3
@@ -249,10 +249,10 @@ void init_root_sd(u8 **sd_val, int *sd_val_len)
 	ace->flags = 0;
 	ace->size = const_cpu_to_le16(0x14);
 	ace->mask = STANDARD_RIGHTS_ALL | FILE_WRITE_ATTRIBUTES |
-			 FILE_LIST_DIRECTORY | FILE_WRITE_DATA |
-			 FILE_ADD_SUBDIRECTORY | FILE_READ_EA | FILE_WRITE_EA |
-			 FILE_TRAVERSE | FILE_DELETE_CHILD |
-			 FILE_READ_ATTRIBUTES;
+		FILE_LIST_DIRECTORY | FILE_WRITE_DATA |
+		FILE_ADD_SUBDIRECTORY | FILE_READ_EA | FILE_WRITE_EA |
+		FILE_TRAVERSE | FILE_DELETE_CHILD |
+		FILE_READ_ATTRIBUTES;
 	ace->sid.revision = SID_REVISION;
 	ace->sid.sub_authority_count = 0x01;
 	/* SECURITY_NT_SID_AUTHORITY (S-1-5) */
@@ -263,13 +263,13 @@ void init_root_sd(u8 **sd_val, int *sd_val_len)
 	ace->sid.identifier_authority.value[4] = 0;
 	ace->sid.identifier_authority.value[5] = 5;
 	ace->sid.sub_authority[0] =
-			const_cpu_to_le32(SECURITY_LOCAL_SYSTEM_RID);
+		const_cpu_to_le32(SECURITY_LOCAL_SYSTEM_RID);
 
 	//ace4
 	ace = (ACCESS_ALLOWED_ACE*)((u8*)ace + le16_to_cpu(ace->size));
 	ace->type = ACCESS_ALLOWED_ACE_TYPE;
 	ace->flags = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE |
-			INHERIT_ONLY_ACE;
+		INHERIT_ONLY_ACE;
 	ace->size = const_cpu_to_le16(0x14);
 	ace->mask = GENERIC_ALL;
 	ace->sid.revision = SID_REVISION;
@@ -282,7 +282,7 @@ void init_root_sd(u8 **sd_val, int *sd_val_len)
 	ace->sid.identifier_authority.value[4] = 0;
 	ace->sid.identifier_authority.value[5] = 5;
 	ace->sid.sub_authority[0] =
-			const_cpu_to_le32(SECURITY_LOCAL_SYSTEM_RID);
+		const_cpu_to_le32(SECURITY_LOCAL_SYSTEM_RID);
 
 	//ace5
 	ace = (ACCESS_ALLOWED_ACE*)((char*)ace + le16_to_cpu(ace->size));
@@ -290,10 +290,10 @@ void init_root_sd(u8 **sd_val, int *sd_val_len)
 	ace->flags = 0;
 	ace->size = const_cpu_to_le16(0x14);
 	ace->mask = SYNCHRONIZE | READ_CONTROL | DELETE |
-			FILE_WRITE_ATTRIBUTES | FILE_READ_ATTRIBUTES |
-			FILE_TRAVERSE | FILE_WRITE_EA | FILE_READ_EA |
-			FILE_ADD_SUBDIRECTORY | FILE_ADD_FILE |
-			FILE_LIST_DIRECTORY;
+		FILE_WRITE_ATTRIBUTES | FILE_READ_ATTRIBUTES |
+		FILE_TRAVERSE | FILE_WRITE_EA | FILE_READ_EA |
+		FILE_ADD_SUBDIRECTORY | FILE_ADD_FILE |
+		FILE_LIST_DIRECTORY;
 	ace->sid.revision = SID_REVISION;
 	ace->sid.sub_authority_count = 0x01;
 	/* SECURITY_NT_SID_AUTHORITY (S-1-5) */
@@ -304,13 +304,13 @@ void init_root_sd(u8 **sd_val, int *sd_val_len)
 	ace->sid.identifier_authority.value[4] = 0;
 	ace->sid.identifier_authority.value[5] = 5;
 	ace->sid.sub_authority[0] =
-			const_cpu_to_le32(SECURITY_AUTHENTICATED_USER_RID);
+		const_cpu_to_le32(SECURITY_AUTHENTICATED_USER_RID);
 
 	//ace6
 	ace = (ACCESS_ALLOWED_ACE*)((u8*)ace + le16_to_cpu(ace->size));
 	ace->type = ACCESS_ALLOWED_ACE_TYPE;
 	ace->flags = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE |
-			INHERIT_ONLY_ACE;
+		INHERIT_ONLY_ACE;
 	ace->size = const_cpu_to_le16(0x14);
 	ace->mask = GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | DELETE;
 	ace->sid.revision = SID_REVISION;
@@ -323,7 +323,7 @@ void init_root_sd(u8 **sd_val, int *sd_val_len)
 	ace->sid.identifier_authority.value[4] = 0;
 	ace->sid.identifier_authority.value[5] = 5;
 	ace->sid.sub_authority[0] =
-			const_cpu_to_le32(SECURITY_AUTHENTICATED_USER_RID);
+		const_cpu_to_le32(SECURITY_AUTHENTICATED_USER_RID);
 
 	//ace7
 	ace = (ACCESS_ALLOWED_ACE*)((u8*)ace + le16_to_cpu(ace->size));
@@ -331,7 +331,7 @@ void init_root_sd(u8 **sd_val, int *sd_val_len)
 	ace->flags = 0;
 	ace->size = const_cpu_to_le16(0x18);
 	ace->mask = SYNCHRONIZE | READ_CONTROL | FILE_READ_ATTRIBUTES |
-			FILE_TRAVERSE | FILE_READ_EA | FILE_LIST_DIRECTORY;
+		FILE_TRAVERSE | FILE_READ_EA | FILE_LIST_DIRECTORY;
 	ace->sid.revision = SID_REVISION;
 	ace->sid.sub_authority_count = 0x02;
 	/* SECURITY_NT_SID_AUTHORITY (S-1-5) */
@@ -343,14 +343,14 @@ void init_root_sd(u8 **sd_val, int *sd_val_len)
 	ace->sid.identifier_authority.value[5] = 5;
 	sub_authorities = ace->sid.sub_authority;
 	*sub_authorities++ =
-			const_cpu_to_le32(SECURITY_BUILTIN_DOMAIN_RID);
+		const_cpu_to_le32(SECURITY_BUILTIN_DOMAIN_RID);
 	*sub_authorities = const_cpu_to_le32(DOMAIN_ALIAS_RID_USERS);
 
 	//ace8
 	ace = (ACCESS_ALLOWED_ACE*)((u8*)ace + le16_to_cpu(ace->size));
 	ace->type = ACCESS_ALLOWED_ACE_TYPE;
 	ace->flags = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE |
-			INHERIT_ONLY_ACE;
+		INHERIT_ONLY_ACE;
 	ace->size = const_cpu_to_le16(0x18);
 	ace->mask = GENERIC_READ | GENERIC_EXECUTE;
 	ace->sid.revision = SID_REVISION;
@@ -364,7 +364,7 @@ void init_root_sd(u8 **sd_val, int *sd_val_len)
 	ace->sid.identifier_authority.value[5] = 5;
 	sub_authorities = ace->sid.sub_authority;
 	*sub_authorities++ =
-			const_cpu_to_le32(SECURITY_BUILTIN_DOMAIN_RID);
+		const_cpu_to_le32(SECURITY_BUILTIN_DOMAIN_RID);
 	*sub_authorities = const_cpu_to_le32(DOMAIN_ALIAS_RID_USERS);
 
 	//owner sid
@@ -410,9 +410,9 @@ void init_secure_sds(char *sd_val)
 	ACCESS_ALLOWED_ACE *ace;
 	SID *sid;
 
-/*
- * security descriptor #1
- */
+	/*
+	 * security descriptor #1
+	 */
 	//header
 	sds = (SECURITY_DESCRIPTOR_HEADER*)((char*)sd_val);
 	sds->hash = const_cpu_to_le32(0xF80312F0);
@@ -454,7 +454,7 @@ void init_secure_sds(char *sd_val)
 	ace->sid.identifier_authority.value[4] = 0;
 	ace->sid.identifier_authority.value[5] = 5;
 	ace->sid.sub_authority[0] =
-			const_cpu_to_le32(SECURITY_LOCAL_SYSTEM_RID);
+		const_cpu_to_le32(SECURITY_LOCAL_SYSTEM_RID);
 	//ace2
 	ace = (ACCESS_ALLOWED_ACE*)((char*)ace + le16_to_cpu(ace->size));
 	ace->type = 0x00;
@@ -505,9 +505,9 @@ void init_secure_sds(char *sd_val)
 		const_cpu_to_le32(SECURITY_BUILTIN_DOMAIN_RID);
 	sid->sub_authority[1] =
 		const_cpu_to_le32(DOMAIN_ALIAS_RID_ADMINS);
-/*
- * security descriptor #2
- */
+	/*
+	 * security descriptor #2
+	 */
 	//header
 	sds = (SECURITY_DESCRIPTOR_HEADER*)((char*)sd_val + 0x80);
 	sds->hash = const_cpu_to_le32(0xB32451);
@@ -517,7 +517,7 @@ void init_secure_sds(char *sd_val)
 
 	//security descriptor relative
 	sd = (SECURITY_DESCRIPTOR_RELATIVE*)((char*)sds +
-		 sizeof(SECURITY_DESCRIPTOR_HEADER));
+			sizeof(SECURITY_DESCRIPTOR_HEADER));
 	sd->revision = 0x01;
 	sd->alignment = 0x00;
 	sd->control = SE_SELF_RELATIVE | SE_DACL_PRESENT;

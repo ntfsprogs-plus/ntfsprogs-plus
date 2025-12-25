@@ -70,10 +70,10 @@ extern void ntfs_ucsfree(ntfschar *ucs);
 
 extern BOOL ntfs_forbidden_chars(const ntfschar *name, int len, BOOL strict);
 extern BOOL ntfs_forbidden_names(ntfs_volume *vol,
-				const ntfschar *name, int len, BOOL strict);
+		const ntfschar *name, int len, BOOL strict);
 extern BOOL ntfs_collapsible_chars(ntfs_volume *vol,
-				const ntfschar *shortname, int shortlen,
-				const ntfschar *longname, int longlen);
+		const ntfschar *shortname, int shortlen,
+		const ntfschar *longname, int longlen);
 
 extern int ntfs_set_char_encoding(const char *locale);
 

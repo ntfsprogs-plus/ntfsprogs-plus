@@ -124,12 +124,12 @@ int daemon(int nochdir, int noclose) {
 	int fd;
 
 	switch (fork()) {
-	case -1:
-		return (-1);
-	case 0:
-		break;
-	default:
-		_exit(0);
+		case -1:
+			return (-1);
+		case 0:
+			break;
+		default:
+			_exit(0);
 	}
 
 	if (setsid() == -1)

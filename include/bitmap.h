@@ -81,7 +81,7 @@ static __inline__ int ntfs_bitmap_clear_bit(ntfs_attr *na, s64 bit)
  */
 static __inline__ u32 ntfs_rol32(u32 word, unsigned int shift)
 {
-        return (word << shift) | (word >> (32 - shift));
+	return (word << shift) | (word >> (32 - shift));
 }
 
 /*
@@ -92,7 +92,7 @@ static __inline__ u32 ntfs_rol32(u32 word, unsigned int shift)
  */
 static __inline__ u32 ntfs_ror32(u32 word, unsigned int shift)
 {
-        return (word >> shift) | (word << (32 - shift));
+	return (word >> shift) | (word << (32 - shift));
 }
 
 #endif /* defined _NTFS_BITMAP_H */

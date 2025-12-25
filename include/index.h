@@ -31,13 +31,13 @@
  *  ... code requiring gcc 2.8 or later ...
  *  #endif
  *  Note - they won't work for gcc1 or glibc1, since the _MINOR macros
- *  were not defined then. 
+ *  were not defined then.
  */
 
 #ifndef __GNUC_PREREQ
 # if defined __GNUC__ && defined __GNUC_MINOR__
 #  define __GNUC_PREREQ(maj, min) \
-        ((__GNUC__ << 16) + __GNUC_MINOR__ >= ((maj) << 16) + (min))
+	((__GNUC__ << 16) + __GNUC_MINOR__ >= ((maj) << 16) + (min))
 # else
 #  define __GNUC_PREREQ(maj, min) 0
 # endif
@@ -47,7 +47,7 @@
 #ifndef __attribute_warn_unused_result__
 # if __GNUC_PREREQ (3,4)
 #  define __attribute_warn_unused_result__ \
-    __attribute__ ((__warn_unused_result__))
+	__attribute__ ((__warn_unused_result__))
 # else
 #  define __attribute_warn_unused_result__ /* empty */
 # endif
@@ -64,7 +64,7 @@
 #define  MAX_PARENT_VCN		64
 
 typedef int (*COLLATE)(ntfs_volume *vol, const void *data1, int len1,
-					 const void *data2, int len2);
+		const void *data2, int len2);
 
 /**
  * struct ntfs_index_context -
@@ -135,15 +135,15 @@ typedef struct {
 } ntfs_index_context;
 
 extern ntfs_index_context *ntfs_index_ctx_get(ntfs_inode *ni,
-						ntfschar *name, u32 name_len);
+		ntfschar *name, u32 name_len);
 extern void ntfs_index_ctx_put(ntfs_index_context *ictx);
 extern void ntfs_index_ctx_reinit(ntfs_index_context *ictx);
 
 extern int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 		INDEX_BLOCK *ib, u32 block_size, u64 inum, VCN vcn);
 extern int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
-			COLLATION_RULES collation_rule, u64 inum,
-			ntfs_index_context *ictx);
+		COLLATION_RULES collation_rule, u64 inum,
+		ntfs_index_context *ictx);
 extern int ntfs_index_lookup(const void *key, const int key_len,
 		ntfs_index_context *ictx) __attribute_warn_unused_result__;
 
@@ -159,9 +159,9 @@ extern INDEX_ROOT *ntfs_index_root_get(ntfs_inode *ni, ATTR_RECORD *attr);
 
 extern VCN ntfs_ie_get_vcn(INDEX_ENTRY *ie);
 INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
-			ntfs_index_context *ictx);
+		ntfs_index_context *ictx);
 INDEX_ENTRY *ntfs_index_walk_up(INDEX_ENTRY *ie,
-			ntfs_index_context *ictx);
+		ntfs_index_context *ictx);
 
 extern void ntfs_index_entry_mark_dirty(ntfs_index_context *ictx);
 
@@ -178,7 +178,7 @@ int ntfs_ib_write(ntfs_index_context *icx, INDEX_BLOCK *ib);
 int ntfsck_update_index_entry(ntfs_index_context *ictx);
 int ntfs_ibm_modify(ntfs_index_context *icx, VCN vcn, int set);
 INDEX_ROOT *ntfs_ir_lookup(ntfs_inode *ni, ntfschar *name,
-				  u32 name_len, ntfs_attr_search_ctx **ctx);
+		u32 name_len, ntfs_attr_search_ctx **ctx);
 INDEX_ROOT *ntfs_ir_lookup2(ntfs_inode *ni, ntfschar *name, u32 len);
 s64 ntfs_ib_vcn_to_pos(ntfs_index_context *icx, VCN vcn);
 

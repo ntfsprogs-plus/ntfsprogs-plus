@@ -12,7 +12,7 @@
 #ifdef HAVE_SYS_PARAM_H
 #include <sys/param.h>
 #endif
-	/* Do not #include <sys/mount.h> here : conflicts with <linux/fs.h> */
+/* Do not #include <sys/mount.h> here : conflicts with <linux/fs.h> */
 #ifdef HAVE_MNTENT_H
 #include <mntent.h>
 #endif
@@ -42,7 +42,7 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit);
 runlist *ntfs_fsck_check_and_set_lcnbmp(ntfs_volume *vol, ntfs_attr *na, int rl_idx,
 		u8 set_bit, runlist *dup_rl);
 runlist_element *ntfs_rl_append(runlist_element *dst, int dsize,
-				       runlist_element *src, int ssize, int loc);
+		runlist_element *src, int ssize, int loc);
 int ntfs_fsck_repair_cluster_dup(ntfs_attr *na, runlist *dup_rl);
 void ntfs_fsck_fill_unused_lcnbmp(ntfs_volume *vol, s64 last_idx, u8 *buf);
 

@@ -62,22 +62,22 @@
 #		define __LITTLE_ENDIAN LITTLE_ENDIAN
 #		define __BIG_ENDIAN BIG_ENDIAN
 #	elif defined(__BYTE_ORDER__) && defined(__LITTLE_ENDIAN__) && \
-			defined(__BIG_ENDIAN__)
+	defined(__BIG_ENDIAN__)
 #		define __BYTE_ORDER __BYTE_ORDER__
 #		define __LITTLE_ENDIAN __LITTLE_ENDIAN__
 #		define __BIG_ENDIAN __BIG_ENDIAN__
 #	elif defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && \
-			defined(__ORDER_BIG_ENDIAN__)
+	defined(__ORDER_BIG_ENDIAN__)
 #		define __BYTE_ORDER __BYTE_ORDER__
 #		define __LITTLE_ENDIAN __ORDER_LITTLE_ENDIAN__
 #		define __BIG_ENDIAN __ORDER_BIG_ENDIAN__
 #	elif (defined(_LITTLE_ENDIAN) && !defined(_BIG_ENDIAN)) || \
-			defined(WORDS_LITTLEENDIAN)
+	defined(WORDS_LITTLEENDIAN)
 #		define __BYTE_ORDER 1
 #		define __LITTLE_ENDIAN 1
 #		define __BIG_ENDIAN 0
 #	elif (!defined(_LITTLE_ENDIAN) && defined(_BIG_ENDIAN)) || \
-			defined(WORDS_BIGENDIAN)
+	defined(WORDS_BIGENDIAN)
 #		define __BYTE_ORDER 0
 #		define __LITTLE_ENDIAN 1
 #		define __BIG_ENDIAN 0
@@ -87,24 +87,24 @@
 #endif
 
 #define __ntfs_bswap_constant_16(x)		\
-	  (u16)((((u16)(x) & 0xff00) >> 8) |	\
-		(((u16)(x) & 0x00ff) << 8))
+	(u16)((((u16)(x) & 0xff00) >> 8) |	\
+			(((u16)(x) & 0x00ff) << 8))
 
 #define __ntfs_bswap_constant_32(x)			\
-	  (u32)((((u32)(x) & 0xff000000u) >> 24) |	\
-		(((u32)(x) & 0x00ff0000u) >>  8) |	\
-		(((u32)(x) & 0x0000ff00u) <<  8) |	\
-		(((u32)(x) & 0x000000ffu) << 24))
+	(u32)((((u32)(x) & 0xff000000u) >> 24) |	\
+			(((u32)(x) & 0x00ff0000u) >>  8) |	\
+			(((u32)(x) & 0x0000ff00u) <<  8) |	\
+			(((u32)(x) & 0x000000ffu) << 24))
 
 #define __ntfs_bswap_constant_64(x)				\
-	  (u64)((((u64)(x) & 0xff00000000000000ull) >> 56) |	\
-		(((u64)(x) & 0x00ff000000000000ull) >> 40) |	\
-		(((u64)(x) & 0x0000ff0000000000ull) >> 24) |	\
-		(((u64)(x) & 0x000000ff00000000ull) >>  8) |	\
-		(((u64)(x) & 0x00000000ff000000ull) <<  8) |	\
-		(((u64)(x) & 0x0000000000ff0000ull) << 24) |	\
-		(((u64)(x) & 0x000000000000ff00ull) << 40) |	\
-		(((u64)(x) & 0x00000000000000ffull) << 56))
+	(u64)((((u64)(x) & 0xff00000000000000ull) >> 56) |	\
+			(((u64)(x) & 0x00ff000000000000ull) >> 40) |	\
+			(((u64)(x) & 0x0000ff0000000000ull) >> 24) |	\
+			(((u64)(x) & 0x000000ff00000000ull) >>  8) |	\
+			(((u64)(x) & 0x00000000ff000000ull) <<  8) |	\
+			(((u64)(x) & 0x0000000000ff0000ull) << 24) |	\
+			(((u64)(x) & 0x000000000000ff00ull) << 40) |	\
+			(((u64)(x) & 0x00000000000000ffull) << 56))
 
 #ifdef HAVE_BYTESWAP_H
 #	include <byteswap.h>

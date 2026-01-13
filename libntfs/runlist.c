@@ -79,7 +79,7 @@ static void ntfs_rl_mm(runlist_element *base, int dst, int src, int size)
  * Returns:
  */
 static void ntfs_rl_mc(runlist_element *dstbase, int dst,
-		       runlist_element *srcbase, int src, int size)
+		runlist_element *srcbase, int src, int size)
 {
 	if (size > 0)
 		memcpy(dstbase + dst, srcbase + src, size * sizeof(*dstbase));
@@ -114,7 +114,7 @@ static runlist_element *ntfs_rl_malloc(int size)
  * On error, return NULL with errno set to the error code.
  */
 static runlist_element *ntfs_rl_realloc(runlist_element *rl, int old_size,
-					int new_size)
+		int new_size)
 {
 	old_size = (old_size * sizeof(runlist_element) + 0xfff) & ~0xfff;
 	new_size = (new_size * sizeof(runlist_element) + 0xfff) & ~0xfff;
@@ -133,7 +133,7 @@ static runlist_element *ntfs_rl_realloc(runlist_element *rl, int old_size,
  */
 
 runlist_element *ntfs_rl_extend(ntfs_attr *na, runlist_element *rl,
-			int more_entries)
+		int more_entries)
 {
 	runlist_element *newrl;
 	int last;
@@ -187,7 +187,7 @@ static BOOL ntfs_rl_are_mergeable(runlist_element *dst, runlist_element *src)
 		return FALSE;
 	/* If both runs are non-sparse and contiguous, we can merge them. */
 	if ((dst->lcn >= 0) && (src->lcn >= 0) &&
-		((dst->lcn + dst->length) == src->lcn))
+			((dst->lcn + dst->length) == src->lcn))
 		return TRUE;
 	/* If we are merging two holes, we can merge them. */
 	if ((dst->lcn == LCN_HOLE) && (src->lcn == LCN_HOLE))
@@ -231,7 +231,7 @@ static void __ntfs_rl_merge(runlist_element *dst, runlist_element *src)
  * left unmodified.
  */
 static runlist_element *ntfs_rl_append(runlist_element *dst, int dsize,
-				       runlist_element *src, int ssize, int loc)
+		runlist_element *src, int ssize, int loc)
 {
 	BOOL right = FALSE;	/* Right end of @src needs merging */
 	int marker;		/* End of the inserted runs */
@@ -298,7 +298,7 @@ static runlist_element *ntfs_rl_append(runlist_element *dst, int dsize,
  * left unmodified.
  */
 static runlist_element *ntfs_rl_insert(runlist_element *dst, int dsize,
-				       runlist_element *src, int ssize, int loc)
+		runlist_element *src, int ssize, int loc)
 {
 	BOOL left = FALSE;	/* Left end of @src needs merging */
 	BOOL disc = FALSE;	/* Discontinuity between @dst and @src */
@@ -394,8 +394,8 @@ static runlist_element *ntfs_rl_insert(runlist_element *dst, int dsize,
  * left unmodified.
  */
 runlist_element *ntfs_rl_replace(runlist_element *dst, int dsize,
-					runlist_element *src, int ssize,
-					int loc)
+		runlist_element *src, int ssize,
+		int loc)
 {
 	signed delta;
 	BOOL left  = FALSE;	/* Left end of @src needs merging */
@@ -482,7 +482,7 @@ runlist_element *ntfs_rl_replace(runlist_element *dst, int dsize,
  * left unmodified.
  */
 static runlist_element *ntfs_rl_split(runlist_element *dst, int dsize,
-				      runlist_element *src, int ssize, int loc)
+		runlist_element *src, int ssize, int loc)
 {
 	if (!dst || !src) {
 		ntfs_log_debug("Eeek. ntfs_rl_split() invoked with NULL pointer!\n");
@@ -516,14 +516,14 @@ static runlist_element *ntfs_rl_split(runlist_element *dst, int dsize,
  * ntfs_runlists_merge_i - see ntfs_runlists_merge
  */
 static runlist_element *ntfs_runlists_merge_i(runlist_element *drl,
-					      runlist_element *srl)
+		runlist_element *srl)
 {
 	int di, si;		/* Current index into @[ds]rl. */
 	int sstart;		/* First index with lcn > LCN_RL_NOT_MAPPED. */
 	int dins;		/* Index into @drl at which to insert @srl. */
 	int dend, send;		/* Last index into @[ds]rl. */
 	int dfinal, sfinal;	/* The last index into @[ds]rl with
-				   lcn >= LCN_HOLE. */
+						   lcn >= LCN_HOLE. */
 	int marker = 0;
 	VCN marker_vcn = 0;
 
@@ -608,104 +608,104 @@ static runlist_element *ntfs_runlists_merge_i(runlist_element *drl,
 		;
 
 	{
-	BOOL start;
-	BOOL finish;
-	int ds = dend + 1;		/* Number of elements in drl & srl */
-	int ss = sfinal - sstart + 1;
+		BOOL start;
+		BOOL finish;
+		int ds = dend + 1;		/* Number of elements in drl & srl */
+		int ss = sfinal - sstart + 1;
 
-	start  = ((drl[dins].lcn <  LCN_RL_NOT_MAPPED) ||    /* End of file   */
-		  (drl[dins].vcn == srl[sstart].vcn));	     /* Start of hole */
-	finish = ((drl[dins].lcn >= LCN_RL_NOT_MAPPED) &&    /* End of file   */
-		 ((drl[dins].vcn + drl[dins].length) <=      /* End of hole   */
-		  (srl[send - 1].vcn + srl[send - 1].length)));
+		start  = ((drl[dins].lcn <  LCN_RL_NOT_MAPPED) ||    /* End of file   */
+				(drl[dins].vcn == srl[sstart].vcn));	     /* Start of hole */
+		finish = ((drl[dins].lcn >= LCN_RL_NOT_MAPPED) &&    /* End of file   */
+				((drl[dins].vcn + drl[dins].length) <=      /* End of hole   */
+				 (srl[send - 1].vcn + srl[send - 1].length)));
 
-	/* Or we'll lose an end marker */
-	if (finish && !drl[dins].length)
-		ss++;
-	if (marker && (drl[dins].vcn + drl[dins].length > srl[send - 1].vcn))
-		finish = FALSE;
+		/* Or we'll lose an end marker */
+		if (finish && !drl[dins].length)
+			ss++;
+		if (marker && (drl[dins].vcn + drl[dins].length > srl[send - 1].vcn))
+			finish = FALSE;
 
-	ntfs_log_debug("dfinal = %i, dend = %i\n", dfinal, dend);
-	ntfs_log_debug("sstart = %i, sfinal = %i, send = %i\n", sstart, sfinal, send);
-	ntfs_log_debug("start = %i, finish = %i\n", start, finish);
-	ntfs_log_debug("ds = %i, ss = %i, dins = %i\n", ds, ss, dins);
+		ntfs_log_debug("dfinal = %i, dend = %i\n", dfinal, dend);
+		ntfs_log_debug("sstart = %i, sfinal = %i, send = %i\n", sstart, sfinal, send);
+		ntfs_log_debug("start = %i, finish = %i\n", start, finish);
+		ntfs_log_debug("ds = %i, ss = %i, dins = %i\n", ds, ss, dins);
 
-	if (start) {
-		if (finish)
-			drl = ntfs_rl_replace(drl, ds, srl + sstart, ss, dins);
-		else
-			drl = ntfs_rl_insert(drl, ds, srl + sstart, ss, dins);
-	} else {
-		if (finish)
-			drl = ntfs_rl_append(drl, ds, srl + sstart, ss, dins);
-		else
-			drl = ntfs_rl_split(drl, ds, srl + sstart, ss, dins);
-	}
-	if (!drl) {
-		ntfs_log_perror("Merge failed");
-		return drl;
-	}
-	free(srl);
-	if (marker) {
-		ntfs_log_debug("Triggering marker code.\n");
-		for (ds = dend; drl[ds].length; ds++)
-			;
-		/* We only need to care if @srl ended after @drl. */
-		if (drl[ds].vcn <= marker_vcn) {
-			int slots = 0;
+		if (start) {
+			if (finish)
+				drl = ntfs_rl_replace(drl, ds, srl + sstart, ss, dins);
+			else
+				drl = ntfs_rl_insert(drl, ds, srl + sstart, ss, dins);
+		} else {
+			if (finish)
+				drl = ntfs_rl_append(drl, ds, srl + sstart, ss, dins);
+			else
+				drl = ntfs_rl_split(drl, ds, srl + sstart, ss, dins);
+		}
+		if (!drl) {
+			ntfs_log_perror("Merge failed");
+			return drl;
+		}
+		free(srl);
+		if (marker) {
+			ntfs_log_debug("Triggering marker code.\n");
+			for (ds = dend; drl[ds].length; ds++)
+				;
+			/* We only need to care if @srl ended after @drl. */
+			if (drl[ds].vcn <= marker_vcn) {
+				int slots = 0;
 
-			if (drl[ds].vcn == marker_vcn) {
-				ntfs_log_debug("Old marker = %lli, replacing with "
-						"LCN_ENOENT.\n",
-						(long long)drl[ds].lcn);
-				drl[ds].lcn = (LCN)LCN_ENOENT;
-				goto finished;
-			}
-			/*
-			 * We need to create an unmapped runlist element in
-			 * @drl or extend an existing one before adding the
-			 * ENOENT terminator.
-			 */
-			if (drl[ds].lcn == (LCN)LCN_ENOENT) {
-				ds--;
-				slots = 1;
-			}
-			if (drl[ds].lcn != (LCN)LCN_RL_NOT_MAPPED) {
-				/* Add an unmapped runlist element. */
+				if (drl[ds].vcn == marker_vcn) {
+					ntfs_log_debug("Old marker = %lli, replacing with "
+							"LCN_ENOENT.\n",
+							(long long)drl[ds].lcn);
+					drl[ds].lcn = (LCN)LCN_ENOENT;
+					goto finished;
+				}
+				/*
+				 * We need to create an unmapped runlist element in
+				 * @drl or extend an existing one before adding the
+				 * ENOENT terminator.
+				 */
+				if (drl[ds].lcn == (LCN)LCN_ENOENT) {
+					ds--;
+					slots = 1;
+				}
+				if (drl[ds].lcn != (LCN)LCN_RL_NOT_MAPPED) {
+					/* Add an unmapped runlist element. */
+					if (!slots) {
+						/* FIXME/TODO: We need to have the
+						 * extra memory already! (AIA)
+						 */
+						drl = ntfs_rl_realloc(drl, ds, ds + 2);
+						if (!drl)
+							goto critical_error;
+						slots = 2;
+					}
+					ds++;
+					/* Need to set vcn if it isn't set already. */
+					if (slots != 1)
+						drl[ds].vcn = drl[ds - 1].vcn +
+							drl[ds - 1].length;
+					drl[ds].lcn = (LCN)LCN_RL_NOT_MAPPED;
+					/* We now used up a slot. */
+					slots--;
+				}
+				drl[ds].length = marker_vcn - drl[ds].vcn;
+				/* Finally add the ENOENT terminator. */
+				ds++;
 				if (!slots) {
-					/* FIXME/TODO: We need to have the
-					 * extra memory already! (AIA)
+					/* FIXME/TODO: We need to have the extra
+					 * memory already! (AIA)
 					 */
-					drl = ntfs_rl_realloc(drl, ds, ds + 2);
+					drl = ntfs_rl_realloc(drl, ds, ds + 1);
 					if (!drl)
 						goto critical_error;
-					slots = 2;
 				}
-				ds++;
-				/* Need to set vcn if it isn't set already. */
-				if (slots != 1)
-					drl[ds].vcn = drl[ds - 1].vcn +
-							drl[ds - 1].length;
-				drl[ds].lcn = (LCN)LCN_RL_NOT_MAPPED;
-				/* We now used up a slot. */
-				slots--;
+				drl[ds].vcn = marker_vcn;
+				drl[ds].lcn = (LCN)LCN_ENOENT;
+				drl[ds].length = (s64)0;
 			}
-			drl[ds].length = marker_vcn - drl[ds].vcn;
-			/* Finally add the ENOENT terminator. */
-			ds++;
-			if (!slots) {
-				/* FIXME/TODO: We need to have the extra
-				 * memory already! (AIA)
-				 */
-				drl = ntfs_rl_realloc(drl, ds, ds + 1);
-				if (!drl)
-					goto critical_error;
-			}
-			drl[ds].vcn = marker_vcn;
-			drl[ds].lcn = (LCN)LCN_ENOENT;
-			drl[ds].length = (s64)0;
 		}
-	}
 	}
 
 finished:
@@ -812,7 +812,7 @@ runlist_element *ntfs_mapping_pairs_decompress_i(const ntfs_volume *vol,
 	const u8 *attr_end;	/* End of attribute. */
 	int err, rlsize;	/* Size of runlist buffer. */
 	u16 rlpos;		/* Current runlist position in units of
-				   runlist_elements. */
+					   runlist_elements. */
 	u8 b;			/* Current byte offset in buf. */
 
 	ntfs_log_trace("Entering for attr 0x%x.\n",
@@ -999,7 +999,7 @@ mpa_err:
 		VCN num_clusters;
 
 		num_clusters = ((sle64_to_cpu(attr->allocated_size) +
-				vol->cluster_size - 1) >>
+					vol->cluster_size - 1) >>
 				vol->cluster_size_bits);
 
 		if (num_clusters > vcn) {
@@ -1008,7 +1008,7 @@ mpa_err:
 			 * must be more extents.
 			 */
 			ntfs_log_debug("More extents to follow; vcn = 0x%llx, "
-				       "num_clusters = 0x%llx\n",
+					"num_clusters = 0x%llx\n",
 					(long long)vcn,
 					(long long)num_clusters);
 			rl[rlpos].vcn = vcn;
@@ -1021,7 +1021,7 @@ mpa_err:
 			 * the runlist is corrupt.
 			 */
 			ntfs_log_error("Corrupt attribute. vcn = 0x%llx, "
-				       "num_clusters = 0x%llx\n",
+					"num_clusters = 0x%llx\n",
 					(long long)vcn,
 					(long long)num_clusters);
 			goto mpa_err;
@@ -1283,7 +1283,7 @@ s64 ntfs_rl_pread(const ntfs_volume *vol, const runlist_element *rl,
 		return count;
 	/* Seek in @rl to the run containing @pos. */
 	for (ofs = 0; rl->length && (ofs + (rl->length <<
-			vol->cluster_size_bits) <= pos); rl++)
+					vol->cluster_size_bits) <= pos); rl++)
 		ofs += (rl->length << vol->cluster_size_bits);
 	/* Offset in the run at which to begin reading. */
 	ofs = pos - ofs;
@@ -1295,7 +1295,7 @@ s64 ntfs_rl_pread(const ntfs_volume *vol, const runlist_element *rl,
 				goto rl_err_out;
 			/* It is a hole. Just fill buffer @b with zeroes. */
 			to_read = min(count, (rl->length <<
-					vol->cluster_size_bits) - ofs);
+						vol->cluster_size_bits) - ofs);
 			memset(b, 0, to_read);
 			/* Update counters and proceed with next run. */
 			total += to_read;
@@ -1308,7 +1308,7 @@ s64 ntfs_rl_pread(const ntfs_volume *vol, const runlist_element *rl,
 				ofs);
 retry:
 		bytes_read = ntfs_pread(vol->dev, (rl->lcn <<
-				vol->cluster_size_bits) + ofs, to_read, b);
+					vol->cluster_size_bits) + ofs, to_read, b);
 		/* If everything ok, update progress counters and continue. */
 		if (bytes_read > 0) {
 			total += bytes_read;
@@ -1372,7 +1372,7 @@ s64 ntfs_rl_pwrite(const ntfs_volume *vol, const runlist_element *rl,
 		goto out;
 	/* Seek in @rl to the run containing @pos. */
 	while (rl->length && (ofs + (rl->length <<
-			vol->cluster_size_bits) <= pos)) {
+					vol->cluster_size_bits) <= pos)) {
 		ofs += (rl->length << vol->cluster_size_bits);
 		rl++;
 	}
@@ -1387,7 +1387,7 @@ s64 ntfs_rl_pwrite(const ntfs_volume *vol, const runlist_element *rl,
 				goto rl_err_out;
 
 			to_write = min(count, (rl->length <<
-					       vol->cluster_size_bits) - ofs);
+						vol->cluster_size_bits) - ofs);
 
 			total += to_write;
 			count -= to_write;
@@ -1400,7 +1400,7 @@ s64 ntfs_rl_pwrite(const ntfs_volume *vol, const runlist_element *rl,
 retry:
 		if (!NVolReadOnly(vol))
 			written = ntfs_pwrite(vol->dev, (rl->lcn <<
-					vol->cluster_size_bits) + ofs,
+						vol->cluster_size_bits) + ofs,
 					to_write, b);
 		else
 			written = to_write;
@@ -1806,7 +1806,7 @@ int ntfs_rl_truncate(runlist **arl, const VCN start_vcn)
 			ntfs_log_perror("rl_truncate error: arl: %p", arl);
 		else
 			ntfs_log_perror("rl_truncate error:"
-				" arl: %p *arl: %p", arl, *arl);
+					" arl: %p *arl: %p", arl, *arl);
 		return -1;
 	}
 
@@ -1855,7 +1855,7 @@ int ntfs_rl_truncate(runlist **arl, const VCN start_vcn)
 	 * a multiple of 4096. The code caused crashes and corruptions.
 	 */
 /*
-	 if (!is_end) {
+	if (!is_end) {
 		size_t new_size = (rl - *arl + 1) * sizeof(runlist_element);
 		rl = realloc(*arl, new_size);
 		if (rl)
@@ -1929,8 +1929,8 @@ s64 ntfs_rl_get_compressed_size(ntfs_volume *vol, runlist *rl)
 }
 
 runlist_element *ntfs_rl_punch_hole(runlist_element *dst_rl, int dst_cnt,
-				    VCN start_vcn, s64 len,
-				    runlist_element **punch_rl)
+		VCN start_vcn, s64 len,
+		runlist_element **punch_rl)
 {
 	runlist_element *s_rl, *e_rl, *new_rl, *dst_3rd_rl, hole_rl[1];
 	VCN end_vcn;
@@ -2048,12 +2048,12 @@ runlist_element *ntfs_rl_punch_hole(runlist_element *dst_rl, int dst_cnt,
 		merge_cnt = 1;
 		/* Merge left and right */
 		if (new_1st_cnt + 1 < new_cnt &&
-		    new_rl[new_1st_cnt + 1].lcn == LCN_HOLE) {
+				new_rl[new_1st_cnt + 1].lcn == LCN_HOLE) {
 			s_rl->length += s_rl[2].length;
 			merge_cnt++;
 		}
 	} else if (new_1st_cnt + 1 < new_cnt &&
-		   new_rl[new_1st_cnt + 1].lcn == LCN_HOLE) {
+			new_rl[new_1st_cnt + 1].lcn == LCN_HOLE) {
 		/* Merge left and hole */
 		s_rl = &new_rl[new_1st_cnt];
 		s_rl->length += s_rl[1].length;
@@ -2066,7 +2066,7 @@ runlist_element *ntfs_rl_punch_hole(runlist_element *dst_rl, int dst_cnt,
 		d_rl = s_rl + 1;
 		src_rl = s_rl + 1 + merge_cnt;
 		ntfs_rl_mm(new_rl, (int)(d_rl - new_rl), (int)(src_rl - new_rl),
-			   (int)(&new_rl[new_cnt - 1] - src_rl) + 1);
+				(int)(&new_rl[new_cnt - 1] - src_rl) + 1);
 	}
 
 	if (punch_rl) {
@@ -2147,9 +2147,7 @@ runlist *ntfs_copy_rl_clusters(ntfs_volume *vol, runlist *new_rl, int new_cnt,
 	(R)->vcn = V;				\
 	(R)->lcn = L;				\
 	(R)->length = S;
-/*
-}
-*/
+
 /**
  * test_rl_dump_runlist - Runlist test: Display the contents of a runlist
  * @rl:
@@ -2190,10 +2188,10 @@ static void test_rl_dump_runlist(const runlist_element *rl)
 			if (ind > -LCN_ENOENT - 1)
 				ind = 3;
 			printf("%8lld %8s %8lld\n",
-				rl->vcn, lcn_str[ind], rl->length);
+					rl->vcn, lcn_str[ind], rl->length);
 		} else
 			printf("%8lld %8lld %8lld\n",
-				rl->vcn, rl->lcn, rl->length);
+					rl->vcn, rl->lcn, rl->length);
 		if (!rl->length)
 			break;
 	}
@@ -2342,7 +2340,7 @@ static void test_rl_pure_test(int test, BOOL contig, BOOL multi, int vcn, int le
  */
 static void test_rl_pure(char *contig, char *multi)
 {
-		/* VCN,  LCN, len */
+	/* VCN,  LCN, len */
 	static runlist_element file1[] = {
 		{    0,   -1, 100 },	/* HOLE */
 		{  100, 1100, 100 },	/* DATA */

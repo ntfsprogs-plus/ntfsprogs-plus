@@ -252,8 +252,8 @@ extern void NAttrSet##func_name(ntfs_attr *na);		\
 extern void NAttrClear##func_name(ntfs_attr *na);
 
 GenNAttrIno(Compressed, FILE_ATTR_COMPRESSED)
-GenNAttrIno(Encrypted, 	FILE_ATTR_ENCRYPTED)
-GenNAttrIno(Sparse, 	FILE_ATTR_SPARSE_FILE)
+GenNAttrIno(Encrypted,	FILE_ATTR_ENCRYPTED)
+GenNAttrIno(Sparse,	FILE_ATTR_SPARSE_FILE)
 #undef GenNAttrIno
 
 /**
@@ -263,7 +263,7 @@ GenNAttrIno(Sparse, 	FILE_ATTR_SPARSE_FILE)
  */
 typedef union {
 	u8 _default;	/* Unnamed u8 to serve as default when just using
-			   a_val without specifying any of the below. */
+					   a_val without specifying any of the below. */
 	STANDARD_INFORMATION std_inf;
 	ATTR_LIST_ENTRY al_entry;
 	FILE_NAME_ATTR filename;
@@ -290,8 +290,8 @@ extern void ntfs_attr_init(ntfs_attr *na, const BOOL non_resident,
 		const s64 initialized_size, const s64 compressed_size,
 		const u8 compression_unit);
 
-	/* warning : in the following "name" has to be freeable */
-	/* or one of constants AT_UNNAMED, NTFS_INDEX_I30 or STREAM_SDS */
+/* warning : in the following "name" has to be freeable */
+/* or one of constants AT_UNNAMED, NTFS_INDEX_I30 or STREAM_SDS */
 extern ntfs_attr *ntfs_attr_open(ntfs_inode *ni, const ATTR_TYPES type,
 		ntfschar *name, u32 name_len);
 extern void ntfs_attr_close(ntfs_attr *na);
@@ -303,7 +303,7 @@ extern s64 ntfs_attr_pwrite(ntfs_attr *na, const s64 pos, s64 count,
 extern int ntfs_attr_pclose(ntfs_attr *na);
 
 extern void *ntfs_attr_readall(ntfs_inode *ni, const ATTR_TYPES type,
-			       ntfschar *name, u32 name_len, s64 *data_size);
+		ntfschar *name, u32 name_len, s64 *data_size);
 
 extern s64 ntfs_attr_mst_pread(ntfs_attr *na, const s64 pos,
 		const s64 bk_cnt, const u32 bk_size, void *dst);
@@ -388,7 +388,7 @@ extern void ntfs_set_attribute_value_length(ATTR_RECORD *a, s64 length);
  * errno describes the error.
  */
 extern s64 ntfs_get_attribute_value(const ntfs_volume *vol,
-				    const ATTR_RECORD *a, u8 *b);
+		const ATTR_RECORD *a, u8 *b);
 extern BOOL ntfs_is_valid_attr_type(const ATTR_RECORD *a);
 
 extern void  ntfs_attr_name_free(char **name);
@@ -396,7 +396,7 @@ extern char *ntfs_attr_name_get(const ntfschar *uname, const int uname_len);
 extern int   ntfs_attr_exist(ntfs_inode *ni, const ATTR_TYPES type,
 		const ntfschar *name, u32 name_len);
 extern int   ntfs_attr_remove(ntfs_inode *ni, const ATTR_TYPES type,
-			      ntfschar *name, u32 name_len);
+		ntfschar *name, u32 name_len);
 extern s64   ntfs_attr_get_free_bits(ntfs_attr *na);
 extern int ntfs_attr_data_read(ntfs_inode *ni,
 		ntfschar *stream_name, int stream_name_len,

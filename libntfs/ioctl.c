@@ -92,7 +92,7 @@ static int fstrim_clusters(ntfs_volume *vol, LCN lcn, s64 length)
 	uint64_t range[2];
 
 	ntfs_log_debug("fstrim_clusters: %lld length %lld\n",
-		(long long) lcn, (long long) length);
+			(long long) lcn, (long long) length);
 
 	range[0] = lcn << vol->cluster_size_bits;
 	range[1] = length << vol->cluster_size_bits;
@@ -134,11 +134,11 @@ static int read_u64(const char *path, u64 *n)
 }
 
 /* Find discard limits for current backing device.
- */
+*/
 static int fstrim_limits(ntfs_volume *vol,
-			u64 *discard_alignment,
-			u64 *discard_granularity,
-			u64 *discard_max_bytes)
+		u64 *discard_alignment,
+		u64 *discard_granularity,
+		u64 *discard_max_bytes)
 {
 	struct stat statbuf;
 	char path1[40]; /* holds "/sys/dev/block/%d:%d" */
@@ -148,7 +148,7 @@ static int fstrim_limits(ntfs_volume *vol,
 	/* Stat the backing device.  Caller has ensured it is a block device. */
 	if (stat(vol->dev->d_name, &statbuf) == -1) {
 		ntfs_log_debug("fstrim_limits: could not stat %s\n",
-			vol->dev->d_name);
+				vol->dev->d_name);
 		return -errno;
 	}
 
@@ -162,7 +162,7 @@ static int fstrim_limits(ntfs_volume *vol,
 	 * /sys/dev/block/MAJOR:MINOR/../queue/discard_max_bytes
 	 */
 	snprintf(path1, sizeof path1, "/sys/dev/block/%d:%d",
-		major(statbuf.st_rdev), minor(statbuf.st_rdev));
+			major(statbuf.st_rdev), minor(statbuf.st_rdev));
 
 	snprintf(path2, sizeof path2, "%s/discard_alignment", path1);
 	ret = read_u64(path2, discard_alignment);
@@ -184,7 +184,7 @@ static int fstrim_limits(ntfs_volume *vol,
 			return ret;
 		else {
 			snprintf(path2, sizeof path2,
-				"%s/../queue/discard_granularity", path1);
+					"%s/../queue/discard_granularity", path1);
 			ret = read_u64(path2, discard_granularity);
 			if (ret) {
 				if (ret != -ENOENT)
@@ -202,7 +202,7 @@ static int fstrim_limits(ntfs_volume *vol,
 			return ret;
 		else {
 			snprintf(path2, sizeof path2,
-				"%s/../queue/discard_max_bytes", path1);
+					"%s/../queue/discard_max_bytes", path1);
 			ret = read_u64(path2, discard_max_bytes);
 			if (ret) {
 				if (ret != -ENOENT)
@@ -264,9 +264,9 @@ static int fstrim(ntfs_volume *vol, void *data, u64 *trimmed)
 	int ret;
 
 	ntfs_log_debug("fstrim: start=%llu len=%llu minlen=%llu\n",
-		(unsigned long long) start,
-		(unsigned long long) len,
-		(unsigned long long) minlen);
+			(unsigned long long) start,
+			(unsigned long long) len,
+			(unsigned long long) minlen);
 
 	*trimmed = 0;
 
@@ -316,7 +316,7 @@ static int fstrim(ntfs_volume *vol, void *data, u64 *trimmed)
 	if (buf == NULL)
 		return -errno;
 	for (start_buf = 0; start_buf < vol->nr_clusters;
-	     start_buf += FSTRIM_BUFSIZ * 8) {
+			start_buf += FSTRIM_BUFSIZ * 8) {
 		s64 count;
 		s64 br;
 		LCN end_buf, start_lcn;
@@ -353,9 +353,9 @@ static int fstrim(ntfs_volume *vol, void *data, u64 *trimmed)
 				 */
 				end_lcn = start_lcn+1;
 				while (end_lcn < end_buf &&
-					(u64) (end_lcn-start_lcn) << vol->cluster_size_bits
-					  < discard_max_bytes &&
-					!ntfs_bit_get(buf, end_lcn-start_buf))
+						(u64) (end_lcn-start_lcn) << vol->cluster_size_bits
+						< discard_max_bytes &&
+						!ntfs_bit_get(buf, end_lcn-start_buf))
 					end_lcn++;
 				aligned_lcn = align_up(vol, start_lcn,
 						discard_granularity);
@@ -364,12 +364,12 @@ static int fstrim(ntfs_volume *vol, void *data, u64 *trimmed)
 				else {
 					aligned_count =
 						align_down(vol,
-							end_lcn - aligned_lcn,
-							discard_granularity);
+								end_lcn - aligned_lcn,
+								discard_granularity);
 				}
 				if (aligned_count) {
 					ret = fstrim_clusters(vol,
-						aligned_lcn, aligned_count);
+							aligned_lcn, aligned_count);
 					if (ret)
 						goto free_out;
 
@@ -390,30 +390,30 @@ free_out:
 #endif /* FITRIM && BLKDISCARD */
 
 int ntfs_ioctl(ntfs_inode *ni, unsigned long cmd,
-			void *arg __attribute__((unused)),
-			unsigned int flags __attribute__((unused)), void *data)
+		void *arg __attribute__((unused)),
+		unsigned int flags __attribute__((unused)), void *data)
 {
 	int ret = 0;
 
 	switch (cmd) {
 #if defined(FITRIM) && defined(BLKDISCARD)
-	case FITRIM:
-		if (!ni || !data)
-			ret = -EINVAL;
-		else {
-			u64 trimmed;
-			struct fstrim_range *range = (struct fstrim_range*)data;
+		case FITRIM:
+			if (!ni || !data)
+				ret = -EINVAL;
+			else {
+				u64 trimmed;
+				struct fstrim_range *range = (struct fstrim_range*)data;
 
-			ret = fstrim(ni->vol, data, &trimmed);
-			range->len = trimmed;
-		}
-		break;
+				ret = fstrim(ni->vol, data, &trimmed);
+				range->len = trimmed;
+			}
+			break;
 #else
 #warning Trimming not supported : FITRIM or BLKDISCARD not defined
 #endif
-	default :
-		ret = -EINVAL;
-		break;
+		default :
+			ret = -EINVAL;
+			break;
 	}
 	return (ret);
 }

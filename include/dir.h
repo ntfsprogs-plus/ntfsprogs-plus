@@ -65,7 +65,7 @@ extern INDEX_ENTRY * __ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
 		const ntfschar *uname, const int uname_len);
 extern u64 ntfs_inode_lookup_by_mbsname(ntfs_inode *dir_ni, const char *name);
 extern void ntfs_inode_update_mbsname(ntfs_inode *dir_ni, const char *name,
-				u64 inum);
+		u64 inum);
 
 extern ntfs_inode *ntfs_pathname_to_inode(ntfs_volume *vol, ntfs_inode *parent,
 		const char *pathname);
@@ -115,9 +115,9 @@ ntfs_inode *ntfs_dir_parent_inode(ntfs_inode *ni);
 u32 ntfs_interix_types(ntfs_inode *ni);
 
 int ntfs_get_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
-			char *value, size_t size);
+		char *value, size_t size);
 int ntfs_set_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
-			const char *value, size_t size,	int flags);
+		const char *value, size_t size,	int flags);
 int ntfs_remove_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni);
 int ntfs_dir_link_cnt(ntfs_inode *ni);
 

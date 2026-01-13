@@ -75,20 +75,20 @@
  *  and "$Q" as global constants.
  */
 ntfschar NTFS_INDEX_I30[5] = { const_cpu_to_le16('$'), const_cpu_to_le16('I'),
-		const_cpu_to_le16('3'), const_cpu_to_le16('0'),
-		const_cpu_to_le16('\0') };
+	const_cpu_to_le16('3'), const_cpu_to_le16('0'),
+	const_cpu_to_le16('\0') };
 ntfschar NTFS_INDEX_SII[5] = { const_cpu_to_le16('$'), const_cpu_to_le16('S'),
-		const_cpu_to_le16('I'), const_cpu_to_le16('I'),
-		const_cpu_to_le16('\0') };
+	const_cpu_to_le16('I'), const_cpu_to_le16('I'),
+	const_cpu_to_le16('\0') };
 ntfschar NTFS_INDEX_SDH[5] = { const_cpu_to_le16('$'), const_cpu_to_le16('S'),
-		const_cpu_to_le16('D'), const_cpu_to_le16('H'),
-		const_cpu_to_le16('\0') };
+	const_cpu_to_le16('D'), const_cpu_to_le16('H'),
+	const_cpu_to_le16('\0') };
 ntfschar NTFS_INDEX_O[3] = { const_cpu_to_le16('$'), const_cpu_to_le16('O'),
-		const_cpu_to_le16('\0') };
+	const_cpu_to_le16('\0') };
 ntfschar NTFS_INDEX_Q[3] = { const_cpu_to_le16('$'), const_cpu_to_le16('Q'),
-		const_cpu_to_le16('\0') };
+	const_cpu_to_le16('\0') };
 ntfschar NTFS_INDEX_R[3] = { const_cpu_to_le16('$'), const_cpu_to_le16('R'),
-		const_cpu_to_le16('\0') };
+	const_cpu_to_le16('\0') };
 
 #if CACHE_INODE_SIZE
 
@@ -112,7 +112,7 @@ int ntfs_dir_inode_hash(const struct CACHED_GENERIC *cached)
 	if (!name)
 		name = (const unsigned char*)path;
 	return (((name[0] << 1) + name[1] + strlen((const char*)name))
-				% (2*CACHE_INODE_SIZE));
+			% (2*CACHE_INODE_SIZE));
 }
 
 /*
@@ -120,10 +120,10 @@ int ntfs_dir_inode_hash(const struct CACHED_GENERIC *cached)
  */
 
 static int inode_cache_compare(const struct CACHED_GENERIC *cached,
-			const struct CACHED_GENERIC *wanted)
+		const struct CACHED_GENERIC *wanted)
 {
 	return (!cached->variable
-		    || strcmp(cached->variable, wanted->variable));
+			|| strcmp(cached->variable, wanted->variable));
 }
 
 /*
@@ -138,7 +138,7 @@ static int inode_cache_compare(const struct CACHED_GENERIC *cached,
  */
 
 static int inode_cache_inv_compare(const struct CACHED_GENERIC *cached,
-			const struct CACHED_GENERIC *wanted)
+		const struct CACHED_GENERIC *wanted)
 {
 	int len;
 	BOOL different;
@@ -151,9 +151,9 @@ static int inode_cache_inv_compare(const struct CACHED_GENERIC *cached,
 		len = strlen(w->pathname);
 		different = !cached->variable
 			|| ((w->inum != MREF(c->inum))
-			   && (strncmp(c->pathname, w->pathname, len)
-				|| ((c->pathname[len] != '\0')
-				   && (c->pathname[len] != '/'))));
+					&& (strncmp(c->pathname, w->pathname, len)
+						|| ((c->pathname[len] != '\0')
+							&& (c->pathname[len] != '/'))));
 	} else
 		different = !c->pathname
 			|| (w->inum != MREF(c->inum));
@@ -169,14 +169,14 @@ static int inode_cache_inv_compare(const struct CACHED_GENERIC *cached,
  */
 
 static int lookup_cache_compare(const struct CACHED_GENERIC *cached,
-			const struct CACHED_GENERIC *wanted)
+		const struct CACHED_GENERIC *wanted)
 {
 	const struct CACHED_LOOKUP *c = (const struct CACHED_LOOKUP*) cached;
 	const struct CACHED_LOOKUP *w = (const struct CACHED_LOOKUP*) wanted;
 	return (!c->name
-		    || (c->parent != w->parent)
-		    || (c->namesize != w->namesize)
-		    || memcmp(c->name, w->name, c->namesize));
+			|| (c->parent != w->parent)
+			|| (c->namesize != w->namesize)
+			|| memcmp(c->name, w->name, c->namesize));
 }
 
 /*
@@ -188,13 +188,13 @@ static int lookup_cache_compare(const struct CACHED_GENERIC *cached,
  */
 
 static int lookup_cache_inv_compare(const struct CACHED_GENERIC *cached,
-			const struct CACHED_GENERIC *wanted)
+		const struct CACHED_GENERIC *wanted)
 {
 	const struct CACHED_LOOKUP *c = (const struct CACHED_LOOKUP*) cached;
 	const struct CACHED_LOOKUP *w = (const struct CACHED_LOOKUP*) wanted;
 	return (!c->name
-		    || (c->parent != w->parent)
-		    || (MREF(c->inum) != MREF(w->inum)));
+			|| (c->parent != w->parent)
+			|| (MREF(c->inum) != MREF(w->inum)));
 }
 
 /*
@@ -259,7 +259,7 @@ INDEX_ENTRY * __ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
 
 	/* Find the index root attribute in the mft record. */
 	if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4, CASE_SENSITIVE, 0, NULL,
-			0, ctx)) {
+				0, ctx)) {
 		ntfs_log_perror("Index root attribute missing in directory inode "
 				"%lld", (unsigned long long)dir_ni->mft_no);
 		goto put_err_out;
@@ -295,8 +295,8 @@ INDEX_ENTRY * __ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
 				(u8*)ie + le16_to_cpu(ie->length) >
 				index_end) {
 			ntfs_log_error("Index root entry out of bounds in"
-				" inode %lld\n",
-				(unsigned long long)dir_ni->mft_no);
+					" inode %lld\n",
+					(unsigned long long)dir_ni->mft_no);
 			goto put_err_out;
 		}
 		/*
@@ -414,8 +414,8 @@ descend_into_child_node:
 				(u8*)ie + le16_to_cpu(ie->length) >
 				index_end) {
 			ntfs_log_error("Index entry out of bounds in directory "
-				       "inode %lld.\n",
-				       (unsigned long long)dir_ni->mft_no);
+					"inode %lld.\n",
+					(unsigned long long)dir_ni->mft_no);
 			errno = EIO;
 			goto close_err_out;
 		}
@@ -474,7 +474,7 @@ descend_into_child_node:
 		if (vcn >= 0)
 			goto descend_into_child_node;
 		ntfs_log_error("Negative child node vcn in directory inode "
-			       "0x%llx.\n", (unsigned long long)dir_ni->mft_no);
+				"0x%llx.\n", (unsigned long long)dir_ni->mft_no);
 		errno = EIO;
 		goto close_err_out;
 	}
@@ -569,7 +569,7 @@ u64 ntfs_inode_lookup_by_mbsname(ntfs_inode *dir_ni, const char *name)
 
 	if (!NVolCaseSensitive(dir_ni->vol)) {
 		cached_name = ntfs_uppercase_mbs(name,
-			dir_ni->vol->upcase, dir_ni->vol->upcase_len);
+				dir_ni->vol->upcase, dir_ni->vol->upcase_len);
 		const_name = cached_name;
 	} else {
 		cached_name = (char*)NULL;
@@ -603,7 +603,7 @@ u64 ntfs_inode_lookup_by_mbsname(ntfs_inode *dir_ni, const char *name)
 					inum = ntfs_inode_lookup_by_name(dir_ni,
 							uname, uname_len);
 					item.inum = inum;
-				/* enter into cache, even if not found */
+					/* enter into cache, even if not found */
 					ntfs_enter_cache(dir_ni->vol->lookup_cache,
 							GENERIC(&item),
 							lookup_cache_compare);
@@ -613,8 +613,8 @@ u64 ntfs_inode_lookup_by_mbsname(ntfs_inode *dir_ni, const char *name)
 			}
 		} else
 #endif
-			{
-				/* Generate unicode name. */
+		{
+			/* Generate unicode name. */
 			uname_len = ntfs_mbstoucs(cached_name, &uname);
 			if (uname_len >= 0) {
 				inum = ntfs_inode_lookup_by_name(dir_ni,
@@ -647,7 +647,7 @@ void ntfs_inode_update_mbsname(ntfs_inode *dir_ni, const char *name, u64 inum)
 	if (dir_ni->vol->lookup_cache) {
 		if (!NVolCaseSensitive(dir_ni->vol)) {
 			cached_name = ntfs_uppercase_mbs(name,
-				dir_ni->vol->upcase, dir_ni->vol->upcase_len);
+					dir_ni->vol->upcase, dir_ni->vol->upcase_len);
 			item.name = cached_name;
 		} else {
 			cached_name = (char*)NULL;
@@ -725,15 +725,15 @@ ntfs_inode *ntfs_pathname_to_inode(ntfs_volume *vol, ntfs_inode *parent,
 		ni = parent;
 	} else {
 #if CACHE_INODE_SIZE
-			/*
-			 * fetch inode for full path from cache
-			 */
+		/*
+		 * fetch inode for full path from cache
+		 */
 		if (*fullname) {
 			item.pathname = fullname;
 			item.varsize = strlen(fullname) + 1;
 			cached = (struct CACHED_INODE*)ntfs_fetch_cache(
-				vol->xinode_cache, GENERIC(&item),
-				inode_cache_compare);
+					vol->xinode_cache, GENERIC(&item),
+					inode_cache_compare);
 		} else
 			cached = (struct CACHED_INODE*)NULL;
 		if (cached) {
@@ -768,9 +768,9 @@ ntfs_inode *ntfs_pathname_to_inode(ntfs_volume *vol, ntfs_inode *parent,
 			*q = '\0';
 		}
 #if CACHE_INODE_SIZE
-			/*
-			 * fetch inode for partial path from cache
-			 */
+		/*
+		 * fetch inode for partial path from cache
+		 */
 		cached = (struct CACHED_INODE*)NULL;
 		if (!parent) {
 			item.pathname = fullname;
@@ -782,15 +782,15 @@ ntfs_inode *ntfs_pathname_to_inode(ntfs_volume *vol, ntfs_inode *parent,
 				inum = cached->inum;
 			}
 		}
-			/*
-			 * if not in cache, translate, search, then
-			 * insert into cache if found
-			 */
+		/*
+		 * if not in cache, translate, search, then
+		 * insert into cache if found
+		 */
 		if (!cached) {
 			len = ntfs_mbstoucs(p, &unicode);
 			if (len < 0) {
 				ntfs_log_perror("Could not convert filename to Unicode:"
-					" '%s'", p);
+						" '%s'", p);
 				err = errno;
 				goto close;
 			} else if (len > NTFS_MAX_NAME_LEN) {
@@ -867,8 +867,8 @@ out:
  * The little endian Unicode string ".." for ntfs_readdir().
  */
 static const ntfschar dotdot[3] = { const_cpu_to_le16('.'),
-				   const_cpu_to_le16('.'),
-				   const_cpu_to_le16('\0') };
+	const_cpu_to_le16('.'),
+	const_cpu_to_le16('\0') };
 
 /*
  * union index_union -
@@ -919,8 +919,8 @@ u32 ntfs_interix_types(ntfs_inode *ni)
 						NTFS_DT_SOCK : NTFS_DT_FIFO);
 		} else {
 			if ((na->data_size >= (s64)sizeof(magic))
-			    && (ntfs_attr_pread(na, 0, sizeof(magic), &magic)
-				== sizeof(magic))) {
+					&& (ntfs_attr_pread(na, 0, sizeof(magic), &magic)
+						== sizeof(magic))) {
 				if (magic == INTX_SYMBOLIC_LINK)
 					dt_type = NTFS_DT_LNK;
 				else if (magic == INTX_BLOCK_DEVICE)
@@ -944,7 +944,7 @@ u32 ntfs_interix_types(ntfs_inode *ni)
  */
 
 static u32 ntfs_dir_entry_type(ntfs_inode *dir_ni, MFT_REF mref,
-					FILE_ATTR_FLAGS attributes)
+		FILE_ATTR_FLAGS attributes)
 {
 	ntfs_inode *ni;
 	u32 dt_type;
@@ -954,19 +954,19 @@ static u32 ntfs_dir_entry_type(ntfs_inode *dir_ni, MFT_REF mref,
 	if (ni) {
 		if (attributes & FILE_ATTR_REPARSE_POINT)
 			dt_type = (ntfs_possible_symlink(ni)
-				? NTFS_DT_LNK : NTFS_DT_REPARSE);
+					? NTFS_DT_LNK : NTFS_DT_REPARSE);
 		else
 			if ((attributes & FILE_ATTR_SYSTEM)
-			   && !(attributes & FILE_ATTR_I30_INDEX_PRESENT))
+					&& !(attributes & FILE_ATTR_I30_INDEX_PRESENT))
 				dt_type = ntfs_interix_types(ni);
 			else
 				dt_type = (attributes
 						& FILE_ATTR_I30_INDEX_PRESENT
-					? NTFS_DT_DIR : NTFS_DT_REG);
+						? NTFS_DT_DIR : NTFS_DT_REG);
 		if (ntfs_inode_close(ni)) {
-				 /* anything special worth doing ? */
+			/* anything special worth doing ? */
 			ntfs_log_error("Failed to close inode %lld\n",
-				(long long)MREF(mref));
+					(long long)MREF(mref));
 		}
 	}
 	if (dt_type == NTFS_DT_UNKNOWN)
@@ -1005,8 +1005,8 @@ static int ntfs_filldir(ntfs_inode *dir_ni, s64 *pos, u8 ivcn_bits,
 	/* Advance the position even if going to skip the entry. */
 	if (index_type == INDEX_TYPE_ALLOCATION)
 		*pos = (u8*)ie - (u8*)iu.ia + (sle64_to_cpu(
-				iu.ia->index_block_vcn) << ivcn_bits) +
-				dir_ni->vol->mft_record_size;
+					iu.ia->index_block_vcn) << ivcn_bits) +
+			dir_ni->vol->mft_record_size;
 	else /* if (index_type == INDEX_TYPE_ROOT) */
 		*pos = (u8*)ie - (u8*)iu.ir;
 	mref = le64_to_cpu(ie->indexed_file);
@@ -1015,21 +1015,21 @@ static int ntfs_filldir(ntfs_inode *dir_ni, s64 *pos, u8 ivcn_bits,
 	if (MREF_LE(ie->indexed_file) == FILE_root)
 		return 0;
 	if ((ie->key.file_name.file_attributes
-		     & (FILE_ATTR_REPARSE_POINT | FILE_ATTR_SYSTEM))
-	    && !metadata)
+				& (FILE_ATTR_REPARSE_POINT | FILE_ATTR_SYSTEM))
+			&& !metadata)
 		dt_type = ntfs_dir_entry_type(dir_ni, mref,
-					ie->key.file_name.file_attributes);
+				ie->key.file_name.file_attributes);
 	else if (ie->key.file_name.file_attributes
-		     & FILE_ATTR_I30_INDEX_PRESENT)
+			& FILE_ATTR_I30_INDEX_PRESENT)
 		dt_type = NTFS_DT_DIR;
 	else
 		dt_type = NTFS_DT_REG;
 
-		/* return metadata files and hidden files if requested */
-        if ((!metadata && (NVolShowHidFiles(dir_ni->vol)
-				|| !(fn->file_attributes & FILE_ATTR_HIDDEN)))
-            || (NVolShowSysFiles(dir_ni->vol) && (NVolShowHidFiles(dir_ni->vol)
-				|| metadata))) {
+	/* return metadata files and hidden files if requested */
+	if ((!metadata && (NVolShowHidFiles(dir_ni->vol)
+					|| !(fn->file_attributes & FILE_ATTR_HIDDEN)))
+			|| (NVolShowSysFiles(dir_ni->vol) && (NVolShowHidFiles(dir_ni->vol)
+					|| metadata))) {
 		if (NVolCaseSensitive(dir_ni->vol)) {
 			res = filldir(dirent, fn->file_name,
 					fn->file_name_length,
@@ -1039,14 +1039,14 @@ static int ntfs_filldir(ntfs_inode *dir_ni, s64 *pos, u8 ivcn_bits,
 			loname = (ntfschar*)ntfs_malloc(2*fn->file_name_length);
 			if (loname) {
 				memcpy(loname, fn->file_name,
-					2*fn->file_name_length);
+						2*fn->file_name_length);
 				ntfs_name_locase(loname, fn->file_name_length,
-					dir_ni->vol->locase,
-					dir_ni->vol->upcase_len);
+						dir_ni->vol->locase,
+						dir_ni->vol->upcase_len);
 				res = filldir(dirent, loname,
-					fn->file_name_length,
-					fn->file_name_type, *pos,
-					mref, dt_type);
+						fn->file_name_length,
+						fn->file_name_type, *pos,
+						mref, dt_type);
 				free(loname);
 			} else
 				res = -1;
@@ -1093,12 +1093,12 @@ static MFT_REF ntfs_mft_get_parent_ref(ntfs_inode *ni)
 		return ERR_MREF(-1);
 	if (ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, 0, 0, NULL, 0, ctx)) {
 		ntfs_log_error("No file name found in inode %lld\n",
-			       (unsigned long long)ni->mft_no);
+				(unsigned long long)ni->mft_no);
 		goto err_out;
 	}
 	if (ctx->attr->non_resident) {
 		ntfs_log_error("File name attribute must be resident (inode "
-			       "%lld)\n", (unsigned long long)ni->mft_no);
+				"%lld)\n", (unsigned long long)ni->mft_no);
 		goto io_err_out;
 	}
 	fn = (FILE_NAME_ATTR*)((u8*)ctx->attr +
@@ -1168,8 +1168,8 @@ int ntfs_readdir(ntfs_inode *dir_ni, s64 *pos,
 	if (!ia_na) {
 		if (errno != ENOENT) {
 			ntfs_log_perror("Failed to open index allocation attribute. "
-				"Directory inode %lld is corrupt or bug",
-				(unsigned long long)dir_ni->mft_no);
+					"Directory inode %lld is corrupt or bug",
+					(unsigned long long)dir_ni->mft_no);
 			return -1;
 		}
 		i_size = 0;
@@ -1186,7 +1186,7 @@ int ntfs_readdir(ntfs_inode *dir_ni, s64 *pos,
 	if (!*pos) {
 		rc = filldir(dirent, dotdot, 1, FILE_NAME_POSIX, *pos,
 				MK_MREF(dir_ni->mft_no,
-				le16_to_cpu(dir_ni->mrec->sequence_number)),
+					le16_to_cpu(dir_ni->mrec->sequence_number)),
 				NTFS_DT_DIR);
 		if (rc)
 			goto err_out;
@@ -1216,7 +1216,7 @@ int ntfs_readdir(ntfs_inode *dir_ni, s64 *pos,
 	ir_pos = (int)*pos;
 	/* Find the index root attribute in the mft record. */
 	if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4, CASE_SENSITIVE, 0, NULL,
-			0, ctx)) {
+				0, ctx)) {
 		ntfs_log_perror("Index root attribute missing in directory inode "
 				"%lld", (unsigned long long)dir_ni->mft_no);
 		goto dir_err_out;
@@ -1386,7 +1386,7 @@ find_next_index_buffer:
 
 	ia_start = ia_pos & ~(s64)(index_block_size - 1);
 	if (ntfs_index_block_inconsistent(vol, ia_na, (INDEX_BLOCK*)ia, index_block_size,
-			ia_na->ni->mft_no, ia_start >> index_vcn_size_bits)) {
+				ia_na->ni->mft_no, ia_start >> index_vcn_size_bits)) {
 		goto dir_err_out;
 	}
 	index_end = (u8*)&ia->index + le32_to_cpu(ia->index.index_length);
@@ -1408,7 +1408,7 @@ find_next_index_buffer:
 				(u8*)ie + le16_to_cpu(ie->length) >
 				index_end) {
 			ntfs_log_error("Index entry out of bounds in directory inode "
-				"%lld.\n", (unsigned long long)dir_ni->mft_no);
+					"%lld.\n", (unsigned long long)dir_ni->mft_no);
 			goto dir_err_out;
 		}
 		/* The last entry cannot contain a name. */
@@ -1557,39 +1557,39 @@ static ntfs_inode *__ntfs_create(ntfs_inode *dir_ni, le32 securid,
 		clear_nino_flag(ni, v3_Extensions);
 	if (!S_ISREG(type) && !S_ISDIR(type)) {
 		switch (special_files) {
-		case NTFS_FILES_WSL :
-			if (!S_ISLNK(type)) {
-				si->file_attributes
-					= FILE_ATTRIBUTE_RECALL_ON_OPEN;
-				ni->flags = FILE_ATTRIBUTE_RECALL_ON_OPEN;
-			}
-			break;
-		default :
-			si->file_attributes = FILE_ATTR_SYSTEM;
-			ni->flags = FILE_ATTR_SYSTEM;
-			break;
+			case NTFS_FILES_WSL :
+				if (!S_ISLNK(type)) {
+					si->file_attributes
+						= FILE_ATTRIBUTE_RECALL_ON_OPEN;
+					ni->flags = FILE_ATTRIBUTE_RECALL_ON_OPEN;
+				}
+				break;
+			default :
+				si->file_attributes = FILE_ATTR_SYSTEM;
+				ni->flags = FILE_ATTR_SYSTEM;
+				break;
 		}
 	}
 	ni->flags |= FILE_ATTR_ARCHIVE;
 	if (NVolHideDotFiles(dir_ni->vol)
-	    && (name_len > 1)
-	    && (name[0] == const_cpu_to_le16('.'))
-	    && (name[1] != const_cpu_to_le16('.')))
+			&& (name_len > 1)
+			&& (name[0] == const_cpu_to_le16('.'))
+			&& (name[1] != const_cpu_to_le16('.')))
 		ni->flags |= FILE_ATTR_HIDDEN;
-		/*
-		 * Set compression flag according to parent directory
-		 * unless NTFS version < 3.0 or cluster size > 4K
-		 * or compression has been disabled
-		 */
+	/*
+	 * Set compression flag according to parent directory
+	 * unless NTFS version < 3.0 or cluster size > 4K
+	 * or compression has been disabled
+	 */
 	if ((dir_ni->flags & FILE_ATTR_COMPRESSED)
-	   && (dir_ni->vol->major_ver >= 3)
-	   && NVolCompression(dir_ni->vol)
-	   && (dir_ni->vol->cluster_size <= MAX_COMPRESSION_CLUSTER_SIZE)
-	   && (S_ISREG(type) || S_ISDIR(type)))
+			&& (dir_ni->vol->major_ver >= 3)
+			&& NVolCompression(dir_ni->vol)
+			&& (dir_ni->vol->cluster_size <= MAX_COMPRESSION_CLUSTER_SIZE)
+			&& (S_ISREG(type) || S_ISDIR(type)))
 		ni->flags |= FILE_ATTR_COMPRESSED;
 	/* Add STANDARD_INFORMATION to inode. */
 	if (ntfs_attr_add(ni, AT_STANDARD_INFORMATION, AT_UNNAMED, 0,
-			(u8*)si, si_len)) {
+				(u8*)si, si_len)) {
 		err = errno;
 		ntfs_log_error("Failed to add STANDARD_INFORMATION "
 				"attribute.\n");
@@ -1622,12 +1622,12 @@ static ntfs_inode *__ntfs_create(ntfs_inode *dir_ni, le32 securid,
 		ir->index_block_size = cpu_to_le32(ni->vol->indx_record_size);
 		if (ni->vol->cluster_size <= ni->vol->indx_record_size)
 			ir->clusters_per_index_block =
-					ni->vol->indx_record_size >>
-					ni->vol->cluster_size_bits;
+				ni->vol->indx_record_size >>
+				ni->vol->cluster_size_bits;
 		else
 			ir->clusters_per_index_block =
-					ni->vol->indx_record_size >>
-					NTFS_BLOCK_SIZE_BITS;
+				ni->vol->indx_record_size >>
+				NTFS_BLOCK_SIZE_BITS;
 		ir->index.entries_offset = const_cpu_to_le32(sizeof(INDEX_HEADER));
 		ir->index.index_length = cpu_to_le32(index_len);
 		ir->index.allocated_size = cpu_to_le32(index_len);
@@ -1637,7 +1637,7 @@ static ntfs_inode *__ntfs_create(ntfs_inode *dir_ni, le32 securid,
 		ie->ie_flags = INDEX_ENTRY_END;
 		/* Add INDEX_ROOT attribute to inode. */
 		if (ntfs_attr_add(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4,
-				(u8*)ir, ir_len)) {
+					(u8*)ir, ir_len)) {
 			err = errno;
 			free(ir);
 			ntfs_log_error("Failed to add INDEX_ROOT attribute.\n");
@@ -1652,49 +1652,49 @@ static ntfs_inode *__ntfs_create(ntfs_inode *dir_ni, le32 securid,
 			case S_IFBLK:
 			case S_IFCHR:
 				switch (special_files) {
-				case NTFS_FILES_WSL :
-					data_len = 0;
-					data = (INTX_FILE*)NULL;
-					break;
-				default :
-					data_len = offsetof(INTX_FILE,
+					case NTFS_FILES_WSL :
+						data_len = 0;
+						data = (INTX_FILE*)NULL;
+						break;
+					default :
+						data_len = offsetof(INTX_FILE,
 								device_end);
-					data = (INTX_FILE*)ntfs_malloc(
+						data = (INTX_FILE*)ntfs_malloc(
 								data_len);
-					if (!data) {
-						err = errno;
-						goto err_out;
-					}
-					data->major = cpu_to_le64(major(dev));
-					data->minor = cpu_to_le64(minor(dev));
-					if (type == S_IFBLK)
-						data->magic
-							= INTX_BLOCK_DEVICE;
-					if (type == S_IFCHR)
-						data->magic
-							= INTX_CHARACTER_DEVICE;
-					break;
+						if (!data) {
+							err = errno;
+							goto err_out;
+						}
+						data->major = cpu_to_le64(major(dev));
+						data->minor = cpu_to_le64(minor(dev));
+						if (type == S_IFBLK)
+							data->magic
+								= INTX_BLOCK_DEVICE;
+						if (type == S_IFCHR)
+							data->magic
+								= INTX_CHARACTER_DEVICE;
+						break;
 				}
 				break;
 			case S_IFLNK:
 				switch (special_files) {
-				case NTFS_FILES_WSL :
-					data_len = 0;
-					data = (INTX_FILE*)NULL;
-					break;
-				default :
-					data_len = sizeof(INTX_FILE_TYPES) +
-						target_len * sizeof(ntfschar);
-					data = (INTX_FILE*)ntfs_malloc(
+					case NTFS_FILES_WSL :
+						data_len = 0;
+						data = (INTX_FILE*)NULL;
+						break;
+					default :
+						data_len = sizeof(INTX_FILE_TYPES) +
+							target_len * sizeof(ntfschar);
+						data = (INTX_FILE*)ntfs_malloc(
 								data_len);
-					if (!data) {
-						err = errno;
-						goto err_out;
-					}
-					data->magic = INTX_SYMBOLIC_LINK;
-					memcpy(data->target, target,
-						target_len * sizeof(ntfschar));
-					break;
+						if (!data) {
+							err = errno;
+							goto err_out;
+						}
+						data->magic = INTX_SYMBOLIC_LINK;
+						memcpy(data->target, target,
+								target_len * sizeof(ntfschar));
+						break;
 				}
 				break;
 			case S_IFSOCK:
@@ -1711,7 +1711,7 @@ static ntfs_inode *__ntfs_create(ntfs_inode *dir_ni, le32 securid,
 		}
 		/* Add DATA attribute to inode. */
 		if (ntfs_attr_add(ni, AT_DATA, AT_UNNAMED, 0, (u8*)data,
-				data_len)) {
+					data_len)) {
 			err = errno;
 			ntfs_log_error("Failed to add DATA attribute.\n");
 			free(data);
@@ -1759,7 +1759,7 @@ static ntfs_inode *__ntfs_create(ntfs_inode *dir_ni, le32 securid,
 	}
 	/* Add FILE_NAME attribute to index. */
 	if (ntfs_index_add_filename(dir_ni, fn, MK_MREF(ni->mft_no,
-			le16_to_cpu(ni->mrec->sequence_number)))) {
+					le16_to_cpu(ni->mrec->sequence_number)))) {
 		err = errno;
 		ntfs_log_perror("Failed to add entry to the index");
 		goto err_out;
@@ -1772,26 +1772,26 @@ static ntfs_inode *__ntfs_create(ntfs_inode *dir_ni, le32 securid,
 	/* Add reparse data */
 	if (special_files == NTFS_FILES_WSL) {
 		switch (type) {
-		case S_IFLNK :
-			err = ntfs_reparse_set_wsl_symlink(ni, target,
-					target_len);
-			break;
-		case S_IFIFO :
-		case S_IFSOCK :
-		case S_IFCHR :
-		case S_IFBLK :
-			err = ntfs_reparse_set_wsl_not_symlink(ni,
-					type);
-			if (!err) {
-				err = ntfs_ea_set_wsl_not_symlink(ni,
-						type, dev);
-				if (err)
-					ntfs_remove_ntfs_reparse_data(ni);
-			}
-			break;
-		default :
-			err = 0;
-			break;
+			case S_IFLNK :
+				err = ntfs_reparse_set_wsl_symlink(ni, target,
+						target_len);
+				break;
+			case S_IFIFO :
+			case S_IFSOCK :
+			case S_IFCHR :
+			case S_IFBLK :
+				err = ntfs_reparse_set_wsl_not_symlink(ni,
+						type);
+				if (!err) {
+					err = ntfs_ea_set_wsl_not_symlink(ni,
+							type, dev);
+					if (err)
+						ntfs_remove_ntfs_reparse_data(ni);
+				}
+				break;
+			default :
+				err = 0;
+				break;
 		}
 		if (err) {
 			err = errno;
@@ -1866,7 +1866,7 @@ ntfs_inode *ntfs_create_symlink(ntfs_inode *dir_ni, le32 securid,
 {
 	if (!target || !target_len) {
 		ntfs_log_error("%s: Invalid argument (%p, %d)\n", __FUNCTION__,
-			       target, target_len);
+				target, target_len);
 		return NULL;
 	}
 	return __ntfs_create(dir_ni, securid, name, name_len, S_IFLNK, 0,
@@ -1913,7 +1913,7 @@ static int ntfs_check_unlinkable_dir(ntfs_inode *ni, FILE_NAME_ATTR *fn)
 	 * one "real" hard link, i.e. links aren't different DOS and WIN32 names
 	 */
 	if ((link_count == 1) ||
-	    (link_count == 2 && fn->file_name_type == FILE_NAME_DOS)) {
+			(link_count == 2 && fn->file_name_type == FILE_NAME_DOS)) {
 		errno = ENOTEMPTY;
 		ntfs_log_debug("Non-empty directory without hard links\n");
 		goto no_hardlink;
@@ -1981,21 +1981,21 @@ int ntfs_delete(ntfs_volume *vol, const char *pathname,
 search:
 	while (!(err = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
 					CASE_SENSITIVE, 0, NULL, 0, actx))) {
-	#ifdef DEBUG
+#ifdef DEBUG
 		char *s;
-	#endif
+#endif
 		IGNORE_CASE_BOOL case_sensitive = IGNORE_CASE;
 
 		fn = (FILE_NAME_ATTR*)((u8*)actx->attr +
 				le16_to_cpu(actx->attr->value_offset));
-	#ifdef DEBUG
+#ifdef DEBUG
 		s = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
 		ntfs_log_trace("name: '%s'  type: %d  dos: %d  win32: %d  "
-			       "case: %d\n", s, fn->file_name_type,
-			       looking_for_dos_name, looking_for_win32_name,
-			       case_sensitive_match);
+				"case: %d\n", s, fn->file_name_type,
+				looking_for_dos_name, looking_for_win32_name,
+				case_sensitive_match);
 		ntfs_attr_name_free(&s);
-	#endif
+#endif
 		if (looking_for_dos_name) {
 			if (fn->file_name_type == FILE_NAME_DOS)
 				break;
@@ -2012,19 +2012,19 @@ search:
 		/* Ignore hard links from other directories */
 		if (dir_ni->mft_no != MREF_LE(fn->parent_directory)) {
 			ntfs_log_debug("MFT record numbers don't match "
-				       "(%llu != %llu)\n",
-				       (long long unsigned)dir_ni->mft_no,
-				       (long long unsigned)MREF_LE(fn->parent_directory));
+					"(%llu != %llu)\n",
+					(long long unsigned)dir_ni->mft_no,
+					(long long unsigned)MREF_LE(fn->parent_directory));
 			continue;
 		}
 		if (case_sensitive_match
-		    || ((fn->file_name_type == FILE_NAME_POSIX)
-			&& NVolCaseSensitive(ni->vol)))
+				|| ((fn->file_name_type == FILE_NAME_POSIX)
+					&& NVolCaseSensitive(ni->vol)))
 			case_sensitive = CASE_SENSITIVE;
 
 		if (ntfs_names_are_equal(fn->file_name, fn->file_name_length,
-					 name, name_len, case_sensitive,
-					 ni->vol->upcase, ni->vol->upcase_len)){
+					name, name_len, case_sensitive,
+					ni->vol->upcase, ni->vol->upcase_len)){
 
 			if (fn->file_name_type == FILE_NAME_WIN32) {
 				looking_for_dos_name = TRUE;
@@ -2061,7 +2061,7 @@ search:
 	 * in an extent, to avoid leaving an attribute list.
 	 */
 	if ((ni->mrec->link_count == const_cpu_to_le16(1)) && !actx->base_ntfs_ino) {
-			/* make sure to not loop to another search */
+		/* make sure to not loop to another search */
 		looking_for_dos_name = FALSE;
 	} else {
 		if (ntfs_attr_record_rm(actx))
@@ -2069,7 +2069,7 @@ search:
 	}
 
 	ni->mrec->link_count = cpu_to_le16(le16_to_cpu(
-			ni->mrec->link_count) - 1);
+				ni->mrec->link_count) - 1);
 
 	ntfs_inode_mark_dirty(ni);
 	if (looking_for_dos_name) {
@@ -2085,7 +2085,7 @@ search:
 	 * non-resident attributes and mark all MFT record as not in use.
 	 */
 #if CACHE_LOOKUP_SIZE
-			/* invalidate entry in lookup cache */
+	/* invalidate entry in lookup cache */
 	lkitem.name = (const char*)NULL;
 	lkitem.namesize = 0;
 	lkitem.inum = ni->mft_no;
@@ -2096,7 +2096,7 @@ search:
 #if CACHE_INODE_SIZE
 	inum = ni->mft_no;
 	if (pathname) {
-			/* invalide cache entry, even if there was an error */
+		/* invalide cache entry, even if there was an error */
 		/* Remove leading /'s. */
 		p = pathname;
 		while (*p == PATH_SEP)
@@ -2111,10 +2111,10 @@ search:
 	}
 	item.inum = inum;
 	count = ntfs_invalidate_cache(vol->xinode_cache, GENERIC(&item),
-				inode_cache_inv_compare, CACHE_NOHASH);
+			inode_cache_inv_compare, CACHE_NOHASH);
 	if (pathname && !count)
 		ntfs_log_error("Could not delete inode cache entry for %s\n",
-			pathname);
+				pathname);
 #endif
 	if (ni->mrec->link_count) {
 		ntfs_inode_update_times(ni, NTFS_UPDATE_CTIME);
@@ -2165,10 +2165,10 @@ search:
 	}
 	/* All extents should be attached after attribute walk. */
 #if CACHE_NIDATA_SIZE
-		/*
-		 * Disconnect extents before deleting them, so they are
-		 * not wrongly moved to cache through the chainings
-		 */
+	/*
+	 * Disconnect extents before deleting them, so they are
+	 * not wrongly moved to cache through the chainings
+	 */
 	for (i=ni->nr_extents-1; i>=0; i--) {
 		ni->extent_nis[i]->base_ni = (ntfs_inode*)NULL;
 		ni->extent_nis[i]->nr_extents = 0;
@@ -2233,7 +2233,7 @@ err_out:
  * Return 0 on success or -1 on error with errno set to the error code.
  */
 static int ntfs_link_i(ntfs_inode *ni, ntfs_inode *dir_ni, const ntfschar *name,
-			 u8 name_len, FILE_NAME_TYPE_FLAGS nametype)
+		u8 name_len, FILE_NAME_TYPE_FLAGS nametype)
 {
 	FILE_NAME_ATTR *fn = NULL;
 	int fn_len, err;
@@ -2250,8 +2250,8 @@ static int ntfs_link_i(ntfs_inode *ni, ntfs_inode *dir_ni, const ntfschar *name,
 	if (NVolHideDotFiles(dir_ni->vol)) {
 		/* Set hidden flag according to the latest name */
 		if ((name_len > 1)
-		    && (name[0] == const_cpu_to_le16('.'))
-		    && (name[1] != const_cpu_to_le16('.')))
+				&& (name[0] == const_cpu_to_le16('.'))
+				&& (name[1] != const_cpu_to_le16('.')))
 			ni->flags |= FILE_ATTR_HIDDEN;
 		else
 			ni->flags &= ~FILE_ATTR_HIDDEN;
@@ -2283,7 +2283,7 @@ static int ntfs_link_i(ntfs_inode *ni, ntfs_inode *dir_ni, const ntfschar *name,
 	memcpy(fn->file_name, name, name_len * sizeof(ntfschar));
 	/* Add FILE_NAME attribute to index. */
 	if (ntfs_index_add_filename(dir_ni, fn, MK_MREF(ni->mft_no,
-			le16_to_cpu(ni->mrec->sequence_number)))) {
+					le16_to_cpu(ni->mrec->sequence_number)))) {
 		err = errno;
 		ntfs_log_perror("Failed to add filename to the index");
 		goto err_out;
@@ -2299,7 +2299,7 @@ static int ntfs_link_i(ntfs_inode *ni, ntfs_inode *dir_ni, const ntfschar *name,
 	}
 	/* Increment hard links count. */
 	ni->mrec->link_count = cpu_to_le16(le16_to_cpu(
-			ni->mrec->link_count) + 1);
+				ni->mrec->link_count) + 1);
 	/* Done! */
 	ntfs_inode_mark_dirty(ni);
 	free(fn);
@@ -2338,13 +2338,13 @@ ntfs_inode *ntfs_dir_parent_inode(ntfs_inode *ni)
 	ntfs_attr_search_ctx *ctx;
 
 	if (ni->mft_no != FILE_root) {
-			/* find the name in the attributes */
+		/* find the name in the attributes */
 		ctx = ntfs_attr_get_search_ctx(ni, NULL);
 		if (!ctx)
 			return ((ntfs_inode*)NULL);
 
 		if (!ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
-				CASE_SENSITIVE,	0, NULL, 0, ctx)) {
+					CASE_SENSITIVE,	0, NULL, 0, ctx)) {
 			/* We know this will always be resident. */
 			fn = (FILE_NAME_ATTR*)((u8*)ctx->attr +
 					le16_to_cpu(ctx->attr->value_offset));
@@ -2377,13 +2377,13 @@ static int get_dos_name(ntfs_inode *ni, u64 dnum, ntfschar *dosname)
 	FILE_NAME_ATTR *fn;
 	ntfs_attr_search_ctx *ctx;
 
-		/* find the name in the attributes */
+	/* find the name in the attributes */
 	ctx = ntfs_attr_get_search_ctx(ni, NULL);
 	if (!ctx)
 		return -1;
 
 	while (!ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, CASE_SENSITIVE,
-			0, NULL, 0, ctx)) {
+				0, NULL, 0, ctx)) {
 		/* We know this will always be resident. */
 		fn = (FILE_NAME_ATTR*)((u8*)ctx->attr +
 				le16_to_cpu(ctx->attr->value_offset));
@@ -2391,13 +2391,13 @@ static int get_dos_name(ntfs_inode *ni, u64 dnum, ntfschar *dosname)
 		if (fn->file_name_type != FILE_NAME_DOS)
 			namecount++;
 		if ((fn->file_name_type & FILE_NAME_DOS)
-		    && (MREF_LE(fn->parent_directory) == dnum)) {
-				/*
-				 * Found a DOS or WIN32+DOS name for the entry
-				 * copy name, after truncation for safety
-				 */
+				&& (MREF_LE(fn->parent_directory) == dnum)) {
+			/*
+			 * Found a DOS or WIN32+DOS name for the entry
+			 * copy name, after truncation for safety
+			 */
 			outsize = fn->file_name_length;
-/* TODO : reject if name is too long ? */
+			/* TODO : reject if name is too long ? */
 			if (outsize > MAX_DOS_NAME_LENGTH)
 				outsize = MAX_DOS_NAME_LENGTH;
 			memcpy(dosname,fn->file_name,outsize*sizeof(ntfschar));
@@ -2429,14 +2429,14 @@ static int get_long_name(ntfs_inode *ni, u64 dnum, ntfschar *longname)
 	FILE_NAME_ATTR *fn;
 	ntfs_attr_search_ctx *ctx;
 
-		/* find the name in the attributes */
+	/* find the name in the attributes */
 	ctx = ntfs_attr_get_search_ctx(ni, NULL);
 	if (!ctx)
 		return -1;
 
-		/* first search for WIN32 or DOS+WIN32 names */
+	/* first search for WIN32 or DOS+WIN32 names */
 	while (!ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, CASE_SENSITIVE,
-			0, NULL, 0, ctx)) {
+				0, NULL, 0, ctx)) {
 		/* We know this will always be resident. */
 		fn = (FILE_NAME_ATTR*)((u8*)ctx->attr +
 				le16_to_cpu(ctx->attr->value_offset));
@@ -2444,11 +2444,11 @@ static int get_long_name(ntfs_inode *ni, u64 dnum, ntfschar *longname)
 		if (fn->file_name_type != FILE_NAME_DOS)
 			namecount++;
 		if ((fn->file_name_type & FILE_NAME_WIN32)
-		    && (MREF_LE(fn->parent_directory) == dnum)) {
-				/*
-				 * Found a WIN32 or WIN32+DOS name for the entry
-				 * copy name
-				 */
+				&& (MREF_LE(fn->parent_directory) == dnum)) {
+			/*
+			 * Found a WIN32 or WIN32+DOS name for the entry
+			 * copy name
+			 */
 			outsize = fn->file_name_length;
 			memcpy(longname,fn->file_name,outsize*sizeof(ntfschar));
 		}
@@ -2458,25 +2458,25 @@ static int get_long_name(ntfs_inode *ni, u64 dnum, ntfschar *longname)
 		errno = EMLINK;
 		return -1;
 	}
-		/* if not found search for POSIX names */
+	/* if not found search for POSIX names */
 	if (!outsize) {
 		ntfs_attr_reinit_search_ctx(ctx);
-	while (!ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, CASE_SENSITIVE,
-			0, NULL, 0, ctx)) {
-		/* We know this will always be resident. */
-		fn = (FILE_NAME_ATTR*)((u8*)ctx->attr +
-				le16_to_cpu(ctx->attr->value_offset));
+		while (!ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, CASE_SENSITIVE,
+					0, NULL, 0, ctx)) {
+			/* We know this will always be resident. */
+			fn = (FILE_NAME_ATTR*)((u8*)ctx->attr +
+					le16_to_cpu(ctx->attr->value_offset));
 
-		if ((fn->file_name_type == FILE_NAME_POSIX)
-		    && (MREF_LE(fn->parent_directory) == dnum)) {
+			if ((fn->file_name_type == FILE_NAME_POSIX)
+					&& (MREF_LE(fn->parent_directory) == dnum)) {
 				/*
 				 * Found a POSIX name for the entry
 				 * copy name
 				 */
-			outsize = fn->file_name_length;
-			memcpy(longname,fn->file_name,outsize*sizeof(ntfschar));
+				outsize = fn->file_name_length;
+				memcpy(longname,fn->file_name,outsize*sizeof(ntfschar));
+			}
 		}
-	}
 	}
 	ntfs_attr_put_search_ctx(ctx);
 	return (outsize);
@@ -2488,7 +2488,7 @@ static int get_long_name(ntfs_inode *ni, u64 dnum, ntfschar *longname)
  */
 
 int ntfs_get_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
-			char *value, size_t size)
+		char *value, size_t size)
 {
 	int outsize = 0;
 	char *outname = (char*)NULL;
@@ -2499,11 +2499,11 @@ int ntfs_get_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
 	dnum = dir_ni->mft_no;
 	doslen = get_dos_name(ni, dnum, dosname);
 	if (doslen > 0) {
-			/*
-			 * Found a DOS name for the entry, make
-			 * uppercase and encode into the buffer
-			 * if there is enough space
-			 */
+		/*
+		 * Found a DOS name for the entry, make
+		 * uppercase and encode into the buffer
+		 * if there is enough space
+		 */
 		ntfs_name_upcase(dosname, doslen,
 				ni->vol->upcase, ni->vol->upcase_len);
 		outsize = ntfs_ucstombs(dosname, doslen, &outname, 0);
@@ -2534,8 +2534,8 @@ int ntfs_get_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
  */
 
 static int set_namespace(ntfs_inode *ni, ntfs_inode *dir_ni,
-			const ntfschar *name, int len,
-			FILE_NAME_TYPE_FLAGS nametype)
+		const ntfschar *name, int len,
+		FILE_NAME_TYPE_FLAGS nametype)
 {
 	ntfs_attr_search_ctx *actx;
 	ntfs_index_context *icx;
@@ -2551,14 +2551,14 @@ static int set_namespace(ntfs_inode *ni, ntfs_inode *dir_ni,
 		found = FALSE;
 		do {
 			lkup = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
-	                        CASE_SENSITIVE, 0, NULL, 0, actx);
+					CASE_SENSITIVE, 0, NULL, 0, actx);
 			if (!lkup) {
 				fn = (FILE_NAME_ATTR*)((u8*)actx->attr +
-				     le16_to_cpu(actx->attr->value_offset));
+						le16_to_cpu(actx->attr->value_offset));
 				found = (MREF_LE(fn->parent_directory)
 						== dir_ni->mft_no)
 					&& !memcmp(fn->file_name, name,
-						len*sizeof(ntfschar));
+							len*sizeof(ntfschar));
 			}
 		} while (!lkup && !found);
 		if (found) {
@@ -2573,7 +2573,7 @@ static int set_namespace(ntfs_inode *ni, ntfs_inode *dir_ni,
 					ntfs_inode_mark_dirty(ni);
 					ntfs_index_entry_mark_dirty(icx);
 				}
-			ntfs_index_ctx_put(icx);
+				ntfs_index_ctx_put(icx);
 			}
 		}
 		ntfs_attr_put_search_ctx(actx);
@@ -2608,9 +2608,9 @@ static int set_namespace(ntfs_inode *ni, ntfs_inode *dir_ni,
  */
 
 static int set_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
-			const ntfschar *shortname, int shortlen,
-			const ntfschar *longname, int longlen,
-			const ntfschar *deletename, int deletelen, BOOL existed)
+		const ntfschar *shortname, int shortlen,
+		const ntfschar *longname, int longlen,
+		const ntfschar *deletename, int deletelen, BOOL existed)
 {
 	unsigned int linkcount;
 	ntfs_volume *vol;
@@ -2626,12 +2626,12 @@ static int set_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
 	vol = ni->vol;
 	dnum = dir_ni->mft_no;
 	fnum = ni->mft_no;
-				/* save initial link count */
+	/* save initial link count */
 	linkcount = le16_to_cpu(ni->mrec->link_count);
 
-		/* check whether the same name may be used as DOS and WIN32 */
+	/* check whether the same name may be used as DOS and WIN32 */
 	collapsible = ntfs_collapsible_chars(ni->vol, shortname, shortlen,
-						longname, longlen);
+			longname, longlen);
 	if (collapsible) {
 		deleted = FALSE;
 		done = FALSE;
@@ -2640,10 +2640,10 @@ static int set_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
 					deletelen, FILE_NAME_POSIX);
 			if (oldnametype == FILE_NAME_DOS) {
 				if (set_namespace(ni, dir_ni, longname, longlen,
-						FILE_NAME_WIN32_AND_DOS) >= 0) {
+							FILE_NAME_WIN32_AND_DOS) >= 0) {
 					if (!ntfs_delete(vol,
-						(const char*)NULL, ni, dir_ni,
-						deletename, deletelen))
+								(const char*)NULL, ni, dir_ni,
+								deletename, deletelen))
 						res = 0;
 					deleted = TRUE;
 				} else
@@ -2652,8 +2652,8 @@ static int set_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
 		}
 		if (!deleted) {
 			if (!done && (set_namespace(ni, dir_ni,
-					longname, longlen,
-					FILE_NAME_WIN32_AND_DOS) >= 0))
+							longname, longlen,
+							FILE_NAME_WIN32_AND_DOS) >= 0))
 				res = 0;
 			ntfs_inode_update_times(ni, NTFS_UPDATE_CTIME);
 			ntfs_inode_update_times(dir_ni, NTFS_UPDATE_MCTIME);
@@ -2664,29 +2664,29 @@ static int set_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
 		}
 	} else {
 		if (!ntfs_link_i(ni, dir_ni, shortname, shortlen,
-				FILE_NAME_DOS)
-			/* make sure a new link was recorded */
-		    && (le16_to_cpu(ni->mrec->link_count) > linkcount)) {
+					FILE_NAME_DOS)
+				/* make sure a new link was recorded */
+				&& (le16_to_cpu(ni->mrec->link_count) > linkcount)) {
 			/* delete the existing long name or short name */
-// is it ok to not provide the path ?
+			// is it ok to not provide the path ?
 			if (!ntfs_delete(vol, (char*)NULL, ni, dir_ni,
-				 deletename, deletelen)) {
-			/* delete closes the inodes, so have to open again */
+						deletename, deletelen)) {
+				/* delete closes the inodes, so have to open again */
 				dir_ni = ntfs_inode_open(vol, dnum);
 				if (dir_ni) {
 					ni = ntfs_inode_open(vol, fnum);
 					if (ni) {
 						if (!ntfs_link_i(ni, dir_ni,
-							longname, longlen,
-							FILE_NAME_WIN32))
+									longname, longlen,
+									FILE_NAME_WIN32))
 							res = 0;
 						if (ntfs_inode_close_in_dir(ni,
-							dir_ni)
-						    && !res)
+									dir_ni)
+								&& !res)
 							res = -1;
 					}
-				if (ntfs_inode_close(dir_ni) && !res)
-					res = -1;
+					if (ntfs_inode_close(dir_ni) && !res)
+						res = -1;
 				}
 			}
 		} else {
@@ -2705,11 +2705,11 @@ static int set_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
  *  using the existing file name information from the original
  *  name or overwriting the DOS Name if one exists.
  *
- *  	The inode of the file is always closed
+ *	The inode of the file is always closed
  */
 
 int ntfs_set_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
-			const char *value, size_t size,	int flags)
+		const char *value, size_t size,	int flags)
 {
 	int res = 0;
 	int longlen = 0;
@@ -2722,13 +2722,13 @@ int ntfs_set_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
 	ntfschar *shortname = NULL;
 	ntfschar longname[NTFS_MAX_NAME_LEN];
 
-		/* copy the string to insert a null char, and truncate */
+	/* copy the string to insert a null char, and truncate */
 	if (size > 3*MAX_DOS_NAME_LENGTH)
 		size = 3*MAX_DOS_NAME_LENGTH;
 	strncpy(newname, value, size);
-		/* a long name may be truncated badly and be untranslatable */
+	/* a long name may be truncated badly and be untranslatable */
 	newname[size] = 0;
-		/* convert the string to the NTFS wide chars, and truncate */
+	/* convert the string to the NTFS wide chars, and truncate */
 	shortlen = ntfs_mbstoucs(newname, &shortname);
 	if (shortlen > MAX_DOS_NAME_LENGTH)
 		shortlen = MAX_DOS_NAME_LENGTH;
@@ -2737,7 +2737,7 @@ int ntfs_set_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
 	 * Note: the short name cannot end with dot or space, but the
 	 * corresponding long name can. */
 	if ((shortlen < 0)
-	    || ntfs_forbidden_names(ni->vol,shortname,shortlen,TRUE)) {
+			|| ntfs_forbidden_names(ni->vol,shortname,shortlen,TRUE)) {
 		ntfs_inode_close_in_dir(ni,dir_ni);
 		ntfs_inode_close(dir_ni);
 		res = -errno;
@@ -2748,23 +2748,23 @@ int ntfs_set_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
 	if (longlen > 0) {
 		oldlen = get_dos_name(ni, dnum, oldname);
 		if ((oldlen >= 0)
-		    && !ntfs_forbidden_names(ni->vol, longname, longlen,
-					     FALSE)) {
+				&& !ntfs_forbidden_names(ni->vol, longname, longlen,
+					FALSE)) {
 			if (oldlen > 0) {
 				if (flags & XATTR_CREATE) {
 					res = -1;
 					errno = EEXIST;
 				} else
 					if ((shortlen == oldlen)
-					    && !memcmp(shortname,oldname,
-						     oldlen*sizeof(ntfschar)))
+							&& !memcmp(shortname,oldname,
+								oldlen*sizeof(ntfschar)))
 						/* already set, done */
 						res = 0;
 					else {
 						res = set_dos_name(ni, dir_ni,
-							shortname, shortlen,
-							longname, longlen,
-							oldname, oldlen, TRUE);
+								shortname, shortlen,
+								longname, longlen,
+								oldname, oldlen, TRUE);
 						closed = TRUE;
 					}
 			} else {
@@ -2773,9 +2773,9 @@ int ntfs_set_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
 					errno = ENODATA;
 				} else {
 					res = set_dos_name(ni, dir_ni,
-						shortname, shortlen,
-						longname, longlen,
-						longname, longlen, FALSE);
+							shortname, shortlen,
+							longname, longlen,
+							longname, longlen, FALSE);
 					closed = TRUE;
 				}
 			}
@@ -2817,46 +2817,46 @@ int ntfs_remove_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni)
 	if (longlen > 0) {
 		shortlen = get_dos_name(ni, dnum, shortname);
 		if (shortlen >= 0) {
-				/* migrate the long name as Posix */
+			/* migrate the long name as Posix */
 			oldnametype = set_namespace(ni,dir_ni,longname,longlen,
 					FILE_NAME_POSIX);
 			switch (oldnametype) {
-			case FILE_NAME_WIN32_AND_DOS :
-				/* name was Win32+DOS : done */
-				res = 0;
-				break;
-			case FILE_NAME_DOS :
-				/* name was DOS, make it back to DOS */
-				set_namespace(ni,dir_ni,longname,longlen,
-						FILE_NAME_DOS);
-				errno = ENOENT;
-				break;
-			case FILE_NAME_WIN32 :
-				/* name was Win32, make it Posix and delete */
-				if (set_namespace(ni,dir_ni,shortname,shortlen,
-						FILE_NAME_POSIX) >= 0) {
-					if (!ntfs_delete(vol,
-							(const char*)NULL, ni,
-							dir_ni, shortname,
-							shortlen))
-						res = 0;
-					deleted = TRUE;
-				} else {
-					/*
-					 * DOS name has been found, but cannot
-					 * migrate to Posix : something bad
-					 * has happened
-					 */
-					errno = EIO;
-					ntfs_log_error("Could not change"
-						" DOS name of inode %lld to Posix\n",
-						(long long)ni->mft_no);
-				}
-				break;
-			default :
-				/* name was Posix or not found : error */
-				errno = ENOENT;
-				break;
+				case FILE_NAME_WIN32_AND_DOS :
+					/* name was Win32+DOS : done */
+					res = 0;
+					break;
+				case FILE_NAME_DOS :
+					/* name was DOS, make it back to DOS */
+					set_namespace(ni,dir_ni,longname,longlen,
+							FILE_NAME_DOS);
+					errno = ENOENT;
+					break;
+				case FILE_NAME_WIN32 :
+					/* name was Win32, make it Posix and delete */
+					if (set_namespace(ni,dir_ni,shortname,shortlen,
+								FILE_NAME_POSIX) >= 0) {
+						if (!ntfs_delete(vol,
+									(const char*)NULL, ni,
+									dir_ni, shortname,
+									shortlen))
+							res = 0;
+						deleted = TRUE;
+					} else {
+						/*
+						 * DOS name has been found, but cannot
+						 * migrate to Posix : something bad
+						 * has happened
+						 */
+						errno = EIO;
+						ntfs_log_error("Could not change"
+								" DOS name of inode %lld to Posix\n",
+								(long long)ni->mft_no);
+					}
+					break;
+				default :
+					/* name was Posix or not found : error */
+					errno = ENOENT;
+					break;
 			}
 		}
 	} else {
@@ -2877,12 +2877,12 @@ int ntfs_remove_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni)
  */
 
 static int nlink_increment(void *nlink_ptr,
-			const ntfschar *name __attribute__((unused)),
-			const int len __attribute__((unused)),
-			const int type,
-			const s64 pos __attribute__((unused)),
-			const MFT_REF mref __attribute__((unused)),
-			const unsigned int dt_type)
+		const ntfschar *name __attribute__((unused)),
+		const int len __attribute__((unused)),
+		const int type,
+		const s64 pos __attribute__((unused)),
+		const MFT_REF mref __attribute__((unused)),
+		const unsigned int dt_type)
 {
 	if ((dt_type == NTFS_DT_DIR) && (type != FILE_NAME_DOS))
 		(*((int*)nlink_ptr))++;
@@ -2933,7 +2933,7 @@ int ntfs_dir_link_cnt(ntfs_inode *ni)
 		if (!actx)
 			goto err_out;
 		while (!(err = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
-					CASE_SENSITIVE, 0, NULL, 0, actx))) {
+						CASE_SENSITIVE, 0, NULL, 0, actx))) {
 			fn = (FILE_NAME_ATTR*)((u8*)actx->attr +
 					le16_to_cpu(actx->attr->value_offset));
 			if (fn->file_name_type != FILE_NAME_DOS)
@@ -2945,7 +2945,7 @@ int ntfs_dir_link_cnt(ntfs_inode *ni)
 	}
 	if (!nlink)
 		ntfs_log_perror("Failed to compute nlink of inode %lld",
-			(long long)ni->mft_no);
+				(long long)ni->mft_no);
 err_out :
 	return (nlink);
 }

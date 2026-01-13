@@ -147,7 +147,7 @@ static inline unsigned int ntfs_hash(const u8 *p)
  *	    This saves a lot of time on degenerate inputs.
  */
 static void ntfs_best_match(struct COMPRESS_CONTEXT *pctx, const int i,
-			    int best_len)
+		int best_len)
 {
 	const u8 * const inbuf = pctx->inbuf;
 	const u8 * const strptr = &inbuf[i]; /* String we're matching against */
@@ -179,7 +179,7 @@ static void ntfs_best_match(struct COMPRESS_CONTEXT *pctx, const int i,
 	/* Search the appropriate hash chain for matches.  */
 
 	for (; cur_match >= 0 && depth_remaining--;
-		cur_match = prev[cur_match])
+			cur_match = prev[cur_match])
 	{
 
 		matchptr = &inbuf[cur_match];
@@ -197,8 +197,8 @@ static void ntfs_best_match(struct COMPRESS_CONTEXT *pctx, const int i,
 		 * independently of the branches in the main comparison loops.
 		 */
 		if (matchptr[best_len] != strptr[best_len] ||
-		    matchptr[best_len - 1] != strptr[best_len - 1] ||
-		    matchptr[0] != strptr[0])
+				matchptr[best_len - 1] != strptr[best_len - 1] ||
+				matchptr[0] != strptr[0])
 			goto next_match;
 
 		for (len = 1; len < best_len - 1; len++)
@@ -217,8 +217,8 @@ static void ntfs_best_match(struct COMPRESS_CONTEXT *pctx, const int i,
 				 * match as far as possible and terminate the
 				 * search.  */
 				while (best_len < max_len &&
-					(best_matchptr[best_len] ==
-						strptr[best_len]))
+						(best_matchptr[best_len] ==
+						 strptr[best_len]))
 				{
 					best_len++;
 				}
@@ -228,7 +228,7 @@ static void ntfs_best_match(struct COMPRESS_CONTEXT *pctx, const int i,
 
 		/* Found a longer match, but 'nice_len' not yet reached.  */
 
-	next_match:
+next_match:
 		/* Continue to next match in the chain.  */
 		;
 	}
@@ -274,7 +274,7 @@ static void ntfs_skip_position(struct COMPRESS_CONTEXT *pctx, const int i)
  */
 
 static unsigned int ntfs_compress_block(const char *inbuf, const int bufsize,
-				char *outbuf)
+		char *outbuf)
 {
 	struct COMPRESS_CONTEXT *pctx;
 	int i; /* current position */
@@ -386,7 +386,7 @@ static unsigned int ntfs_compress_block(const char *inbuf, const int bufsize,
 					/* Next match isn't longer.
 					 * Output the current match.  */
 					q = (~offs << (16 - bp_cur)) +
-							(j - i - 3);
+						(j - i - 3);
 					outbuf[xout++] = q & 255;
 					outbuf[xout++] = (q >> 8) & 255;
 					tag |= (1 << (8 - ntag));
@@ -508,7 +508,7 @@ do_next_sb:
 	/* Setup the current sub-block source pointers and validate range. */
 	cb_sb_start = cb;
 	cb_sb_end = cb_sb_start + (le16_to_cpup((le16*)cb) & NTFS_SB_SIZE_MASK)
-			+ 3;
+		+ 3;
 	if (cb_sb_end > cb_end)
 		goto return_overflow;
 	/* Now, we are ready to process the current sub-block (sb). */
@@ -648,7 +648,7 @@ return_overflow:
  * errors coming from here.
  */
 static BOOL ntfs_is_cb_compressed(ntfs_attr *na, runlist_element *rl,
-				  VCN cb_start_vcn, int cb_clusters)
+		VCN cb_start_vcn, int cb_clusters)
 {
 	/*
 	 * The simplest case: the run starting at @cb_start_vcn contains
@@ -797,10 +797,10 @@ s64 ntfs_compressed_attr_pread(ntfs_attr *na, s64 pos, s64 count, void *b)
 	 * decompress.
 	 */
 	end_vcn = ((pos + count + cb_size - 1) & ~cb_size_mask) >>
-			vol->cluster_size_bits;
+		vol->cluster_size_bits;
 	/* Number of compression blocks (cbs) in the wanted vcn range. */
 	nr_cbs = (end_vcn - start_vcn) << vol->cluster_size_bits >>
-			na->compression_block_size_bits;
+		na->compression_block_size_bits;
 	cb_end = cb + cb_size;
 do_next_cb:
 	nr_cbs--;
@@ -855,10 +855,10 @@ do_next_cb:
 			if (br <= 0) {
 				if (!br) {
 					ntfs_log_error("Failed to read an"
-						" uncompressed cluster,"
-						" inode %lld offs 0x%llx\n",
-						(long long)na->ni->mft_no,
-						(long long)ofs);
+							" uncompressed cluster,"
+							" inode %lld offs 0x%llx\n",
+							(long long)na->ni->mft_no,
+							(long long)ofs);
 					errno = EIO;
 				}
 				err = errno;
@@ -915,10 +915,10 @@ do_next_cb:
 			if (br <= 0) {
 				if (!br) {
 					ntfs_log_error("Failed to read a"
-						" compressed cluster, "
-						" inode %lld offs 0x%llx\n",
-						(long long)na->ni->mft_no,
-						(long long)(vcn << vol->cluster_size_bits));
+							" compressed cluster, "
+							" inode %lld offs 0x%llx\n",
+							(long long)na->ni->mft_no,
+							(long long)(vcn << vol->cluster_size_bits));
 					errno = EIO;
 				}
 				err = errno;
@@ -979,7 +979,7 @@ do_next_cb:
  */
 
 static u32 read_clusters(ntfs_volume *vol, const runlist_element *rl,
-			s64 offs, u32 to_read, char *inbuf)
+		s64 offs, u32 to_read, char *inbuf)
 {
 	u32 count;
 	int xgot;
@@ -1021,7 +1021,7 @@ static u32 read_clusters(ntfs_volume *vol, const runlist_element *rl,
  */
 
 static s32 write_clusters(ntfs_volume *vol, const runlist_element *rl,
-			s64 offs, s32 to_write, const char *outbuf)
+		s64 offs, s32 to_write, const char *outbuf)
 {
 	s32 count;
 	s32 put, xput;
@@ -1066,7 +1066,7 @@ static s32 write_clusters(ntfs_volume *vol, const runlist_element *rl,
  */
 
 static s32 ntfs_comp_set(ntfs_attr *na, runlist_element *rl,
-			s64 offs, u32 insz, const char *inbuf)
+		s64 offs, u32 insz, const char *inbuf)
 {
 	ntfs_volume *vol;
 	char *outbuf;
@@ -1080,17 +1080,17 @@ static s32 ntfs_comp_set(ntfs_attr *na, runlist_element *rl,
 	unsigned int bsz;
 	BOOL fail;
 	BOOL allzeroes;
-		/* a single compressed zero */
+	/* a single compressed zero */
 	static char onezero[] = { 0x01, 0xb0, 0x00, 0x00 } ;
-		/* a couple of compressed zeroes */
+	/* a couple of compressed zeroes */
 	static char twozeroes[] = { 0x02, 0xb0, 0x00, 0x00, 0x00 } ;
-		/* more compressed zeroes, to be followed by some count */
+	/* more compressed zeroes, to be followed by some count */
 	static char morezeroes[] = { 0x03, 0xb0, 0x02, 0x00 } ;
 
 	vol = na->ni->vol;
 	written = -1; /* default return */
 	clsz = 1 << vol->cluster_size_bits;
-		/* may need 2 extra bytes per block and 2 more bytes */
+	/* may need 2 extra bytes per block and 2 more bytes */
 	outbuf = (char*)ntfs_malloc(na->compression_block_size
 			+ 2*(na->compression_block_size/NTFS_SB_SIZE)
 			+ 2);
@@ -1107,30 +1107,30 @@ static s32 ntfs_comp_set(ntfs_attr *na, runlist_element *rl,
 			sz = ntfs_compress_block(&inbuf[p],bsz,pbuf);
 			/* fail if all the clusters (or more) are needed */
 			if (!sz || ((compsz + sz + clsz + 2)
-					 > na->compression_block_size))
+						> na->compression_block_size))
 				fail = TRUE;
 			else {
 				if (allzeroes) {
-				/* check whether this is all zeroes */
+					/* check whether this is all zeroes */
 					switch (sz) {
-					case 4 :
-						allzeroes = !memcmp(
-							pbuf,onezero,4);
-						break;
-					case 5 :
-						allzeroes = !memcmp(
-							pbuf,twozeroes,5);
-						break;
-					case 6 :
-						allzeroes = !memcmp(
-							pbuf,morezeroes,4);
-						break;
-					default :
-						allzeroes = FALSE;
-						break;
+						case 4 :
+							allzeroes = !memcmp(
+									pbuf,onezero,4);
+							break;
+						case 5 :
+							allzeroes = !memcmp(
+									pbuf,twozeroes,5);
+							break;
+						case 6 :
+							allzeroes = !memcmp(
+									pbuf,morezeroes,4);
+							break;
+						default :
+							allzeroes = FALSE;
+							break;
 					}
 				}
-			compsz += sz;
+				compsz += sz;
 			}
 		}
 		if (!fail && !allzeroes) {
@@ -1166,7 +1166,7 @@ static s32 ntfs_comp_set(ntfs_attr *na, runlist_element *rl,
  */
 
 static BOOL valid_compressed_run(ntfs_attr *na, runlist_element *rl,
-			BOOL fullcheck, const char *text)
+		BOOL fullcheck, const char *text)
 {
 	runlist_element *xrl;
 	const char *err;
@@ -1181,7 +1181,7 @@ static BOOL valid_compressed_run(ntfs_attr *na, runlist_element *rl,
 			err = "Runs not adjacent";
 		if (xrl->lcn == LCN_HOLE) {
 			if ((xrl->vcn + xrl->length)
-			    & (na->compression_block_clusters - 1)) {
+					& (na->compression_block_clusters - 1)) {
 				err = "Invalid hole";
 			}
 			if (fullcheck && (xrl[1].lcn == LCN_HOLE)) {
@@ -1190,8 +1190,8 @@ static BOOL valid_compressed_run(ntfs_attr *na, runlist_element *rl,
 		}
 		if (err) {
 			ntfs_log_error("%s at %s index %ld inode %lld\n",
-				err, text, (long)(xrl - na->rl),
-				(long long)na->ni->mft_no);
+					err, text, (long)(xrl - na->rl),
+					(long long)na->ni->mft_no);
 			errno = EIO;
 			ok = FALSE;
 			err = (const char*)NULL;
@@ -1230,7 +1230,7 @@ static BOOL valid_compressed_run(ntfs_attr *na, runlist_element *rl,
  */
 
 static int ntfs_compress_overwr_free(ntfs_attr *na, runlist_element *rl,
-			s32 usedcnt, s32 freecnt, VCN *update_from)
+		s32 usedcnt, s32 freecnt, VCN *update_from)
 {
 	BOOL beginhole;
 	BOOL mergeholes;
@@ -1249,15 +1249,15 @@ static int ntfs_compress_overwr_free(ntfs_attr *na, runlist_element *rl,
 	freevcn = rl->vcn + usedcnt;
 	freelength = rl->length - usedcnt;
 	beginhole = !usedcnt && !rl->vcn;
-		/* can merge with hole before ? */
+	/* can merge with hole before ? */
 	mergeholes = !usedcnt
-			&& rl[0].vcn
-			&& (rl[-1].lcn == LCN_HOLE);
-		/* truncate current run, carry to subsequent hole */
+		&& rl[0].vcn
+		&& (rl[-1].lcn == LCN_HOLE);
+	/* truncate current run, carry to subsequent hole */
 	carry = freelength;
 	oldlength = rl->length;
 	if (mergeholes) {
-			/* merging with a hole before */
+		/* merging with a hole before */
 		freerl = rl;
 	} else {
 		rl->length -= freelength; /* warning : can be zero */
@@ -1275,8 +1275,8 @@ static int ntfs_compress_overwr_free(ntfs_attr *na, runlist_element *rl,
 		freed = 0;
 		frl = freerl;
 		if (freelength) {
-      			res = ntfs_cluster_free_basic(vol,freelcn,
-				(threeparts ? freecnt : freelength));
+			res = ntfs_cluster_free_basic(vol,freelcn,
+					(threeparts ? freecnt : freelength));
 			if (!res)
 				freed += (threeparts ? freecnt : freelength);
 			if (!usedcnt) {
@@ -1287,105 +1287,105 @@ static int ntfs_compress_overwr_free(ntfs_attr *na, runlist_element *rl,
 				if (freerl->vcn < *update_from)
 					*update_from = freerl->vcn;
 			}
-   		}
-   		while (!res && frl->length && (freed < freecnt)) {
-      			if (frl->length <= (freecnt - freed)) {
-         			res = ntfs_cluster_free_basic(vol, frl->lcn,
+		}
+		while (!res && frl->length && (freed < freecnt)) {
+			if (frl->length <= (freecnt - freed)) {
+				res = ntfs_cluster_free_basic(vol, frl->lcn,
 						frl->length);
 				if (!res) {
-         				freed += frl->length;
-         				frl->lcn = LCN_HOLE;
+					freed += frl->length;
+					frl->lcn = LCN_HOLE;
 					frl->length += carry;
 					carry = 0;
-         				holes++;
+					holes++;
 				}
-      			} else {
-         			res = ntfs_cluster_free_basic(vol, frl->lcn,
+			} else {
+				res = ntfs_cluster_free_basic(vol, frl->lcn,
 						freecnt - freed);
 				if (!res) {
-         				frl->lcn += freecnt - freed;
-         				frl->vcn += freecnt - freed;
-         				frl->length -= freecnt - freed;
-         				freed = freecnt;
+					frl->lcn += freecnt - freed;
+					frl->vcn += freecnt - freed;
+					frl->length -= freecnt - freed;
+					freed = freecnt;
 				}
-      			}
-      			frl++;
-   		}
+			}
+			frl++;
+		}
 		na->compressed_size -= freed << vol->cluster_size_bits;
 		switch (holes) {
-		case 0 :
-			/* there are no hole, must insert one */
-			/* space for hole has been prereserved */
-			if (freerl->lcn == LCN_HOLE) {
-				if (threeparts) {
+			case 0 :
+				/* there are no hole, must insert one */
+				/* space for hole has been prereserved */
+				if (freerl->lcn == LCN_HOLE) {
+					if (threeparts) {
+						erl = freerl;
+						while (erl->length)
+							erl++;
+						do {
+							erl[2] = *erl;
+						} while (erl-- != freerl);
+
+						freerl[1].length = freelength - freecnt;
+						freerl->length = freecnt;
+						freerl[1].lcn = freelcn + freecnt;
+						freerl[1].vcn = freevcn + freecnt;
+						freerl[2].lcn = LCN_HOLE;
+						freerl[2].vcn = freerl[1].vcn
+							+ freerl[1].length;
+						freerl->vcn = freevcn;
+					} else {
+						freerl->vcn = freevcn;
+						freerl->length += freelength;
+					}
+				} else {
 					erl = freerl;
 					while (erl->length)
 						erl++;
-					do {
-						erl[2] = *erl;
-					} while (erl-- != freerl);
-
-					freerl[1].length = freelength - freecnt;
+					if (threeparts) {
+						do {
+							erl[2] = *erl;
+						} while (erl-- != freerl);
+						freerl[1].lcn = freelcn + freecnt;
+						freerl[1].vcn = freevcn + freecnt;
+						freerl[1].length = oldlength - usedcnt - freecnt;
+					} else {
+						do {
+							erl[1] = *erl;
+						} while (erl-- != freerl);
+					}
+					freerl->lcn = LCN_HOLE;
+					freerl->vcn = freevcn;
 					freerl->length = freecnt;
-					freerl[1].lcn = freelcn + freecnt;
-					freerl[1].vcn = freevcn + freecnt;
-					freerl[2].lcn = LCN_HOLE;
-					freerl[2].vcn = freerl[1].vcn
-							+ freerl[1].length;
-					freerl->vcn = freevcn;
-				} else {
-					freerl->vcn = freevcn;
-					freerl->length += freelength;
 				}
-			} else {
-				erl = freerl;
-				while (erl->length)
-					erl++;
-				if (threeparts) {
+				break;
+			case 1 :
+				/* there is a single hole, may have to merge */
+				freerl->vcn = freevcn;
+				freerl->length = freecnt;
+				if (freerl[1].lcn == LCN_HOLE) {
+					freerl->length += freerl[1].length;
+					erl = freerl;
 					do {
-						erl[2] = *erl;
-					} while (erl-- != freerl);
-					freerl[1].lcn = freelcn + freecnt;
-					freerl[1].vcn = freevcn + freecnt;
-					freerl[1].length = oldlength - usedcnt - freecnt;
-				} else {
-					do {
-						erl[1] = *erl;
-					} while (erl-- != freerl);
+						erl++;
+						*erl = erl[1];
+					} while (erl->length);
 				}
+				break;
+			default :
+				/* there were several holes, must merge them */
 				freerl->lcn = LCN_HOLE;
 				freerl->vcn = freevcn;
 				freerl->length = freecnt;
-			}
-			break;
-		case 1 :
-			/* there is a single hole, may have to merge */
-			freerl->vcn = freevcn;
-			freerl->length = freecnt;
-			if (freerl[1].lcn == LCN_HOLE) {
-				freerl->length += freerl[1].length;
+				if (freerl[holes].lcn == LCN_HOLE) {
+					freerl->length += freerl[holes].length;
+					holes++;
+				}
 				erl = freerl;
 				do {
 					erl++;
-					*erl = erl[1];
+					*erl = erl[holes - 1];
 				} while (erl->length);
-			}
-			break;
-		default :
-			/* there were several holes, must merge them */
-			freerl->lcn = LCN_HOLE;
-			freerl->vcn = freevcn;
-			freerl->length = freecnt;
-			if (freerl[holes].lcn == LCN_HOLE) {
-				freerl->length += freerl[holes].length;
-				holes++;
-			}
-			erl = freerl;
-			do {
-				erl++;
-				*erl = erl[holes - 1];
-			} while (erl->length);
-			break;
+				break;
 		}
 	} else {
 		s32 freed;
@@ -1413,9 +1413,9 @@ static int ntfs_compress_overwr_free(ntfs_attr *na, runlist_element *rl,
 				freed = freecnt;
 			}
 		}
-			/* remove unneded runlist entries */
+		/* remove unneded runlist entries */
 		xrl = freerl;
-			/* group with next run if also a hole */
+		/* group with next run if also a hole */
 		if (frl->length && (frl->lcn == LCN_HOLE)) {
 			xrl->length += frl->length;
 			frl++;
@@ -1424,7 +1424,7 @@ static int ntfs_compress_overwr_free(ntfs_attr *na, runlist_element *rl,
 			*++xrl = *frl++;
 		}
 		*++xrl = *frl; /* terminator */
-	na->compressed_size -= freed << vol->cluster_size_bits;
+		na->compressed_size -= freed << vol->cluster_size_bits;
 	}
 	return (res);
 }
@@ -1442,8 +1442,8 @@ static int ntfs_compress_overwr_free(ntfs_attr *na, runlist_element *rl,
  */
 
 static int ntfs_compress_free(ntfs_attr *na, runlist_element *rl,
-				s64 used, s64 reserved, BOOL appending,
-				VCN *update_from)
+		s64 used, s64 reserved, BOOL appending,
+		VCN *update_from)
 {
 	s32 freecnt;
 	s32 usedcnt;
@@ -1462,7 +1462,7 @@ static int ntfs_compress_free(ntfs_attr *na, runlist_element *rl,
 	usedcnt = (reserved >> vol->cluster_size_bits) - freecnt;
 	if (rl->vcn < *update_from)
 		*update_from = rl->vcn;
-		/* skip entries fully used, if any */
+	/* skip entries fully used, if any */
 	while (rl->length && (rl->length < usedcnt)) {
 		usedcnt -= rl->length; /* must be > 0 */
 		rl++;
@@ -1474,12 +1474,12 @@ static int ntfs_compress_free(ntfs_attr *na, runlist_element *rl,
 		 * The required entry has been prereserved when
 		 * mapping the runlist.
 		 */
-			/* get the free part in initial run */
+		/* get the free part in initial run */
 		freelcn = rl->lcn + usedcnt;
 		freevcn = rl->vcn + usedcnt;
-			/* new count of allocated clusters */
+		/* new count of allocated clusters */
 		if (!((freevcn + freecnt)
-			    & (na->compression_block_clusters - 1))) {
+					& (na->compression_block_clusters - 1))) {
 			if (!appending)
 				res = ntfs_compress_overwr_free(na,rl,
 						usedcnt,freecnt,update_from);
@@ -1487,12 +1487,12 @@ static int ntfs_compress_free(ntfs_attr *na, runlist_element *rl,
 				freelength = rl->length - usedcnt;
 				beginhole = !usedcnt && !rl->vcn;
 				mergeholes = !usedcnt
-						&& rl[0].vcn
-						&& (rl[-1].lcn == LCN_HOLE);
+					&& rl[0].vcn
+					&& (rl[-1].lcn == LCN_HOLE);
 				if (mergeholes) {
 					s32 carry;
 
-				/* shorten the runs which have free space */
+					/* shorten the runs which have free space */
 					carry = freecnt;
 					freerl = rl;
 					while (freerl->length < carry) {
@@ -1506,14 +1506,14 @@ static int ntfs_compress_free(ntfs_attr *na, runlist_element *rl,
 					freerl = ++rl;
 				}
 				if ((freelength > 0)
-				    && !mergeholes
-				    && (usedcnt || beginhole)) {
-				/*
-				 * move the unused part to the end. Doing so,
-				 * the vcn will be out of order. This does
-				 * not harm, the vcn are meaningless now, and
-				 * only the lcn are meaningful for freeing.
-				 */
+						&& !mergeholes
+						&& (usedcnt || beginhole)) {
+					/*
+					 * move the unused part to the end. Doing so,
+					 * the vcn will be out of order. This does
+					 * not harm, the vcn are meaningless now, and
+					 * only the lcn are meaningful for freeing.
+					 */
 					/* locate current end */
 					while (rl->length)
 						rl++;
@@ -1526,10 +1526,10 @@ static int ntfs_compress_free(ntfs_attr *na, runlist_element *rl,
 					rl->lcn = freelcn;
 					rl->length = freelength;
 				} else {
-	/* why is this different from the begin hole case ? */
+					/* why is this different from the begin hole case ? */
 					if ((freelength > 0)
-					    && !mergeholes
-					    && !usedcnt) {
+							&& !mergeholes
+							&& !usedcnt) {
 						freerl--;
 						freerl->length = freelength;
 						if (freerl->vcn < *update_from)
@@ -1556,7 +1556,7 @@ static int ntfs_compress_free(ntfs_attr *na, runlist_element *rl,
 					}
 					if (freerl->vcn < *update_from)
 						*update_from = freerl->vcn;
-						/* and set up the new end */
+					/* and set up the new end */
 					freerl[1].lcn = LCN_ENOENT;
 					freerl[1].vcn = freevcn + freecnt;
 					freerl[1].length = 0;
@@ -1580,8 +1580,8 @@ static int ntfs_compress_free(ntfs_attr *na, runlist_element *rl,
  */
 
 static int ntfs_read_append(ntfs_attr *na, const runlist_element *rl,
-			s64 offs, u32 compsz, s32 pos, BOOL appending,
-			char *outbuf, s64 to_write, const void *b)
+		s64 offs, u32 compsz, s32 pos, BOOL appending,
+		char *outbuf, s64 to_write, const void *b)
 {
 	int fail = 1;
 	char *compbuf;
@@ -1589,7 +1589,7 @@ static int ntfs_read_append(ntfs_attr *na, const runlist_element *rl,
 	u32 got;
 
 	if (compsz == na->compression_block_size) {
-			/* if the full block was requested, it was a hole */
+		/* if the full block was requested, it was a hole */
 		memset(outbuf,0,compsz);
 		memcpy(&outbuf[pos],b,to_write);
 		fail = 0;
@@ -1604,8 +1604,8 @@ static int ntfs_read_append(ntfs_attr *na, const runlist_element *rl,
 			got = read_clusters(na->ni->vol, rl, offs,
 					compsz, compbuf);
 			if ((got == compsz)
-			    && !ntfs_decompress((u8*)outbuf,decompsz,
-					(u8*)compbuf,compsz)) {
+					&& !ntfs_decompress((u8*)outbuf,decompsz,
+						(u8*)compbuf,compsz)) {
 				memcpy(&outbuf[pos],b,to_write);
 				fail = 0;
 			}
@@ -1624,8 +1624,8 @@ static int ntfs_read_append(ntfs_attr *na, const runlist_element *rl,
  */
 
 static s32 ntfs_flush(ntfs_attr *na, runlist_element *rl, s64 offs,
-			char *outbuf, s32 count, BOOL compress,
-			BOOL appending, VCN *update_from)
+		char *outbuf, s32 count, BOOL compress,
+		BOOL appending, VCN *update_from)
 {
 	s32 rounded;
 	s32 written;
@@ -1636,9 +1636,9 @@ static s32 ntfs_flush(ntfs_attr *na, runlist_element *rl, s64 offs,
 		if (written == -1)
 			compress = FALSE;
 		if ((written >= 0)
-		   && ntfs_compress_free(na,rl,offs + written,
-				offs + na->compression_block_size, appending,
-				update_from))
+				&& ntfs_compress_free(na,rl,offs + written,
+					offs + na->compression_block_size, appending,
+					update_from))
 			written = -1;
 	} else
 		written = 0;
@@ -1668,9 +1668,9 @@ static s32 ntfs_flush(ntfs_attr *na, runlist_element *rl, s64 offs,
  */
 
 s64 ntfs_compressed_pwrite(ntfs_attr *na, runlist_element *wrl, s64 wpos,
-				s64 offs, s64 to_write, s64 rounded,
-				const void *b, int compressed_part,
-				VCN *update_from)
+		s64 offs, s64 to_write, s64 rounded,
+		const void *b, int compressed_part,
+		VCN *update_from)
 {
 	ntfs_volume *vol;
 	runlist_element *brl; /* entry containing the beginning of block */
@@ -1695,14 +1695,14 @@ s64 ntfs_compressed_pwrite(ntfs_attr *na, runlist_element *wrl, s64 wpos,
 		return (-1);
 	}
 	if ((*update_from < 0)
-	    || (compressed_part < 0)
-	    || (compressed_part > (int)na->compression_block_clusters)) {
+			|| (compressed_part < 0)
+			|| (compressed_part > (int)na->compression_block_clusters)) {
 		ntfs_log_error("Bad update vcn or compressed_part %d for compressed write\n",
-			compressed_part);
+				compressed_part);
 		errno = EIO;
 		return (-1);
 	}
-		/* make sure there are two unused entries in runlist */
+	/* make sure there are two unused entries in runlist */
 	if (na->unused_runs < 2) {
 		ntfs_log_error("No unused runs for compressed write\n");
 		errno = EIO;
@@ -1721,22 +1721,22 @@ s64 ntfs_compressed_pwrite(ntfs_attr *na, runlist_element *wrl, s64 wpos,
 	compression_length = na->compression_block_clusters;
 	compress = FALSE;
 	done = FALSE;
-		/*
-		 * Cannot accept writing beyond the current compression set
-		 * because when compression occurs, clusters are freed
-		 * and have to be reallocated.
-		 * (cannot happen with standard fuse 4K buffers)
-		 * Caller has to avoid this situation, or face consequences.
-		 */
+	/*
+	 * Cannot accept writing beyond the current compression set
+	 * because when compression occurs, clusters are freed
+	 * and have to be reallocated.
+	 * (cannot happen with standard fuse 4K buffers)
+	 * Caller has to avoid this situation, or face consequences.
+	 */
 	nextblock = ((offs + (wrl->vcn << vol->cluster_size_bits))
 			| (na->compression_block_size - 1)) + 1;
-		/* determine whether we are appending to file */
+	/* determine whether we are appending to file */
 	endwrite = offs + to_write + (wrl->vcn << vol->cluster_size_bits);
 	appending = endwrite >= na->initialized_size;
 	if (endwrite >= nextblock) {
-			/* it is time to compress */
+		/* it is time to compress */
 		compress = TRUE;
-			/* only process what we can */
+		/* only process what we can */
 		to_write = rounded = nextblock
 			- (offs + (wrl->vcn << vol->cluster_size_bits));
 	}
@@ -1744,16 +1744,16 @@ s64 ntfs_compressed_pwrite(ntfs_attr *na, runlist_element *wrl, s64 wpos,
 	fail = FALSE;
 	brl = wrl;
 	roffs = 0;
-		/*
-		 * If we are about to compress or we need to decompress
-		 * existing data, we have to process a full set of blocks.
-		 * So relocate the parameters to the beginning of allocation
-		 * containing the first byte of the set of blocks.
-		 */
+	/*
+	 * If we are about to compress or we need to decompress
+	 * existing data, we have to process a full set of blocks.
+	 * So relocate the parameters to the beginning of allocation
+	 * containing the first byte of the set of blocks.
+	 */
 	if (compress || compressed_part) {
 		/* find the beginning of block */
 		start_vcn = (wrl->vcn + (offs >> vol->cluster_size_bits))
-				& -compression_length;
+			& -compression_length;
 		if (start_vcn < *update_from)
 			*update_from = start_vcn;
 		while (brl->vcn && (brl->vcn > start_vcn)) {
@@ -1788,24 +1788,24 @@ s64 ntfs_compressed_pwrite(ntfs_attr *na, runlist_element *wrl, s64 wpos,
 				to_flush = to_read;
 			}
 			if (!ntfs_read_append(na, brl, roffs, compsz,
-					(s32)(offs - roffs), appending,
-					outbuf, to_write, b)) {
+						(s32)(offs - roffs), appending,
+						outbuf, to_write, b)) {
 				written = ntfs_flush(na, brl, roffs,
-					outbuf, to_flush, compress, appending,
-					update_from);
+						outbuf, to_flush, compress, appending,
+						update_from);
 				if (written >= 0) {
 					written = to_write;
 					done = TRUE;
 				}
 			}
-		free(outbuf);
+			free(outbuf);
 		}
 	} else {
 		if (compress && !fail) {
 			/*
 			 * we are filling up a block, read the full set
 			 * of blocks and compress it
-		 	 */
+			 */
 			inbuf = (char*)ntfs_malloc(na->compression_block_size);
 			if (inbuf) {
 				to_read = offs - roffs;
@@ -1817,18 +1817,18 @@ s64 ntfs_compressed_pwrite(ntfs_attr *na, runlist_element *wrl, s64 wpos,
 				if (got == to_read) {
 					memcpy(&inbuf[to_read],b,to_write);
 					written = ntfs_comp_set(na, brl, roffs,
-						to_read + to_write, inbuf);
-				/*
-				 * if compression was not successful,
-				 * only write the part which was requested
-				 */
+							to_read + to_write, inbuf);
+					/*
+					 * if compression was not successful,
+					 * only write the part which was requested
+					 */
 					if ((written >= 0)
-						/* free the unused clusters */
-				  	  && !ntfs_compress_free(na,brl,
-						    written + roffs,
-						    na->compression_block_size
-						         + roffs,
-						    appending, update_from)) {
+							/* free the unused clusters */
+							&& !ntfs_compress_free(na,brl,
+								written + roffs,
+								na->compression_block_size
+								+ roffs,
+								appending, update_from)) {
 						done = TRUE;
 						written = to_write;
 					}
@@ -1840,24 +1840,24 @@ s64 ntfs_compressed_pwrite(ntfs_attr *na, runlist_element *wrl, s64 wpos,
 			/*
 			 * if the compression block is not full, or
 			 * if compression failed for whatever reason,
-		 	 * write uncompressed
+			 * write uncompressed
 			 */
 			/* check we are not overflowing current allocation */
 			if ((wpos + rounded)
-			    > ((wrl->lcn + wrl->length)
-				 << vol->cluster_size_bits)) {
+					> ((wrl->lcn + wrl->length)
+						<< vol->cluster_size_bits)) {
 				ntfs_log_error("writing on unallocated clusters\n");
 				errno = EIO;
 			} else {
 				written = ntfs_pwrite(vol->dev, wpos,
-					rounded, b);
+						rounded, b);
 				if (written == rounded)
 					written = to_write;
 			}
 		}
 	}
 	if ((written >= 0)
-	    && !valid_compressed_run(na,wrl,TRUE,"end compressed write"))
+			&& !valid_compressed_run(na,wrl,TRUE,"end compressed write"))
 		written = -1;
 	return (written);
 }
@@ -1871,7 +1871,7 @@ s64 ntfs_compressed_pwrite(ntfs_attr *na, runlist_element *wrl, s64 wpos,
  */
 
 int ntfs_compressed_close(ntfs_attr *na, runlist_element *wrl, s64 offs,
-			VCN *update_from)
+		VCN *update_from)
 {
 	ntfs_volume *vol;
 	runlist_element *brl; /* entry containing the beginning of block */
@@ -1906,18 +1906,18 @@ int ntfs_compressed_close(ntfs_attr *na, runlist_element *wrl, s64 offs,
 	vol = na->ni->vol;
 	compression_length = na->compression_block_clusters;
 	done = FALSE;
-		/*
-		 * There generally is an uncompressed block at end of file,
-		 * read the full block and compress it
-		 */
+	/*
+	 * There generally is an uncompressed block at end of file,
+	 * read the full block and compress it
+	 */
 	inbuf = (char*)ntfs_malloc(na->compression_block_size);
 	if (inbuf) {
 		start_vcn = (wrl->vcn + (offs >> vol->cluster_size_bits))
-				& -compression_length;
+			& -compression_length;
 		if (start_vcn < *update_from)
 			*update_from = start_vcn;
 		to_read = offs + ((wrl->vcn - start_vcn)
-					<< vol->cluster_size_bits);
+				<< vol->cluster_size_bits);
 		brl = wrl;
 		fail = FALSE;
 		while (brl->vcn && (brl->vcn > start_vcn)) {
@@ -1931,22 +1931,22 @@ int ntfs_compressed_close(ntfs_attr *na, runlist_element *wrl, s64 offs,
 		if (!fail) {
 			/* roffs can be an offset from another uncomp block */
 			roffs = (start_vcn - brl->vcn)
-						<< vol->cluster_size_bits;
+				<< vol->cluster_size_bits;
 			if (to_read) {
 				got = read_clusters(vol, brl, roffs, to_read,
-						 inbuf);
+						inbuf);
 				if (got == to_read) {
 					written = ntfs_comp_set(na, brl, roffs,
 							to_read, inbuf);
 					if ((written >= 0)
-					/* free the unused clusters */
-					    && !ntfs_compress_free(na,brl,
-							written + roffs,
-							na->compression_block_size + roffs,
-							TRUE, update_from)) {
+							/* free the unused clusters */
+							&& !ntfs_compress_free(na,brl,
+								written + roffs,
+								na->compression_block_size + roffs,
+								TRUE, update_from)) {
 						done = TRUE;
 					} else
-				/* if compression failed, leave uncompressed */
+						/* if compression failed, leave uncompressed */
 						if (written == -1)
 							done = TRUE;
 				}

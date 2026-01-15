@@ -856,7 +856,8 @@ void progress_update(struct progress_bar *p, u64 current)
  */
 void utils_dump_mem(void *buf, int start, int length, int flags)
 {
-	int off, i, s, e, col;
+	int off, i, s, e;
+	int __attribute__((unused)) col;
 	u8 *mem = buf;
 
 	s =  start                & ~15;	// round down

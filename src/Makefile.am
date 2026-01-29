@@ -28,7 +28,7 @@ AM_CPPFLAGS		= -I$(top_srcdir)/include $(all_includes)
 
 mkntfs_CPPFLAGS		= $(AM_CPPFLAGS) $(MKNTFS_CPPFLAGS)
 mkntfs_SOURCES		= attrdef.c attrdef.h sd.c sd.h mkntfs.c utils.c utils.h
-mkntfs_LDADD		= $(AM_LIBS) $(MKNTFS_LIBS)
+mkntfs_LDADD		= $(AM_LIBS) $(MKNTFS_LIBS) $(BLKID_LIBS)
 mkntfs_LDFLAGS		= $(AM_LFLAGS)
 
 ntfslabel_SOURCES	= ntfslabel.c utils.c utils.h

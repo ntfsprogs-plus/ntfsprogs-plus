@@ -71,7 +71,9 @@
 #ifdef ENABLE_UUID
 #include <uuid/uuid.h>
 #endif
-
+#ifdef HAVE_LIBBLKID
+#include <blkid/blkid.h>
+#endif
 
 #ifdef HAVE_GETOPT_H
 #include <getopt.h>
@@ -3468,6 +3470,60 @@ static void mkntfs_cleanup(void)
 	}
 }
 
+/**
+ * check_existing_filesystem - Check if the device already has a filesystem
+ * @dev_name: Device name (e.g., /dev/sdc1)
+ * @force: If true, ignore existing FS (from -F option)
+ *
+ * Returns: 0 if no FS or NTFS, -1 if foreign FS detected
+ */
+#ifdef HAVE_LIBBLKID
+static int check_existing_filesystem(const char *dev_name, BOOL force)
+{
+	blkid_probe pr = NULL;
+	const char *fstype = NULL;
+	int ret = 0;
+
+	pr = blkid_new_probe_from_filename(dev_name);
+	if (!pr) {
+		ntfs_log_perror("Failed to create blkid probe for %s", dev_name);
+		return -1;
+	}
+
+	/* Enable superblock probing */
+	blkid_probe_enable_superblocks(pr, 1);
+	blkid_probe_set_superblocks_flags(pr, BLKID_SUBLKS_TYPE);
+
+	/* Probe succeeded */
+	if (blkid_do_safeprobe(pr) == 0) {
+		if (blkid_probe_lookup_value(pr, "TYPE", &fstype, NULL) == 0) {
+			ntfs_log_verbose("Detected filesystem type: %s\n", fstype);
+			/* Check foreign FS */
+			if (fstype && strcmp(fstype, "ntfs") != 0) {
+				if (!force) {
+					ntfs_log_error("Device %s already contains a %s filesystem. "
+							"Refusing to overwrite (use -F to force).\n",
+							dev_name, fstype);
+					ret = -1;
+				} else {
+					ntfs_log_warning("Forcing overwrite of existing %s filesystem on %s.\n",
+							fstype, dev_name);
+				}
+			}
+		}
+	} else {
+		ntfs_log_verbose("No filesystem detected on %s.\n", dev_name);
+	}
+
+	blkid_free_probe(pr);
+	return ret;
+}
+#else
+static int check_existing_filesystem(const char *dev_name, BOOL force)
+{
+	return 0;
+}
+#endif
 
 /**
  * mkntfs_open_partition -
@@ -3503,6 +3559,12 @@ static BOOL mkntfs_open_partition(ntfs_volume *vol)
 			ntfs_log_perror("Could not open %s", vol->dev->d_name);
 		goto done;
 	}
+
+	if (check_existing_filesystem(vol->dev->d_name, opts.force) < 0) {
+		ntfs_log_error("Aborting due to existing filesystem.\n");
+		goto done;
+	}
+
 	/* Verify we are dealing with a block device. */
 	if (vol->dev->d_ops->stat(vol->dev, &sbuf)) {
 		ntfs_log_perror("Error getting information about %s", vol->dev->d_name);

@@ -223,6 +223,18 @@ if test "$enable_crypto" != "no"; then
 fi
 AM_CONDITIONAL(ENABLE_CRYPTO, $compile_crypto)
 
+# Check for libblkid (for foreign filesystem detection in mkntfs)
+PKG_CHECK_MODULES([BLKID], [blkid >= 2.20],
+    [
+        AC_DEFINE([HAVE_LIBBLKID], [1], [Define to 1 if you have libblkid])
+        AC_SUBST([BLKID_CFLAGS])
+        AC_SUBST([BLKID_LIBS])
+    ],
+    [
+        AC_MSG_WARN([libblkid not found or too old → foreign FS detection will be disabled in mkntfs])
+    ]
+)
+
 # add --with-extra-includes and --with-extra-libs switch to ./configure
 all_libraries="$all_libraries $USER_LDFLAGS"
 all_includes="$all_includes $USER_INCLUDES"

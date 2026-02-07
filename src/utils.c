@@ -405,7 +405,7 @@ int utils_parse_size(const char *value, s64 *size, BOOL scale)
 int utils_parse_range(const char *string, s64 *start, s64 *finish, BOOL scale)
 {
 	s64 a, b;
-	char *middle;
+	const char *middle;
 
 	if (!string || !start || !finish) {
 		errno = EINVAL;

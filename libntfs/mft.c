@@ -431,7 +431,7 @@ err_out:
  * Note: We do not check if the mft record is flagged in use. The caller can
  *	 check if desired.
  */
-int ntfs_file_record_read(const ntfs_volume *vol, const MFT_REF mref,
+int ntfs_file_record_read(ntfs_volume *vol, const MFT_REF mref,
 		MFT_RECORD **mrec, ATTR_RECORD **attr)
 {
 	MFT_RECORD *m;

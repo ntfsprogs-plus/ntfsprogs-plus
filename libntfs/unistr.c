@@ -429,8 +429,14 @@ void ntfs_name_locase(ntfschar *name, u32 name_len, const ntfschar *locase,
 void ntfs_file_value_upcase(FILE_NAME_ATTR *file_name_attr,
 		const ntfschar *upcase, const u32 upcase_len)
 {
-	ntfs_name_upcase((ntfschar*)&file_name_attr->file_name,
+	ntfschar fn_name[NTFS_MAX_NAME_LEN];
+
+	memcpy(fn_name, file_name_attr->file_name,
+	       file_name_attr->file_name_length * sizeof(ntfschar));
+	ntfs_name_upcase(fn_name,
 			file_name_attr->file_name_length, upcase, upcase_len);
+	memcpy(file_name_attr->file_name, fn_name,
+	       file_name_attr->file_name_length * sizeof(ntfschar));
 }
 
 /*

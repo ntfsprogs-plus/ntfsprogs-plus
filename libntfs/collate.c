@@ -221,17 +221,25 @@ static int ntfs_collate_file_name(ntfs_volume *vol,
 {
 	const FILE_NAME_ATTR *file_name_attr1;
 	const FILE_NAME_ATTR *file_name_attr2;
+	ntfschar fn1[NTFS_MAX_NAME_LEN];
+	ntfschar fn2[NTFS_MAX_NAME_LEN];
 	int rc;
 
 	ntfs_log_trace("Entering.\n");
+
 	file_name_attr1 = (const FILE_NAME_ATTR*)data1;
 	file_name_attr2 = (const FILE_NAME_ATTR*)data2;
+
+	memcpy(fn1, file_name_attr1->file_name,
+	       file_name_attr1->file_name_length * sizeof(ntfschar));
+	memcpy(fn2, file_name_attr2->file_name,
+	       file_name_attr2->file_name_length * sizeof(ntfschar));
+
 	rc = ntfs_names_full_collate(
-			(ntfschar*)&file_name_attr1->file_name,
-			file_name_attr1->file_name_length,
-			(ntfschar*)&file_name_attr2->file_name,
-			file_name_attr2->file_name_length,
+			fn1, file_name_attr1->file_name_length,
+			fn2, file_name_attr2->file_name_length,
 			CASE_SENSITIVE, vol->upcase, vol->upcase_len);
+
 	ntfs_log_trace("Done, returning %i.\n", rc);
 	return rc;
 }

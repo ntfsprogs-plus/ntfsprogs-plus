@@ -1320,7 +1320,10 @@ rollback:
 	ale = (ATTR_LIST_ENTRY*)al;
 	while ((u8*)ale < al + al_len) {
 		if (MREF_LE(ale->mft_reference) != ni->mft_no) {
-			if (!ntfs_attr_lookup(ale->type, ale->name,
+			ntfschar ale_name[NTFS_MAX_NAME_LEN];
+			memcpy(ale_name, ale->name,
+			       ale->name_length * sizeof(ntfschar));
+			if (!ntfs_attr_lookup(ale->type, ale_name,
 						ale->name_length,
 						CASE_SENSITIVE,
 						sle64_to_cpu(ale->lowest_vcn),

@@ -284,9 +284,11 @@ static INDEX_ENTRY *ntfs_ie_prev(INDEX_HEADER *ih, INDEX_ENTRY *ie)
 char *ntfs_ie_filename_get(INDEX_ENTRY *ie)
 {
 	FILE_NAME_ATTR *fn;
+	ntfschar fn_name[NTFS_MAX_NAME_LEN];
 
 	fn = (FILE_NAME_ATTR *)&ie->key;
-	return ntfs_attr_name_get(fn->file_name, fn->file_name_length);
+	memcpy(fn_name, fn->file_name, fn->file_name_length * sizeof(ntfschar));
+	return ntfs_attr_name_get(fn_name, fn->file_name_length);
 }
 
 void ntfs_ie_filename_dump(INDEX_ENTRY *ie)

@@ -180,14 +180,22 @@ static u64 ntfs_fix_file_name(ntfs_inode *dir_ni, ntfschar *uname,
 		else
 			entry = icx->entry;
 		if (entry) {
+			ntfschar fn1[NTFS_MAX_NAME_LEN];
+			ntfschar fn2[NTFS_MAX_NAME_LEN];
+
 			found = &entry->key.file_name;
-			if (lkup
-					&& ntfs_names_are_equal(find.attr.file_name,
-						find.attr.file_name_length,
-						found->file_name, found->file_name_length,
+			if (lkup) {
+				memcpy(fn1, find.attr.file_name,
+				       find.attr.file_name_length * sizeof(ntfschar));
+				memcpy(fn1, found->file_name,
+				       found->file_name_length * sizeof(ntfschar));
+				if(ntfs_names_are_equal(
+						fn1, find.attr.file_name_length,
+						fn2, found->file_name_length,
 						IGNORE_CASE,
 						vol->upcase, vol->upcase_len))
-				lkup = 0;
+					lkup = 0;
+			}
 			if (!lkup) {
 				/*
 				 * name found :

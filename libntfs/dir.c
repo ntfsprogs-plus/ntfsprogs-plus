@@ -245,6 +245,7 @@ INDEX_ENTRY * __ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
 	int eo, rc;
 	u32 index_block_size;
 	u8 index_vcn_size_bits;
+	ntfschar fn_name[NTFS_MAX_NAME_LEN];
 
 	ntfs_log_trace("Entering\n");
 
@@ -317,8 +318,10 @@ INDEX_ENTRY * __ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
 		 * Not a perfect match, need to do full blown collation so we
 		 * know which way in the B+tree we have to go.
 		 */
+		memcpy(fn_name, ie->key.file_name.file_name,
+		       ie->key.file_name.file_name_length * sizeof(ntfschar));
 		rc = ntfs_names_full_collate(uname, uname_len,
-				(ntfschar*)&ie->key.file_name.file_name,
+				fn_name,
 				ie->key.file_name.file_name_length,
 				case_sensitivity, vol->upcase, vol->upcase_len);
 		/*
@@ -437,8 +440,10 @@ descend_into_child_node:
 		 * Not a perfect match, need to do full blown collation so we
 		 * know which way in the B+tree we have to go.
 		 */
+		memcpy(fn_name, ie->key.file_name.file_name,
+		       ie->key.file_name.file_name_length * sizeof(ntfschar));
 		rc = ntfs_names_full_collate(uname, uname_len,
-				(ntfschar*)&ie->key.file_name.file_name,
+				fn_name,
 				ie->key.file_name.file_name_length,
 				case_sensitivity, vol->upcase, vol->upcase_len);
 		/*
@@ -996,6 +1001,7 @@ static int ntfs_filldir(ntfs_inode *dir_ni, s64 *pos, u8 ivcn_bits,
 	FILE_NAME_ATTR *fn = &ie->key.file_name;
 	unsigned dt_type;
 	BOOL metadata;
+	ntfschar fn_name[NTFS_MAX_NAME_LEN];
 	ntfschar *loname;
 	int res;
 	MFT_REF mref;
@@ -1031,7 +1037,9 @@ static int ntfs_filldir(ntfs_inode *dir_ni, s64 *pos, u8 ivcn_bits,
 			|| (NVolShowSysFiles(dir_ni->vol) && (NVolShowHidFiles(dir_ni->vol)
 					|| metadata))) {
 		if (NVolCaseSensitive(dir_ni->vol)) {
-			res = filldir(dirent, fn->file_name,
+			memcpy(fn_name, fn->file_name,
+			       fn->file_name_length * sizeof(ntfschar));
+			res = filldir(dirent, fn_name,
 					fn->file_name_length,
 					fn->file_name_type, *pos,
 					mref, dt_type);
@@ -1945,6 +1953,7 @@ int ntfs_delete(ntfs_volume *vol, const char *pathname,
 	BOOL looking_for_dos_name = FALSE, looking_for_win32_name = FALSE;
 	BOOL case_sensitive_match = TRUE;
 	int err = 0;
+	ntfschar fn_name[NTFS_MAX_NAME_LEN];
 #if CACHE_NIDATA_SIZE
 	int i;
 #endif
@@ -2022,7 +2031,9 @@ search:
 					&& NVolCaseSensitive(ni->vol)))
 			case_sensitive = CASE_SENSITIVE;
 
-		if (ntfs_names_are_equal(fn->file_name, fn->file_name_length,
+		memcpy(fn_name, fn->file_name,
+		       fn->file_name_length * sizeof(ntfschar));
+		if (ntfs_names_are_equal(fn_name, fn->file_name_length,
 					name, name_len, case_sensitive,
 					ni->vol->upcase, ni->vol->upcase_len)){
 

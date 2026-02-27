@@ -266,6 +266,7 @@ static int ntfs_mft_load(ntfs_volume *vol)
 	int eo;
 	char *filename;
 	FILE_NAME_ATTR *fn;
+	ntfschar fn_name[NTFS_MAX_NAME_LEN];
 
 	/* Manually setup an ntfs_inode. */
 	vol->mft_ni = ntfs_inode_allocate(vol);
@@ -435,7 +436,9 @@ mft_has_no_attr_list:
 	/* Check if filename is "$MFT" */
 	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
 			le16_to_cpu(ctx->attr->value_offset));
-	filename = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
+	memcpy(fn_name, fn->file_name,
+               fn->file_name_length * sizeof(ntfschar));
+	filename = ntfs_attr_name_get(fn_name, fn->file_name_length);
 	if (!filename || strcmp(filename, "$MFT")) {
 		ntfs_log_error("filename of $MFT record is not '$MFT'(%s)\n",
 				filename);
@@ -499,6 +502,7 @@ static int ntfs_mftmirr_load(ntfs_volume *vol)
 	char *filename = NULL;
 	FILE_NAME_ATTR *fn;
 	ntfs_attr_search_ctx *ctx = NULL;
+	ntfschar fn_name[NTFS_MAX_NAME_LEN];
 
 	vol->mftmirr_ni = ntfs_inode_open(vol, FILE_MFTMirr);
 	if (!vol->mftmirr_ni) {
@@ -542,7 +546,9 @@ static int ntfs_mftmirr_load(ntfs_volume *vol)
 	/* Check if filename is "$MFTMirr" */
 	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
 			le16_to_cpu(ctx->attr->value_offset));
-	filename = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
+	memcpy(fn_name, fn->file_name,
+               fn->file_name_length * sizeof(ntfschar));
+	filename = ntfs_attr_name_get(fn_name, fn->file_name_length);
 	if (!filename || strcmp(filename, "$MFTMirr")) {
 		ntfs_log_error("filename of $MFT record is not '$MFTMirr'(%s)\n",
 				filename);

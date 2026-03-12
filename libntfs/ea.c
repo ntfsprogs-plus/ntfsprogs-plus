@@ -262,6 +262,7 @@ int ntfs_set_ntfs_ea(ntfs_inode *ni, const char *value, size_t size, int flags)
 		nextoffs = 0;
 		while (ok && (offs < size)) {
 			p_ea = (const EA_ATTR*)&value[offs];
+			const u8 *name = (const u8 *)p_ea + offsetof(EA_ATTR, name);
 			nextoffs = offs + le32_to_cpu(p_ea->next_entry_offset);
 			/* null offset to next not allowed */
 			ok = (nextoffs > offs)
@@ -277,7 +278,7 @@ int ntfs_set_ntfs_ea(ntfs_inode *ni, const char *value, size_t size, int flags)
 							+ p_ea->name_length + 1
 							+ le16_to_cpu(p_ea->value_length))
 						>= (nextoffs - 3))
-				&& !p_ea->name[p_ea->name_length];
+				&& !name[p_ea->name_length];
 			/* name not checked, as chkdsk accepts any chars */
 			if (ok) {
 				if (p_ea->flags & NEED_EA)
@@ -460,9 +461,9 @@ int ntfs_ea_check_wsldev(ntfs_inode *ni, dev_t *rdevp)
 				offset += next;
 		} while (!found && (next > 0) && (offset < lth));
 		if (found) {
+			const u8 *name = (const u8 *)p_ea + offsetof(EA_ATTR, name);
 			/* beware of alignment */
-			memcpy(&device, &p_ea->name[p_ea->name_length + 1],
-					sizeof(device));
+			memcpy(&device, name + p_ea->name_length + 1, sizeof(device));
 			*rdevp = makedev(le32_to_cpu(device.major),
 					le32_to_cpu(device.minor));
 			res = 0;

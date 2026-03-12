@@ -145,6 +145,7 @@ static u64 ntfs_fix_file_name(ntfs_inode *dir_ni, ntfschar *uname,
 		FILE_NAME_ATTR attr;
 		ntfschar file_name[NTFS_MAX_NAME_LEN + 1];
 	} find;
+	ntfschar *fn = (ntfschar *)((u8 *)&find.attr + offsetof(FILE_NAME_ATTR, file_name));
 
 	mref = (u64)-1; /* default return (not found) */
 	icx = ntfs_index_ctx_get(dir_ni, NTFS_INDEX_I30, 4);
@@ -162,9 +163,9 @@ static u64 ntfs_fix_file_name(ntfs_inode *dir_ni, ntfschar *uname,
 			 */
 			if ((cpuchar < vol->upcase_len)
 					&& (le16_to_cpu(vol->upcase[cpuchar]) < cpuchar))
-				find.attr.file_name[i] = vol->upcase[cpuchar];
+				fn[i] = vol->upcase[cpuchar];
 			else
-				find.attr.file_name[i] = uname[i];
+				fn[i] = uname[i];
 		}
 		olderrno = errno;
 		lkup = ntfs_index_lookup((char*)&find, uname_len, icx);
@@ -182,7 +183,7 @@ static u64 ntfs_fix_file_name(ntfs_inode *dir_ni, ntfschar *uname,
 		if (entry) {
 			found = &entry->key.file_name;
 			if (lkup
-					&& ntfs_names_are_equal(find.attr.file_name,
+					&& ntfs_names_are_equal(fn,
 						find.attr.file_name_length,
 						found->file_name, found->file_name_length,
 						IGNORE_CASE,

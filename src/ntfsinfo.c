@@ -2166,8 +2166,7 @@ static void ntfs_dump_attr_ea(ATTR_RECORD *attr, ntfs_volume *vol)
 		printf("\tName:\t\t '%s'\n", ea->name);
 		printf("\tValue:\t\t ");
 		if (ea->name_length == 11 &&
-				!strncmp((const char*)"SETFILEBITS",
-					(const char*)ea->name, 11)) {
+				!memcmp("SETFILEBITS", ea->name, 11)) {
 			pval = (const le32*)(ea->value + ea->name_length + 1);
 			printf("0%lo\n", (unsigned long)le32_to_cpu(*pval));
 		} else {

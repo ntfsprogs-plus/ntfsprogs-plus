@@ -1200,7 +1200,7 @@ int ntfs_inode_add_attrlist(ntfs_inode *ni)
 	}
 	/* Walk through all attributes. */
 	while (!ntfs_attr_lookup(AT_UNUSED, NULL, 0, 0, 0, NULL, 0, ctx)) {
-
+		ptrdiff_t ale_offset;
 		int ale_size;
 
 		if (ctx->attr->type == AT_ATTRIBUTE_LIST) {
@@ -1213,14 +1213,15 @@ int ntfs_inode_add_attrlist(ntfs_inode *ni)
 				ctx->attr->name_length + 7) & ~7;
 		al_len += ale_size;
 
+		ale_offset = (u8 *)ale - al;
 		aln = realloc(al, al_len);
 		if (!aln) {
 			err = errno;
 			ntfs_log_perror("Failed to realloc %d bytes", al_len);
 			goto put_err_out;
 		}
-		ale = (ATTR_LIST_ENTRY *)(aln + ((u8 *)ale - al));
 		al = aln;
+		ale = (ATTR_LIST_ENTRY *)(al + ale_offset);
 
 		memset(ale, 0, ale_size);
 

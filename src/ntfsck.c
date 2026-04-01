@@ -385,11 +385,18 @@ static void ntfsck_set_attr_lcnbmp(ntfs_attr *na)
 	actx = ntfs_attr_get_search_ctx(na->ni, NULL);
 	if (!actx)
 		return;
+
 	if (ntfs_attr_lookup(na->type, na->name, na->name_len, 0,
 				0, NULL, 0, actx)) {
 		ntfs_attr_put_search_ctx(actx);
 		return;
 	}
+
+	if (!actx->attr || !actx->attr->non_resident) {
+		ntfs_attr_put_search_ctx(actx);
+		return;
+	}
+
 	__ntfsck_check_non_resident_attr(na, actx, &rls, 1);
 	ntfs_attr_put_search_ctx(actx);
 }
@@ -402,11 +409,18 @@ static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
 	actx = ntfs_attr_get_search_ctx(na->ni, NULL);
 	if (!actx)
 		return;
+
 	if (ntfs_attr_lookup(na->type, na->name, na->name_len, 0,
 				0, NULL, 0, actx)) {
 		ntfs_attr_put_search_ctx(actx);
 		return;
 	}
+
+	if (!actx->attr || !actx->attr->non_resident) {
+		ntfs_attr_put_search_ctx(actx);
+		return;
+	}
+
 	__ntfsck_check_non_resident_attr(na, actx, &rls, 0);
 	ntfs_attr_put_search_ctx(actx);
 }
@@ -1907,6 +1921,7 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 	int not_mapped;
 	int err;
 	problem_context_t pctx = {0, };
+	BOOL shrink = FALSE;
 
 	if (!na || !na->ni)
 		return NULL;
@@ -1944,6 +1959,32 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 		if (!attr->non_resident) {
 			ntfs_log_error("attribute should be non-resident.\n");
 			continue;
+		}
+
+		/*
+		 * Non-resident attribute, but it's size is zero,
+		 * then shrink attribute for AT_DATA. (Windows behavior)
+		 *
+		 * Check if changing condition to "na->type != AT_INDEX_ALLOCATION"
+		 * instead of "na->type == AT_DATA".
+		 */
+		if (!utils_is_metadata(ni) &&
+				na->type == AT_DATA &&
+				sle64_to_cpu(attr->lowest_vcn) == 0 &&
+				sle64_to_cpu(attr->allocated_size) == 0) {
+
+			rl = malloc(sizeof(runlist_element));
+			if (!rl) {
+				ntfs_attr_put_search_ctx(actx);
+				return NULL;
+			}
+			rl[0].vcn = 0;
+			rl[0].lcn = LCN_ENOENT;
+			rl[0].length = 0;
+			na->rl = rl;
+
+			shrink = TRUE;
+			goto out;
 		}
 
 		not_mapped = 0;
@@ -2024,6 +2065,15 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 	na->rl = rl;
 
 out:
+	if (shrink == TRUE) {
+		fsck_err_found();
+
+		if (ntfs_fix_problem(vol, PR_ATTR_NON_RESIDENT_SIZES_MISMATCH, &pctx)) {
+			ntfs_non_resident_attr_shrink(na, 0);
+			fsck_err_fixed();
+		}
+	}
+
 	ntfs_attr_put_search_ctx(actx);
 	return rl;
 }
@@ -2316,14 +2366,14 @@ static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
 
 	rl = ntfsck_decompose_runlist(na, need_fix);
 	if (!rl) {
-		ntfs_log_error("Failed to get cluster run in directory(%"PRId64")",
+		ntfs_log_error("Failed to get cluster run in directory(%"PRId64")\n",
 				na->ni->mft_no);
 		return STATUS_ERROR;
 	}
 
 	if (*need_fix == TRUE) {
 		ntfs_log_error("Non-resident cluster run of inode(%"PRId64")(%02x:%"PRIu64") "
-				"corrupted. rl_size(%"PRIx64":%"PRIx64"). Truncate it",
+				"corrupted. rl_size(%"PRIx64":%"PRIx64"). Truncate it\n",
 				na->ni->mft_no, na->type, na->data_size, rls->alloc_size, rls->real_size);
 	}
 

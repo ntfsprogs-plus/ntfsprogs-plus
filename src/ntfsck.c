@@ -366,8 +366,7 @@ static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
 			 * if truncate zero, call with second parameter to 0
 			 */
 			if (ntfsck_update_runlist(na, rls->alloc_size, actx)) {
-				/* FIXME: why ntfsck_update_runlist failed? and
-				 * what should it do? */
+				/* The caller stops the current repair and leaves it unfixed. */
 				return STATUS_ERROR;
 			}
 			fsck_err_fixed();
@@ -3239,6 +3238,9 @@ static int ntfsck_set_index_bitmap(ntfs_inode *ni, ntfs_index_context *ictx,
 	s64 vcn = -1;
 	s64 pos;	/* ib index of vcn */
 	u32 bpos;	/* byte position in bitmap for ib index of vcn */
+	u32 old_size;
+	u32 new_size;
+	u8 *new_ibm;
 	int i;
 
 	if (!ictx->ib)
@@ -3257,15 +3259,18 @@ static int ntfsck_set_index_bitmap(ntfs_inode *ni, ntfs_index_context *ictx,
 	bpos = pos >> NTFSCK_BYTE_TO_BITS;
 
 	if (ictx->ni->fsck_ibm_size < bpos + 1) {
-		ictx->ni->fsck_ibm = ntfs_realloc(ictx->ni->fsck_ibm,
-				(bm_na->data_size + 8) & ~7);
-		if (!ictx->ni->fsck_ibm) {
+		old_size = ictx->ni->fsck_ibm_size;
+		new_size = (bpos + 1 + 7) & ~7U;
+		new_ibm = ntfs_realloc(ictx->ni->fsck_ibm, new_size);
+		if (!new_ibm) {
 			ntfs_log_perror("Failed to realloc fsck_ibm(%"PRId64")",
-					bm_na->data_size);
+					(s64)new_size);
 			return STATUS_ERROR;
 		}
 
-		ictx->ni->fsck_ibm_size = (bm_na->data_size + 8) & ~7;
+		ictx->ni->fsck_ibm = new_ibm;
+		memset(ictx->ni->fsck_ibm + old_size, 0, new_size - old_size);
+		ictx->ni->fsck_ibm_size = new_size;
 	}
 
 	for (i = ictx->pindex; i > 0; i--) {
@@ -3281,8 +3286,11 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 {
 	s64 ibm_size = 0;
 	s64 wcnt = 0;
+	s64 old_size;
 	u8 *ni_ibm = NULL;	/* for index bitmap reading from disk: $BITMAP */
+	u8 *new_ibm = NULL;
 	ntfs_volume *vol;
+	int ret = STATUS_OK;
 	problem_context_t pctx = {0, };
 
 	if (!ni || !ni->fsck_ibm)
@@ -3301,17 +3309,38 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 	}
 
 	if (ibm_size != ni->fsck_ibm_size) {
-		/* FIXME: if ni->fsck_ibm_size is larger than ibm_size,
-		 * it could allocate cluster in ntfs_attr_pwrite() */
 		ntfs_log_error("\nBitmap changed during check_inodes\n");
 		fsck_err_found();
+
+		if (ni->fsck_ibm_size < ibm_size) {
+			old_size = ni->fsck_ibm_size;
+			new_ibm = ntfs_realloc(ni->fsck_ibm, ibm_size);
+			if (!new_ibm) {
+				ret = STATUS_ERROR;
+				goto out;
+			}
+			ni->fsck_ibm = new_ibm;
+			memset(ni->fsck_ibm + old_size, 0, ibm_size - old_size);
+			ni->fsck_ibm_size = ibm_size;
+		}
+
 		if (ntfs_fix_problem(vol, PR_IDX_BITMAP_SIZE_MISMATCH, &pctx)) {
-			wcnt = ntfs_attr_pwrite(bm_na, 0, ni->fsck_ibm_size, ni->fsck_ibm);
-			if (wcnt == ni->fsck_ibm_size)
+			if (ni->fsck_ibm_size > ibm_size) {
+				ntfs_log_error("Refusing to grow $BITMAP of inode(%"PRIu64") "
+						"during index bitmap verification\n",
+						ni->mft_no);
+				ret = STATUS_ERROR;
+				goto out;
+			}
+
+			wcnt = ntfs_attr_pwrite(bm_na, 0, ibm_size, ni->fsck_ibm);
+			if (wcnt == ibm_size)
 				fsck_err_fixed();
-			else
+			else {
 				ntfs_log_error("Can't write $BITMAP(%"PRId64") "
 						"of inode(%"PRIu64")\n", wcnt, ni->mft_no);
+				ret = STATUS_ERROR;
+			}
 		}
 		goto out;
 	}
@@ -3346,7 +3375,7 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 out:
 	free(ni_ibm);
 
-	return STATUS_OK;
+	return ret;
 }
 
 static void ntfsck_validate_index_blocks(ntfs_volume *vol,

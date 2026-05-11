@@ -212,6 +212,7 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 static int ntfsck_check_orphan_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		FILE_NAME_ATTR *ie_fn);
 static int ntfsck_check_view_index(ntfs_inode *ni);
+static int ntfsck_check_system_inode_detail(ntfs_inode *ni);
 static int ntfsck_validate_named_index(ntfs_inode *ni,
 		ntfschar *name, u32 name_len);
 static int ntfsck_initialize_named_index_attr(ntfs_inode *ni,
@@ -221,6 +222,7 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set)
 static int ntfsck_check_attr_list(ntfs_inode *ni);
 static inline BOOL ntfsck_opened_ni_vol(s64 mft_num);
 static ntfs_inode *ntfsck_get_opened_ni_vol(ntfs_volume *vol, s64 mft_num);
+static int ntfsck_validate_system_file(ntfs_inode *ni);
 static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit);
 static void ntfsck_check_mft_records(ntfs_volume *vol);
 static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num);
@@ -3046,6 +3048,29 @@ err_out:
 	return STATUS_ERROR;
 }
 
+static int ntfsck_check_system_inode_detail(ntfs_inode *ni)
+{
+	if (!ni)
+		return STATUS_ERROR;
+
+	if (ntfsck_validate_system_file(ni))
+		return STATUS_ERROR;
+
+	switch (ni->mft_no) {
+	case FILE_MFT:
+	case FILE_MFTMirr:
+	case FILE_LogFile:
+	case FILE_AttrDef:
+	case FILE_Bitmap:
+	case FILE_Boot:
+	case FILE_BadClus:
+	case FILE_UpCase:
+		return ntfsck_check_file(ni);
+	default:
+		return STATUS_OK;
+	}
+}
+
 static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx)
 {
@@ -3076,7 +3101,9 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 			goto err_out;
 	}
 
-	/* TODO: check system file more detail respectively. */
+	ret = ntfsck_check_system_inode_detail(ni);
+	if (ret)
+		goto err_out;
 
 	ntfsck_set_mft_record_bitmap(ni, FALSE);
 	return STATUS_OK;

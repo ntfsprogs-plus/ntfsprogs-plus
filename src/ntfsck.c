@@ -290,6 +290,255 @@ static VCN ntfsck_runlist_end_vcn(const runlist *rl)
 	return rl[index].vcn;
 }
 
+struct ntfsck_attrlist_item {
+	ntfs_inode *record_ni;
+	ATTR_RECORD *attr;
+};
+
+static int ntfsck_compare_attrlist_items(ntfs_volume *vol,
+		const struct ntfsck_attrlist_item *left,
+		const struct ntfsck_attrlist_item *right)
+{
+	VCN left_lowest_vcn;
+	VCN right_lowest_vcn;
+	u16 left_instance;
+	u16 right_instance;
+	int rc;
+
+	rc = (int)le32_to_cpu(left->attr->type) -
+		(int)le32_to_cpu(right->attr->type);
+	if (rc)
+		return rc;
+
+	if (!left->attr->name_length && right->attr->name_length)
+		return -1;
+	if (left->attr->name_length && !right->attr->name_length)
+		return 1;
+	if (left->attr->name_length && right->attr->name_length) {
+		rc = ntfs_names_full_collate(
+				(ntfschar *)((u8 *)left->attr +
+				le16_to_cpu(left->attr->name_offset)),
+				left->attr->name_length,
+				(ntfschar *)((u8 *)right->attr +
+				le16_to_cpu(right->attr->name_offset)),
+				right->attr->name_length,
+				CASE_SENSITIVE,
+				vol->upcase,
+				vol->upcase_len);
+		if (rc)
+			return rc;
+	}
+
+	left_lowest_vcn = left->attr->non_resident ?
+		sle64_to_cpu(left->attr->lowest_vcn) : 0;
+	right_lowest_vcn = right->attr->non_resident ?
+		sle64_to_cpu(right->attr->lowest_vcn) : 0;
+	if (left_lowest_vcn < right_lowest_vcn)
+		return -1;
+	if (left_lowest_vcn > right_lowest_vcn)
+		return 1;
+
+	left_instance = left_lowest_vcn ? 0 : le16_to_cpu(left->attr->instance);
+	right_instance = right_lowest_vcn ? 0 : le16_to_cpu(right->attr->instance);
+	if (left_instance < right_instance)
+		return -1;
+	if (left_instance > right_instance)
+		return 1;
+
+	if (left->record_ni->mft_no < right->record_ni->mft_no)
+		return -1;
+	if (left->record_ni->mft_no > right->record_ni->mft_no)
+		return 1;
+
+	return 0;
+}
+
+static void ntfsck_sort_attrlist_items(ntfs_volume *vol,
+		struct ntfsck_attrlist_item *items, size_t count)
+{
+	size_t index;
+
+	for (index = 1; index < count; index++) {
+		struct ntfsck_attrlist_item item = items[index];
+		size_t sort_index = index;
+
+		while (sort_index > 0 &&
+				ntfsck_compare_attrlist_items(vol,
+					&items[sort_index - 1], &item) > 0) {
+			items[sort_index] = items[sort_index - 1];
+			sort_index--;
+		}
+		items[sort_index] = item;
+	}
+}
+
+static int ntfsck_collect_attrlist_items(ntfs_inode *base_ni,
+		struct ntfsck_attrlist_item **items, size_t *item_count)
+{
+	struct ntfsck_attrlist_item *collected = NULL;
+	size_t capacity = 0;
+	size_t count = 0;
+	int extent_index;
+
+	if (!base_ni || !items || !item_count)
+		return STATUS_ERROR;
+
+	for (extent_index = -1; extent_index < base_ni->nr_extents;
+			extent_index++) {
+		ntfs_attr_search_ctx *ctx;
+		ntfs_inode *record_ni;
+		int ret;
+
+		record_ni = extent_index < 0 ? base_ni :
+			base_ni->extent_nis[extent_index];
+		ctx = ntfs_attr_get_search_ctx(record_ni, NULL);
+		if (!ctx)
+			goto err_out;
+
+		while (!(ret = ntfs_attrs_walk(ctx))) {
+			struct ntfsck_attrlist_item *new_items;
+
+			if (ctx->attr->type == AT_ATTRIBUTE_LIST)
+				continue;
+
+			if (count == capacity) {
+				size_t new_capacity = capacity ? capacity * 2 : 16;
+
+				new_items = realloc(collected,
+						new_capacity * sizeof(*collected));
+				if (!new_items) {
+					ntfs_attr_put_search_ctx(ctx);
+					goto err_out;
+				}
+				collected = new_items;
+				capacity = new_capacity;
+			}
+
+			collected[count].record_ni = record_ni;
+			collected[count].attr = ctx->attr;
+			count++;
+		}
+
+		ntfs_attr_put_search_ctx(ctx);
+		if (ret && errno != ENOENT)
+			goto err_out;
+	}
+
+	*items = collected;
+	*item_count = count;
+	return STATUS_OK;
+
+err_out:
+	free(collected);
+	return STATUS_ERROR;
+}
+
+static int ntfsck_rebuild_attr_list(ntfs_inode *ni)
+{
+	struct ntfsck_attrlist_item *items = NULL;
+	ntfs_inode *base_ni;
+	ntfs_attr *na = NULL;
+	u8 *new_al = NULL;
+	u32 new_al_len = 0;
+	size_t item_count = 0;
+	size_t index;
+	size_t offset = 0;
+	int ret = STATUS_ERROR;
+
+	if (!ni)
+		return STATUS_ERROR;
+
+	base_ni = ni->nr_extents == -1 ? ni->base_ni : ni;
+	if (!base_ni || !NInoAttrList(base_ni) || !base_ni->attr_list)
+		return STATUS_ERROR;
+
+	if (base_ni->nr_extents > 0 && !base_ni->extent_nis)
+		return STATUS_ERROR;
+
+	if (ntfsck_collect_attrlist_items(base_ni, &items, &item_count))
+		goto out;
+
+	if (!item_count) {
+		ntfs_log_error("No attributes available to rebuild attrlist of "
+				"inode(%"PRIu64")\n", base_ni->mft_no);
+		goto out;
+	}
+
+	ntfsck_sort_attrlist_items(base_ni->vol, items, item_count);
+
+	for (index = 0; index < item_count; index++) {
+		u32 entry_len;
+
+		entry_len = (offsetof(ATTR_LIST_ENTRY, name) +
+				items[index].attr->name_length * sizeof(ntfschar) + 7) & ~7;
+		if (new_al_len > 0x40000U - entry_len) {
+			ntfs_log_error("Rebuilt attrlist of inode(%"PRIu64") is too large\n",
+					base_ni->mft_no);
+			goto out;
+		}
+		new_al_len += entry_len;
+	}
+
+	new_al = ntfs_calloc(new_al_len);
+	if (!new_al)
+		goto out;
+
+	for (index = 0; index < item_count; index++) {
+		ATTR_LIST_ENTRY *entry = (ATTR_LIST_ENTRY *)(new_al + offset);
+		ATTR_RECORD *attr = items[index].attr;
+		u32 entry_len = (offsetof(ATTR_LIST_ENTRY, name) +
+				attr->name_length * sizeof(ntfschar) + 7) & ~7;
+
+		entry->type = attr->type;
+		entry->length = cpu_to_le16(entry_len);
+		entry->name_length = attr->name_length;
+		entry->name_offset = offsetof(ATTR_LIST_ENTRY, name);
+		entry->lowest_vcn = attr->non_resident ?
+			attr->lowest_vcn : const_cpu_to_sle64(0);
+		entry->mft_reference = MK_LE_MREF(items[index].record_ni->mft_no,
+				le16_to_cpu(items[index].record_ni->mrec->sequence_number));
+		entry->instance = attr->non_resident && sle64_to_cpu(attr->lowest_vcn) ?
+			const_cpu_to_le16(0) : attr->instance;
+		if (attr->name_length)
+			memcpy(entry->name,
+					(u8 *)attr + le16_to_cpu(attr->name_offset),
+					attr->name_length * sizeof(ntfschar));
+		offset += entry_len;
+	}
+
+	na = ntfs_attr_open(base_ni, AT_ATTRIBUTE_LIST, AT_UNNAMED, 0);
+	if (!na)
+		goto out;
+
+	if (ntfs_attr_truncate(na, new_al_len)) {
+		ntfs_log_perror("Failed to resize attrlist of inode(%"PRIu64")",
+				base_ni->mft_no);
+		goto out;
+	}
+
+	if (ntfs_attr_pwrite(na, 0, new_al_len, new_al) != new_al_len) {
+		ntfs_log_perror("Failed to rewrite attrlist of inode(%"PRIu64")",
+				base_ni->mft_no);
+		goto out;
+	}
+
+	free(base_ni->attr_list);
+	base_ni->attr_list = new_al;
+	base_ni->attr_list_size = new_al_len;
+	NInoSetAttrList(base_ni);
+	NInoAttrListSetDirty(base_ni);
+	ntfs_inode_mark_dirty(base_ni);
+	new_al = NULL;
+	ret = STATUS_OK;
+
+out:
+	if (na)
+		ntfs_attr_close(na);
+	free(new_al);
+	free(items);
+	return ret;
+}
+
 /* update lcn bitmap to disk, not set in fsck lcn bitmap */
 static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 {
@@ -1986,6 +2235,7 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 	VCN next_vcn, last_vcn, highest_vcn;
 	ATTR_RECORD *attr = NULL;
 	runlist *rl = NULL;
+	BOOL rebuilt_attr_list = FALSE;
 	int not_mapped;
 	int err;
 	problem_context_t pctx = {0, };
@@ -2114,7 +2364,24 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 		if (next_vcn < sle64_to_cpu(attr->lowest_vcn)) {
 			ntfs_log_error("Inode %"PRIu64"has corrupt attribute list\n",
 					ni->mft_no);
-			/* TODO: how attribute list repair ?? */
+			if (!rebuilt_attr_list) {
+				pctx.ctx = actx;
+				fsck_err_found();
+				if (ntfs_fix_problem(vol, PR_ATTRLIST_REBUILD, &pctx) &&
+						!ntfsck_rebuild_attr_list(ni)) {
+					fsck_err_fixed();
+					rebuilt_attr_list = TRUE;
+					free(rl);
+					rl = NULL;
+					na->rl = NULL;
+					ntfs_attr_put_search_ctx(actx);
+					actx = ntfs_attr_get_search_ctx(ni, NULL);
+					if (!actx)
+						return NULL;
+					next_vcn = last_vcn = highest_vcn = 0;
+					continue;
+				}
+			}
 			err = EIO;
 			break;
 		}

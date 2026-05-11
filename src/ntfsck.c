@@ -2811,8 +2811,9 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 	ATTR_TYPES type;
 	ATTR_LIST_ENTRY *al_entry;
 	ATTR_LIST_ENTRY *next_al_entry;
-	u16 al_length = 0;
-	u16 al_real_length = 0;
+	u32 al_length = 0;
+	u32 al_real_length = 0;
+	u32 remaining;
 	u8 *al_start;
 	u8 *al_end;
 	u8 *next_al_end = 0;
@@ -2829,6 +2830,10 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 	al_entry = (ATTR_LIST_ENTRY *)ni->attr_list;
 
 	do {
+		remaining = al_end - (u8 *)al_entry;
+		if (remaining < sizeof(ATTR_LIST_ENTRY))
+			break;
+
 		type = al_entry->type;
 
 		if (type != AT_STANDARD_INFORMATION &&
@@ -2853,16 +2858,23 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 		}
 
 		al_length = le16_to_cpu(al_entry->length);
-		if (al_length == 0 || al_length & 7) {
+		if (al_length < sizeof(ATTR_LIST_ENTRY) || al_length & 7) {
 			ret = STATUS_ERROR;
 			goto out;
 		}
+
+		if (remaining < al_length)
+			break;
 
 		al_real_length += al_length;
 		next_al_entry =
 			(ATTR_LIST_ENTRY *)((u8 *)al_entry + al_length);
 
 		if ((u8 *)next_al_entry >= al_end)
+			break;
+
+		remaining = al_end - (u8 *)next_al_entry;
+		if (remaining < sizeof(ATTR_LIST_ENTRY))
 			break;
 
 		next_al_end = (u8 *)next_al_entry + le16_to_cpu(next_al_entry->length);

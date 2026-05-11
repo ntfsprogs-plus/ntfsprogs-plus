@@ -2988,8 +2988,11 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		goto err_out;
 
 	if (ni->attr_list) {
-		ntfsck_check_attr_list(ni);
-		ntfs_inode_attach_all_extents(ni);
+		if (ntfsck_check_attr_list(ni))
+			goto err_out;
+
+		if (ntfs_inode_attach_all_extents(ni))
+			goto err_out;
 	}
 
 	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
@@ -4249,7 +4252,15 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 			goto check_trivial;
 		}
 
-		ntfs_inode_attach_all_extents(sys_ni);
+		if (sys_ni->attr_list && ntfsck_check_attr_list(sys_ni)) {
+			ntfsck_close_inode(sys_ni);
+			goto check_trivial;
+		}
+
+		if (ntfs_inode_attach_all_extents(sys_ni)) {
+			ntfsck_close_inode(sys_ni);
+			goto check_trivial;
+		}
 		ntfsck_set_mft_record_bitmap(sys_ni, FALSE);
 
 		/* do not check any more about reserved inode */

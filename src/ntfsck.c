@@ -368,7 +368,6 @@ static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
 			if (ntfsck_update_runlist(na, rls->alloc_size, actx)) {
 				/* FIXME: why ntfsck_update_runlist failed? and
 				 * what should it do? */
-				fsck_err_fixed();
 				return STATUS_ERROR;
 			}
 			fsck_err_fixed();
@@ -2400,17 +2399,20 @@ static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size, ntfs_attr_search_c
 {
 	ntfs_inode *ni;
 	u32 backup_attr_list_size = 0;
+	s64 backup_allocated_size;
 
 	if (!na->ni)
 		return STATUS_ERROR;
 
 	ni = na->ni;
+	backup_allocated_size = na->allocated_size;
 	if (NInoAttrList(ni))
 		backup_attr_list_size = ni->attr_list_size;
 
 	/* apply rl to disk */
 	na->allocated_size = new_size;
 	if (ntfs_attr_update_mapping_pairs(na, 0)) {
+		na->allocated_size = backup_allocated_size;
 		ntfs_log_error("Failed to update mapping pairs of "
 				"inode(%"PRIu64")\n", ni->mft_no);
 		return STATUS_ERROR;

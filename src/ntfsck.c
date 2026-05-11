@@ -2580,7 +2580,7 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 
 	/* $INDEX_ALLOCATION is always non-resident */
 	if (!NAttrNonResident(ia_na)) {
-		/* TODO: check $BITMAP, if exist, remove bitmap and ia */
+		/* Reinitialize both $IA and $BITMAP when $IA is resident. */
 		ret = STATUS_ERROR;
 		goto init_all;
 	}
@@ -2630,8 +2630,10 @@ init_all:
 	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, NULL, NULL, NULL);
 	fsck_err_found();
 	if (ntfs_fix_problem(ni->vol, PR_DIR_HAVE_RESIDENT_IA, &pctx)) {
-		ntfsck_initialize_index_attr(ni);
-		fsck_err_fixed();
+		if (!ntfsck_initialize_index_attr(ni)) {
+			ret = STATUS_OK;
+			fsck_err_fixed();
+		}
 	}
 
 	return ret;
@@ -4147,8 +4149,12 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 	case FILE_Secure:
 	case FILE_UpCase:
 	case FILE_Extend:
-		/* TODO: check sub-directory */
-		ntfsck_check_inode_non_resident(ni, 1);
+		if (ntfsck_check_inode_non_resident(ni, 1))
+			return -EIO;
+
+		if ((ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) &&
+				ntfsck_check_directory(ni))
+			return -EIO;
 		break;
 	case FILE_Bitmap:
 		s64 max_lcnbmp_size;
@@ -4213,7 +4219,9 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	ntfs_inode *sys_ni, *root_ni;
 	ntfs_attr_search_ctx *root_ctx, *sys_ctx;
 	ntfs_index_context *ictx;
+	INDEX_ENTRY *ie;
 	FILE_NAME_ATTR *fn;
+	FILE_NAME_ATTR *ie_fn;
 	s64 mft_num;
 	int ret = STATUS_ERROR;
 	int is_used;
@@ -4339,9 +4347,17 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 			ntfsck_close_inode(sys_ni);
 			goto check_trivial;
 		}
+
+		ie = ictx->entry;
+		ie_fn = (FILE_NAME_ATTR *)&ie->key.file_name;
 		ntfs_attr_put_search_ctx(sys_ctx);
 
-		/* TODO: Validate index entry of system file */
+		if (ntfsck_check_inode_fields(root_ni, sys_ni, ie) ||
+				ntfsck_check_file_type(sys_ni, ictx, ie_fn) < 0 ||
+				ntfsck_check_file_name_attr(sys_ni, ie_fn, ictx) < 0) {
+			ntfsck_close_inode(sys_ni);
+			goto check_trivial;
+		}
 
 		ntfs_index_ctx_reinit(ictx);
 		if (ntfsck_opened_ni_vol(mft_num) == TRUE)

@@ -736,6 +736,55 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	return STATUS_OK;
 }
 
+static int ntfsck_add_filename_to_parent(ntfs_volume *vol,
+		ntfs_inode *parent_ni, ntfs_inode *ni, FILE_NAME_ATTR *fn)
+{
+	FILE_NAME_ATTR *tfn;
+	int tfn_len;
+	int ret;
+
+	if (!vol || !parent_ni || !ni || !fn)
+		return STATUS_ERROR;
+
+	tfn_len = sizeof(FILE_NAME_ATTR) +
+		fn->file_name_length * sizeof(ntfschar);
+	tfn = ntfs_calloc(tfn_len);
+	if (!tfn)
+		return STATUS_ERROR;
+
+	memcpy(tfn, fn, tfn_len);
+	tfn->parent_directory = MK_LE_MREF(parent_ni->mft_no,
+			le16_to_cpu(parent_ni->mrec->sequence_number));
+
+	ret = ntfs_index_add_filename(parent_ni, tfn,
+			MK_MREF(ni->mft_no,
+			le16_to_cpu(ni->mrec->sequence_number)));
+	if (ret) {
+		ntfs_log_error("Failed to add index(%"PRIu64") to parent(%"PRIu64") "
+				"err(%d)\n", ni->mft_no, parent_ni->mft_no, ret);
+		free(tfn);
+		return STATUS_ERROR;
+	}
+
+	if (parent_ni->attr_list) {
+		if (ntfsck_check_attr_list(parent_ni) ||
+				ntfs_inode_attach_all_extents(parent_ni)) {
+			free(tfn);
+			return STATUS_ERROR;
+		}
+	}
+
+	ntfsck_set_mft_record_bitmap(parent_ni, TRUE);
+	ntfs_inode_mark_dirty(parent_ni);
+
+	ret = ntfsck_find_and_check_index(parent_ni, ni, tfn, TRUE);
+	free(tfn);
+	if (ret != STATUS_OK)
+		return STATUS_ERROR;
+
+	return STATUS_OK;
+}
+
 static int ntfsck_add_inode_to_lostfound(ntfs_inode *ni, FILE_NAME_ATTR *fn,
 		ntfs_attr_search_ctx *ctx)
 {
@@ -4339,13 +4388,40 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 		ret = ntfs_index_lookup(fn,
 				le32_to_cpu(sys_ctx->attr->value_length), ictx);
 		if (ret) {
-			/* TODO: add index filename to root?? not return error */
+			problem_context_t pctx = {0, };
+			int lookup_err = errno;
 
-			ntfs_log_error("There's no system file entry"
-					"(%"PRId64") in root\n", mft_num);
-			ntfs_attr_put_search_ctx(sys_ctx);
-			ntfsck_close_inode(sys_ni);
-			goto check_trivial;
+			if (lookup_err != ENOENT) {
+				ntfs_log_error("Failed to lookup system file entry"
+						"(%"PRId64") in root\n", mft_num);
+				ntfs_attr_put_search_ctx(sys_ctx);
+				ntfsck_close_inode(sys_ni);
+				goto check_trivial;
+			}
+
+			ntfs_init_problem_ctx(&pctx, sys_ni, NULL, NULL,
+					ictx, NULL, NULL, fn);
+			fsck_err_found();
+			if (!ntfs_fix_problem(vol,
+					PR_ROOT_MISSING_SYSTEM_FILE_ENTRY, &pctx) ||
+					ntfsck_add_filename_to_parent(vol, root_ni,
+						sys_ni, fn)) {
+				ntfs_attr_put_search_ctx(sys_ctx);
+				ntfsck_close_inode(sys_ni);
+				goto check_trivial;
+			}
+
+			ntfs_index_ctx_reinit(ictx);
+			ret = ntfs_index_lookup(fn,
+					le32_to_cpu(sys_ctx->attr->value_length), ictx);
+			if (ret) {
+				ntfs_log_error("Failed to restore system file entry"
+						"(%"PRId64") in root\n", mft_num);
+				ntfs_attr_put_search_ctx(sys_ctx);
+				ntfsck_close_inode(sys_ni);
+				goto check_trivial;
+			}
+			fsck_err_fixed();
 		}
 
 		ie = ictx->entry;

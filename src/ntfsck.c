@@ -277,6 +277,19 @@ static int ntfsck_close_inode_in_dir(ntfs_inode *ni, ntfs_inode *dir_ni)
 	return res;
 }
 
+static VCN ntfsck_runlist_end_vcn(const runlist *rl)
+{
+	int index = 0;
+
+	if (!rl)
+		return 0;
+
+	while (rl[index].length)
+		index++;
+
+	return rl[index].vcn;
+}
+
 /* update lcn bitmap to disk, not set in fsck lcn bitmap */
 static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 {
@@ -2082,10 +2095,11 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 				break;
 			}
 
-			/* TODO: last_vcn value should be recalculated */
-			/* Get the last vcn in the attribute. */
-			last_vcn = sle64_to_cpu(attr->allocated_size) >>
-				vol->cluster_size_bits;
+			/*
+			 * Compare highest_vcn against the decoded runlist instead of
+			 * trusting the first extent's allocated_size field.
+			 */
+			last_vcn = ntfsck_runlist_end_vcn(rl);
 		}
 
 		highest_vcn = sle64_to_cpu(attr->highest_vcn);
@@ -2108,6 +2122,9 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 
 	if (err == ENOENT)
 		NAttrSetFullyMapped(na);
+
+	if (rl)
+		last_vcn = ntfsck_runlist_end_vcn(rl);
 
 	if (highest_vcn != last_vcn - 1) {
 		ntfs_log_error("highest_vcn and last_vcn of attr(%x) "

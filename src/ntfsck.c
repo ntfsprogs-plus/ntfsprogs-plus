@@ -4326,9 +4326,14 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 	s64 rcnt, wcnt;
 	u8 *disk_bm;
 	u8 *fsck_bm;
+	u8 *dbmb;
+	u8 *fbmb;
+	s64 word_count;
+	s64 tail_bytes;
 	unsigned long i;
 	unsigned long *dbml;
 	unsigned long *fbml;
+	int ret = STATUS_OK;
 	problem_context_t pctx = {0, };
 
 	if (na != vol->lcnbmp_na && na != vol->mftbmp_na)
@@ -4354,11 +4359,13 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 		rcnt = ntfs_attr_pread(na, pos, count, disk_bm);
 		if (rcnt == STATUS_ERROR) {
 			ntfs_log_error("Couldn't get $Bitmap $DATA");
+			ret = STATUS_ERROR;
 			break;
 		}
 
 		if (rcnt != count) {
 			ntfs_log_error("Couldn't get $Bitmap, read count error\n");
+			ret = STATUS_ERROR;
 			break;
 		}
 
@@ -4368,7 +4375,9 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 			goto next;
 
 		/* ondisk lcnbmp OR fsck lcnbmp */
-		for (i = 0; i < (count / sizeof(unsigned long)); i++) {
+		word_count = count / sizeof(unsigned long);
+		tail_bytes = count % sizeof(unsigned long);
+		for (i = 0; i < word_count; i++) {
 			dbml = (unsigned long *)disk_bm + i;
 			fbml = (unsigned long *)fsck_bm + i;
 			if (*dbml != *fbml) {
@@ -4387,6 +4396,11 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 #endif
 			}
 		}
+
+		dbmb = disk_bm + (word_count * sizeof(unsigned long));
+		fbmb = fsck_bm + (word_count * sizeof(unsigned long));
+		for (i = 0; i < tail_bytes; i++)
+			dbmb[i] |= fbmb[i];
 
 		if (wtype == FSCK_BMP_FINAL)
 			fsck_err_found();
@@ -4419,7 +4433,7 @@ next:
 	}
 
 	free(disk_bm);
-	return STATUS_OK;
+	return ret;
 }
 
 static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
@@ -4431,10 +4445,12 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 
 	fsck_start_step("Check orphaned mft...");
 
-	ntfsck_apply_bitmap(vol, vol->lcnbmp_na,
-			ntfs_fsck_find_lcnbmp_block, FSCK_BMP_INITIAL);
-	ntfsck_apply_bitmap(vol, vol->mftbmp_na,
-			ntfs_fsck_find_mftbmp_block, FSCK_BMP_INITIAL);
+	if (ntfsck_apply_bitmap(vol, vol->lcnbmp_na,
+			ntfs_fsck_find_lcnbmp_block, FSCK_BMP_INITIAL))
+		return STATUS_ERROR;
+	if (ntfsck_apply_bitmap(vol, vol->mftbmp_na,
+			ntfs_fsck_find_mftbmp_block, FSCK_BMP_INITIAL))
+		return STATUS_ERROR;
 
 	progress_init(&prog, 0, orphan_cnt + 1, 1000, pb_flags);
 
@@ -4477,10 +4493,12 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 		}
 	}
 
-	ntfsck_apply_bitmap(vol, vol->lcnbmp_na,
-			ntfs_fsck_find_lcnbmp_block, FSCK_BMP_FINAL);
-	ntfsck_apply_bitmap(vol, vol->mftbmp_na,
-			ntfs_fsck_find_mftbmp_block, FSCK_BMP_FINAL);
+	if (ntfsck_apply_bitmap(vol, vol->lcnbmp_na,
+			ntfs_fsck_find_lcnbmp_block, FSCK_BMP_FINAL))
+		return STATUS_ERROR;
+	if (ntfsck_apply_bitmap(vol, vol->mftbmp_na,
+			ntfs_fsck_find_mftbmp_block, FSCK_BMP_FINAL))
+		return STATUS_ERROR;
 
 	fsck_end_step();
 	return STATUS_OK;

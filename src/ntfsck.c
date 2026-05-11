@@ -3007,12 +3007,12 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	}
 
 	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
-		goto err_out;
+		goto remove_index_out;
 
 	/* Check file type */
 	flags = ntfsck_check_file_type(ni, ictx, ie_fn);
 	if (flags < 0)
-		goto err_out;
+		goto remove_index_out;
 
 	if (flags & FILE_ATTR_I30_INDEX_PRESENT) {
 		ret = ntfsck_check_directory(ni);
@@ -3031,11 +3031,15 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	/* check $FILE_NAME */
 	ret = ntfsck_check_file_name_attr(ni, ie_fn, ictx);
 	if (ret < 0)
-		goto err_out;
+		goto remove_index_out;
 
 	/* FALSE or TRUE? */
 	ntfsck_set_mft_record_bitmap(ni, FALSE);
 	return STATUS_OK;
+
+remove_index_out:
+	ntfsck_check_inode_non_resident(ni, 0);
+	return STATUS_NOT_FOUND;
 
 err_out:
 	ntfsck_check_inode_non_resident(ni, 0);
@@ -3228,7 +3232,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			ret = ntfsck_check_system_inode(ni, ie, ictx);
 		} else {
 			ret = ntfsck_check_inode(ni, ie, ictx);
-			if (ret) {
+			if (ret == STATUS_NOT_FOUND) {
 				ntfs_log_error("Failed to check inode(%"PRIu64") "
 						"in parent(%"PRIu64") index.\n",
 						ni->mft_no, ictx->ni->mft_no);
@@ -3236,11 +3240,17 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 				NInoFileNameClearDirty(ni);
 				NInoAttrListClearDirty(ni);
 				NInoClearDirty(ni);
-				/* TODO: distinguish delete or not, as error type */
 
 				/* Do not clear bitmap on disk */
 				ntfsck_close_inode(ni);
 				goto remove_index;
+			} else if (ret) {
+				ntfs_log_error("Failed to validate inode(%"PRIu64") "
+						"from parent(%"PRIu64") without deleting its "
+						"index entry.\n",
+						ni->mft_no, ictx->ni->mft_no);
+				ntfsck_close_inode(ni);
+				goto err_out;
 			}
 		}
 

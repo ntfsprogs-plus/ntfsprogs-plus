@@ -211,6 +211,7 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		FILE_NAME_ATTR *ie_fn);
 static int ntfsck_check_orphan_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		FILE_NAME_ATTR *ie_fn);
+static int ntfsck_check_extend_inode(ntfs_inode *ni);
 static int ntfsck_check_view_index(ntfs_inode *ni);
 static int ntfsck_check_system_inode_detail(ntfs_inode *ni);
 static int ntfsck_validate_named_index(ntfs_inode *ni,
@@ -3024,6 +3025,10 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ret = ntfsck_check_view_index(ni);
 		if (ret)
 			goto err_out;
+	} else if (ni->mrec->flags & MFT_RECORD_IS_4) {
+		ret = ntfsck_check_extend_inode(ni);
+		if (ret)
+			goto err_out;
 	} else {
 		ret = ntfsck_check_file(ni);
 		if (ret)
@@ -3069,6 +3074,54 @@ static int ntfsck_check_system_inode_detail(ntfs_inode *ni)
 	default:
 		return STATUS_OK;
 	}
+}
+
+static int ntfsck_check_extend_inode(ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *ctx;
+	BOOL has_data = FALSE;
+	BOOL has_logged_stream = FALSE;
+	BOOL has_unnamed_data = FALSE;
+	int ret;
+
+	if (!ni)
+		return STATUS_ERROR;
+
+	if (ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_Q, 2) ||
+			ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_O, 2) ||
+			ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_R, 2))
+		return ntfsck_check_view_index(ni);
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return STATUS_ERROR;
+
+	while (!(ret = ntfs_attrs_walk(ctx))) {
+		if (ctx->attr->type == AT_DATA) {
+			has_data = TRUE;
+			if (!ctx->attr->name_length)
+				has_unnamed_data = TRUE;
+		} else if (ctx->attr->type == AT_LOGGED_UTILITY_STREAM) {
+			has_logged_stream = TRUE;
+		}
+	}
+
+	if (ret == -1 && errno == ENOENT)
+		ret = STATUS_OK;
+
+	ntfs_attr_put_search_ctx(ctx);
+	if (ret)
+		return STATUS_ERROR;
+
+	if (has_unnamed_data)
+		return ntfsck_check_file(ni);
+
+	if (has_data || has_logged_stream)
+		return STATUS_OK;
+
+	ntfs_log_error("$Extend sub-file inode(%"PRIu64") has no data or "
+			"logged utility stream\n", ni->mft_no);
+	return STATUS_ERROR;
 }
 
 static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
@@ -3141,7 +3194,9 @@ static int ntfsck_check_orphan_inode(ntfs_inode *parent_ni, ntfs_inode *ni)
 		if (ret)
 			goto err_out;
 	} else if (ni->mrec->flags & MFT_RECORD_IS_4) {
-		/* TODO: check $Extend sub-files */
+		ret = ntfsck_check_extend_inode(ni);
+		if (ret)
+			goto err_out;
 	} else {
 		ret = ntfsck_check_file(ni);
 		if (ret)

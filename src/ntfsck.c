@@ -211,6 +211,11 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		FILE_NAME_ATTR *ie_fn);
 static int ntfsck_check_orphan_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		FILE_NAME_ATTR *ie_fn);
+static int ntfsck_check_view_index(ntfs_inode *ni);
+static int ntfsck_validate_named_index(ntfs_inode *ni,
+		ntfschar *name, u32 name_len);
+static int ntfsck_initialize_named_index_attr(ntfs_inode *ni,
+		ntfschar *name, u32 name_len);
 static int ntfsck_initialize_index_attr(ntfs_inode *ni);
 static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set);
 static int ntfsck_check_attr_list(ntfs_inode *ni);
@@ -2302,10 +2307,11 @@ out:
 }
 
 /*
- * Remove $IA/$BITMAP, and initialize $IR attribute for repairing.
- * This function should be called $IA or $BITMAP attribute is corrupted.
+ * Remove $IA/$BITMAP, and initialize $IR attribute for repairing. This
+ * function should be called when index attributes are corrupted.
  */
-static int ntfsck_initialize_index_attr(ntfs_inode *ni)
+static int ntfsck_initialize_named_index_attr(ntfs_inode *ni,
+		ntfschar *name, u32 name_len)
 {
 	ntfs_attr *bm_na = NULL;
 	ntfs_attr *ia_na = NULL;
@@ -2315,7 +2321,7 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 	/*
 	 * Remove both ia attr and bitmap attr and recreate them.
 	 */
-	ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4);
+	ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, name, name_len);
 	if (ia_na) {
 		/* clear fsck cluster(lcn) bitmap */
 		ntfsck_clear_attr_lcnbmp(ia_na);
@@ -2329,7 +2335,7 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 		ia_na = NULL;
 	}
 
-	bm_na = ntfs_attr_open(ni, AT_BITMAP, NTFS_INDEX_I30, 4);
+	bm_na = ntfs_attr_open(ni, AT_BITMAP, name, name_len);
 	if (bm_na) {
 		if (ntfs_attr_rm(bm_na)) {
 			ntfs_log_error("Failed to remove $BITMAP attr. of "
@@ -2340,9 +2346,10 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 		bm_na = NULL;
 	}
 
-	ir_na = ntfs_attr_open(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4);
+	ir_na = ntfs_attr_open(ni, AT_INDEX_ROOT, name, name_len);
 	if (!ir_na) {
-		ntfs_log_verbose("Can't open $IR attribute from mft(%"PRIu64") entry\n",
+		ntfs_log_verbose("Can't open index root attribute from mft(%"PRIu64") "
+				"entry\n",
 				ni->mft_no);
 		goto out;
 	}
@@ -2355,7 +2362,7 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 		int index_len =
 			sizeof(INDEX_HEADER) + sizeof(INDEX_ENTRY_HEADER);
 
-		ir = ntfs_ir_lookup2(ni, NTFS_INDEX_I30, 4);
+		ir = ntfs_ir_lookup2(ni, name, name_len);
 		if (!ir)
 			goto out;
 
@@ -2386,6 +2393,11 @@ out:
 	if (bm_na)
 		ntfs_attr_close(bm_na);
 	return ret;
+}
+
+static int ntfsck_initialize_index_attr(ntfs_inode *ni)
+{
+	return ntfsck_initialize_named_index_attr(ni, NTFS_INDEX_I30, 4);
 }
 
 /*
@@ -3007,7 +3019,9 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		if (ret)
 			goto err_out;
 	} else if (flags & FILE_ATTR_VIEW_INDEX_PRESENT) {
-		/* TODO: check view index */
+		ret = ntfsck_check_view_index(ni);
+		if (ret)
+			goto err_out;
 	} else {
 		ret = ntfsck_check_file(ni);
 		if (ret)
@@ -3050,13 +3064,13 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 
 	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
 		ret = ntfsck_check_directory(ni);
+		if (ret)
+			goto err_out;
+	} else if (ni->mrec->flags & MFT_RECORD_IS_VIEW_INDEX) {
+		ret = ntfsck_check_view_index(ni);
+		if (ret)
+			goto err_out;
 	}
-
-	/* TODO: check index
-	if (ni->mrec->flags & MFT_RECORD_IS_VIEW_INDEX) {
-		ret = ntfsck_check_index(ni);
-	}
-	*/
 
 	/* TODO: check system file more detail respectively. */
 
@@ -3092,7 +3106,9 @@ static int ntfsck_check_orphan_inode(ntfs_inode *parent_ni, ntfs_inode *ni)
 		if (ret)
 			goto err_out;
 	} else if (ni->mrec->flags & MFT_RECORD_IS_VIEW_INDEX) {
-		/* TODO: check view index */
+		ret = ntfsck_check_view_index(ni);
+		if (ret)
+			goto err_out;
 	} else if (ni->mrec->flags & MFT_RECORD_IS_4) {
 		/* TODO: check $Extend sub-files */
 	} else {
@@ -3432,6 +3448,7 @@ out:
 static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		ntfs_index_context *ictx)
 {
+	problem_code_t init_problem = PR_INDEX_INITIALIZE;
 	ntfs_attr *bmp_na = NULL;
 	INDEX_ALLOCATION *ia;
 	INDEX_ENTRY *ie;
@@ -3506,8 +3523,8 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 			}
 		}
 
-		/* The file name must not overflow from the entry */
-		if (ntfs_index_entry_inconsistent(vol, ie, COLLATION_FILE_NAME,
+		/* The index key must not overflow from the entry. */
+		if (ntfs_index_entry_inconsistent(vol, ie, ictx->ir->collation_rule,
 					ni->mft_no, NULL) < 0) {
 			ntfs_log_error("Index entry(%p) of inode(%"PRIu64
 					") is inconsistent\n", ie, ni->mft_no);
@@ -3595,14 +3612,14 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 			if (((u8 *)ie < (u8 *)ia) ||
 					((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end) ||
 					((u8 *)ie + le16_to_cpu(ie->length) > index_end)) {
-				ntfs_log_error("Index entry out of bounds in directory inode "
+				ntfs_log_error("Index entry out of bounds in inode "
 						"(%"PRId64")\n", ni->mft_no);
 				goto initialize_index;
 			}
 
-			/* The file name must not overflow from the entry */
+			/* The index key must not overflow from the entry. */
 			if (ntfs_index_entry_inconsistent(vol, ie,
-						COLLATION_FILE_NAME, ni->mft_no, NULL)) {
+						ictx->ir->collation_rule, ni->mft_no, NULL)) {
 				ntfs_log_error("Index entry(%p) of inode(%"PRIu64
 						") is inconsistent\n", ie, ni->mft_no);
 				goto initialize_index;
@@ -3639,15 +3656,20 @@ out:
 
 initialize_index:
 
+	if (ictx->name_len == 4 &&
+			!memcmp(ictx->name, NTFS_INDEX_I30, 4 * sizeof(ntfschar)))
+		init_problem = PR_DIR_IDX_INITIALIZE;
+
 	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec, NULL, NULL);
 	fsck_err_found();
-	if (!ntfs_fix_problem(vol, PR_DIR_IDX_INITIALIZE, &pctx))
+	if (!ntfs_fix_problem(vol, init_problem, &pctx))
 		goto out;
 
-	if (ni->mft_no == FILE_root)
+	if (ni->mft_no == FILE_root && init_problem == PR_DIR_IDX_INITIALIZE)
 		ret = ntfsck_initiaiize_root_index(ni, ictx);
 	else
-		ret = ntfsck_initialize_index_attr(ni);
+		ret = ntfsck_initialize_named_index_attr(ni,
+				ictx->name, ictx->name_len);
 
 	if (ret)
 		ntfs_log_perror("Failed to initialize index attributes of inode(%"PRIu64")\n",
@@ -3658,6 +3680,107 @@ initialize_index:
 	ntfs_log_info("inode(%"PRIu64") index is initialized\n", ni->mft_no);
 
 	goto out;
+}
+
+static int ntfsck_validate_named_index(ntfs_inode *ni,
+		ntfschar *name, u32 name_len)
+{
+	ntfs_attr_search_ctx *ctx = NULL;
+	ntfs_index_context *ictx = NULL;
+	INDEX_ROOT *ir;
+	ntfs_volume *vol;
+	int ret = STATUS_ERROR;
+
+	if (!ni || !name || !name_len)
+		return STATUS_ERROR;
+
+	vol = ni->vol;
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return STATUS_ERROR;
+
+	if (ntfs_attr_lookup(AT_INDEX_ROOT, name, name_len, CASE_SENSITIVE,
+				0, NULL, 0, ctx)) {
+		ntfs_log_perror("Index root attribute missing in inode %"PRId64"",
+				ni->mft_no);
+		goto out;
+	}
+
+	ictx = ntfs_index_ctx_get(ni, name, name_len);
+	if (!ictx)
+		goto out;
+
+	ir = (INDEX_ROOT *)((u8 *)ctx->attr +
+			le16_to_cpu(ctx->attr->value_offset));
+	ictx->ir = ir;
+	ictx->actx = ctx;
+	ctx = NULL;
+	ictx->parent_vcn[ictx->pindex] = VCN_INDEX_ROOT_PARENT;
+	ictx->is_in_root = TRUE;
+	ictx->parent_pos[ictx->pindex] = 0;
+
+	ictx->block_size = le32_to_cpu(ir->index_block_size);
+	if (ictx->block_size < NTFS_BLOCK_SIZE) {
+		ntfs_log_perror("Index block size (%d) is smaller than the "
+				"sector size (%d)", ictx->block_size,
+				NTFS_BLOCK_SIZE);
+		goto out;
+	}
+
+	if (vol->cluster_size <= ictx->block_size)
+		ictx->vcn_size_bits = vol->cluster_size_bits;
+	else
+		ictx->vcn_size_bits = NTFS_BLOCK_SIZE_BITS;
+
+	ntfsck_validate_index_blocks(vol, ictx);
+	ret = STATUS_OK;
+
+out:
+	if (ictx)
+		ntfs_index_ctx_put(ictx);
+	else if (ctx)
+		ntfs_attr_put_search_ctx(ctx);
+
+	return ret;
+}
+
+static int ntfsck_check_view_index(ntfs_inode *ni)
+{
+	struct named_index {
+		ntfschar *name;
+		u32 name_len;
+	};
+	static const struct named_index indexes[] = {
+		{ NTFS_INDEX_SII, 4 },
+		{ NTFS_INDEX_SDH, 4 },
+		{ NTFS_INDEX_Q, 2 },
+		{ NTFS_INDEX_O, 2 },
+		{ NTFS_INDEX_R, 2 },
+	};
+	int i;
+	BOOL found_index = FALSE;
+
+	if (!ni)
+		return STATUS_ERROR;
+
+	for (i = 0; i < (int)(sizeof(indexes) / sizeof(indexes[0])); i++) {
+		if (!ntfs_attr_exist(ni, AT_INDEX_ROOT,
+					indexes[i].name, indexes[i].name_len))
+			continue;
+
+		found_index = TRUE;
+		if (ntfsck_validate_named_index(ni,
+					indexes[i].name, indexes[i].name_len))
+			return STATUS_ERROR;
+	}
+
+	if (!found_index) {
+		ntfs_log_error("View index inode(%"PRIu64") has no known index root\n",
+				ni->mft_no);
+		return STATUS_ERROR;
+	}
+
+	return STATUS_OK;
 }
 
 static int ntfsck_remove_index(ntfs_inode *parent_ni, ntfs_index_context *ictx,

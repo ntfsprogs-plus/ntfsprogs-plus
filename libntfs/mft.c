@@ -241,9 +241,13 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 	u32 offset;	/* attribute start offset */
 	u32 min_offset;	/* minimum attribute start offset */
 	u32 biu;	/* bytes_in_use */
+	u32 max_attr_instance = 0;
 	s32 space;
+	u16 expected_next_attr_instance = 0;
 	BOOL fixed = FALSE;
+	BOOL biu_needs_fix = FALSE;
 	BOOL is_fsck = NVolFsck(vol);
+	BOOL saw_attr = FALSE;
 	problem_context_t pctx = {0, };
 
 	if (is_fsck && mref <= FILE_MFTMirr)
@@ -292,10 +296,15 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 	/* check bytes_in_use is aligned */
 	biu = le32_to_cpu(m->bytes_in_use);
 	if (biu & 7) {
-		ntfs_log_error("Used size of MFT record is badly aligned "
-				"in record %llu",
-				(unsigned long long)MREF(mref));
-		goto err_out;
+		if (NVolFsck(vol)) {
+			biu = (biu + 7) & ~7;
+			biu_needs_fix = TRUE;
+		} else {
+			ntfs_log_error("Used size of MFT record is badly aligned "
+					"in record %llu",
+					(unsigned long long)MREF(mref));
+			goto err_out;
+		}
 	}
 
 	/* check used size overflow */
@@ -359,6 +368,9 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 			if ((le32_to_cpu(a->length) <= (u32)space)
 					&& !(le32_to_cpu(a->length) & 7)) {
 				if (!ntfs_attr_inconsistent(vol, a, mref, &fixed)) {
+					saw_attr = TRUE;
+					if (le16_to_cpu(a->instance) > max_attr_instance)
+						max_attr_instance = le16_to_cpu(a->instance);
 					offset += le32_to_cpu(a->length);
 					space -= le32_to_cpu(a->length);
 					a = (ATTR_RECORD*)((char*)m + offset);
@@ -375,12 +387,33 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 		 * We are supposed to reach an AT_END. Check bytes_in_use value.
 		 * +8 mean the attribute terminator.
 		 */
-		if ((a->type == AT_END) && (biu != offset + 8)) {
-			fsck_err_found();
-			if (ntfs_fix_problem(vol, PR_MFT_BIU_CORRUPTED, &pctx)) {
-				m->bytes_in_use = cpu_to_le32(offset + 8);
+		if (a->type == AT_END) {
+			expected_next_attr_instance = saw_attr
+					? (u16)((max_attr_instance + 1) & 0xffff)
+					: 0;
+			if (is_fsck && !NVolFsNoRepair(vol) &&
+					(MREF(mref) > FILE_MFTMirr || vol->mftmirr_na) &&
+					(le16_to_cpu(m->next_attr_instance) !=
+					 expected_next_attr_instance)) {
+				fsck_err_found();
+				ntfs_log_error("Inode(%llu): MFT next attribute instance is corrupted (%u <> %u). Fixed.\n",
+						(unsigned long long)MREF(mref),
+						(unsigned int)le16_to_cpu(m->next_attr_instance),
+						(unsigned int)expected_next_attr_instance);
+				m->next_attr_instance =
+						cpu_to_le16(expected_next_attr_instance);
 				fixed = TRUE;
 				fsck_err_fixed();
+			}
+			if (biu_needs_fix || (biu != offset + 8)) {
+				fsck_err_found();
+				if (ntfs_fix_problem(vol, PR_MFT_BIU_CORRUPTED, &pctx)) {
+					m->bytes_in_use = cpu_to_le32(offset + 8);
+					fsck_err_fixed();
+					fixed = TRUE;
+				} else
+					goto err_out;
+				biu = offset + 8;
 			}
 		}
 	}

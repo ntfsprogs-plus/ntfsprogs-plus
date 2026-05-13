@@ -1949,6 +1949,9 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		goto out;
 	}
 
+	if (utils_is_metadata(ni) == 1)
+		goto out;
+
 	/*
 	 * Already applied proepr value to inode field.
 	 * ni->allocated_size : $DATA->allocated_size or $DATA->compressed_size
@@ -3304,19 +3307,19 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	if (flags & FILE_ATTR_I30_INDEX_PRESENT) {
 		ret = ntfsck_check_directory(ni);
 		if (ret)
-			goto err_out;
+			goto remove_index_out;
 	} else if (flags & FILE_ATTR_VIEW_INDEX_PRESENT) {
 		ret = ntfsck_check_view_index(ni);
 		if (ret)
-			goto err_out;
+			goto remove_index_out;
 	} else if (ni->mrec->flags & MFT_RECORD_IS_4) {
 		ret = ntfsck_check_extend_inode(ni);
 		if (ret)
-			goto err_out;
+			goto remove_index_out;
 	} else {
 		ret = ntfsck_check_file(ni);
 		if (ret)
-			goto err_out;
+			goto remove_index_out;
 	}
 
 	/* check $FILE_NAME */
@@ -3340,9 +3343,6 @@ err_out:
 static int ntfsck_check_system_inode_detail(ntfs_inode *ni)
 {
 	if (!ni)
-		return STATUS_ERROR;
-
-	if (ntfsck_validate_system_file(ni))
 		return STATUS_ERROR;
 
 	switch (ni->mft_no) {
@@ -3616,6 +3616,8 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 						"index entry.\n",
 						ni->mft_no, ictx->ni->mft_no);
 				ntfsck_close_inode(ni);
+				if (!NVolFsNoRepair(vol))
+					goto remove_index;
 				goto err_out;
 			}
 		}

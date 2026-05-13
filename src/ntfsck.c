@@ -235,7 +235,7 @@ static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
 static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
 		ntfs_attr_search_ctx *actx, struct rl_size *rls, int set_bit);
 static ntfs_inode *ntfsck_open_inode_after_raw_mft_check(ntfs_volume *vol,
-		u64 mft_no);
+		u64 mft_no, BOOL expect_in_use);
 
 #define ntfsck_delete_mft	ntfsck_delete_orphaned_mft
 
@@ -250,7 +250,7 @@ static ntfs_inode *ntfsck_open_inode(ntfs_volume *vol, u64 mft_no)
 }
 
 static ntfs_inode *ntfsck_open_inode_after_raw_mft_check(ntfs_volume *vol,
-		u64 mft_no)
+		u64 mft_no, BOOL expect_in_use)
 {
 	MFT_RECORD *mrec;
 	ntfs_inode *ni = NULL;
@@ -260,9 +260,21 @@ static ntfs_inode *ntfsck_open_inode_after_raw_mft_check(ntfs_volume *vol,
 		return NULL;
 
 	if (!ntfs_mft_record_read(vol, mft_no, mrec) &&
-			!ntfs_mft_record_check(vol, mft_no, mrec))
+			!ntfs_mft_record_check(vol, mft_no, mrec)) {
+		if (expect_in_use && NVolFsck(vol) && !NVolFsNoRepair(vol) &&
+				!(mrec->flags & MFT_RECORD_IN_USE)) {
+			fsck_err_found();
+			ntfs_log_error("Inode(%llu): MFT in-use flag is cleared but the MFT bitmap marks it allocated. Fixed.\n",
+					(unsigned long long)mft_no);
+			mrec->flags |= MFT_RECORD_IN_USE;
+			if (ntfs_mft_record_write(vol, mft_no, mrec))
+				goto out;
+			fsck_err_fixed();
+		}
 		ni = ntfsck_open_inode(vol, mft_no);
+	}
 
+	out:
 	ntfs_free(mrec);
 	return ni;
 }
@@ -1631,7 +1643,8 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	ni = ntfsck_open_inode(vol, mft_num);
 	if (!ni) {
 		raw_retry_done = TRUE;
-		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num);
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num,
+				is_used > 0);
 	}
 	if (!ni) {
 		/* check this mft is extend mft or not */
@@ -1715,7 +1728,8 @@ err_check_inode:
 
 	if (!raw_retry_done) {
 		raw_retry_done = TRUE;
-		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num);
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num,
+				is_used > 0);
 		if (ni)
 			goto retry_validate;
 	}
@@ -5264,7 +5278,8 @@ static int ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
 	ni = ntfsck_open_inode(vol, mft_num);
 	if (!ni) {
 		raw_retry_done = TRUE;
-		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num);
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num,
+				is_used > 0);
 	}
 	if (!ni)
 		return STATUS_ERROR;
@@ -5297,7 +5312,8 @@ err_check_inode:
 
 	if (!raw_retry_done) {
 		raw_retry_done = TRUE;
-		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num);
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num,
+				is_used > 0);
 		if (ni)
 			goto retry_validate;
 	}

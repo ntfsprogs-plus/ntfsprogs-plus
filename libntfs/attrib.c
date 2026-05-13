@@ -3546,7 +3546,7 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 			if (NVolFsck(vol)) {
 				fsck_err_found();
 				if (ntfs_fix_problem(vol, PR_ATTR_VALUE_OFFSET_BADLY_ALIGNED, &pctx)) {
-					value_off += 7 & ~7;
+					value_off = (value_off + 7) & ~7;
 					a->value_offset = cpu_to_le16(value_off);
 					*fixed = TRUE;
 					fsck_err_fixed();

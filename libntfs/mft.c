@@ -50,6 +50,7 @@
 #include "debug.h"
 #include "bitmap.h"
 #include "attrib.h"
+#include "dir.h"
 #include "inode.h"
 #include "volume.h"
 #include "layout.h"
@@ -58,6 +59,26 @@
 #include "logging.h"
 #include "misc.h"
 #include "lib_utils.h"
+
+static BOOL ntfs_mft_attr_has_name(const ATTR_RECORD *a, const ntfschar *name,
+		u8 name_length)
+{
+	const ntfschar *attr_name;
+
+	if (a->name_length != name_length)
+		return FALSE;
+	attr_name = (const ntfschar *)((const u8 *)a +
+			le16_to_cpu(a->name_offset));
+	return !memcmp(attr_name, name, name_length * sizeof(ntfschar));
+}
+
+static BOOL ntfs_mft_attr_is_i30_index(const ATTR_RECORD *a)
+{
+	if ((a->type != AT_INDEX_ROOT) && (a->type != AT_INDEX_ALLOCATION) &&
+			(a->type != AT_BITMAP))
+		return FALSE;
+	return ntfs_mft_attr_has_name(a, NTFS_INDEX_I30, 4);
+}
 #include "problem.h"
 
 /**
@@ -238,6 +259,10 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 {
 	ATTR_RECORD *a;
 	int ret = -1;
+	u16 current_flags;
+	u16 expected_flags;
+	u16 valid_flags = le16_to_cpu(MFT_RECORD_IN_USE) |
+			le16_to_cpu(MFT_RECORD_IS_DIRECTORY);
 	u32 offset;	/* attribute start offset */
 	u32 min_offset;	/* minimum attribute start offset */
 	u32 biu;	/* bytes_in_use */
@@ -246,8 +271,13 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 	u16 expected_next_attr_instance = 0;
 	BOOL fixed = FALSE;
 	BOOL biu_needs_fix = FALSE;
+	BOOL can_derive_directory = FALSE;
 	BOOL is_fsck = NVolFsck(vol);
+	BOOL is_ntfs_3x = vol->major_ver > 3 ||
+			(vol->major_ver == 3 && vol->minor_ver);
 	BOOL saw_attr = FALSE;
+	BOOL saw_i30_index = FALSE;
+	BOOL saw_unnamed_data = FALSE;
 	problem_context_t pctx = {0, };
 
 	if (is_fsck && mref <= FILE_MFTMirr)
@@ -368,6 +398,10 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 			if ((le32_to_cpu(a->length) <= (u32)space)
 					&& !(le32_to_cpu(a->length) & 7)) {
 				if (!ntfs_attr_inconsistent(vol, a, mref, &fixed)) {
+					if (ntfs_mft_attr_is_i30_index(a))
+						saw_i30_index = TRUE;
+					else if ((a->type == AT_DATA) && !a->name_length)
+						saw_unnamed_data = TRUE;
 					saw_attr = TRUE;
 					if (le16_to_cpu(a->instance) > max_attr_instance)
 						max_attr_instance = le16_to_cpu(a->instance);
@@ -388,6 +422,41 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 		 * +8 mean the attribute terminator.
 		 */
 		if (a->type == AT_END) {
+			if (is_ntfs_3x && is_fsck && !NVolFsNoRepair(vol) &&
+					(le32_to_cpu(m->mft_record_number) != MREF(mref))) {
+				fsck_err_found();
+				ntfs_log_error("Inode(%llu): MFT record number is corrupted (%u <> %u). Fixed.\n",
+						(unsigned long long)MREF(mref),
+						(unsigned int)le32_to_cpu(m->mft_record_number),
+						(unsigned int)MREF(mref));
+				m->mft_record_number = cpu_to_le32(MREF(mref));
+				fixed = TRUE;
+				fsck_err_fixed();
+			}
+			current_flags = le16_to_cpu(m->flags);
+			expected_flags = current_flags & le16_to_cpu(MFT_RECORD_IN_USE);
+			if (saw_i30_index) {
+				can_derive_directory = TRUE;
+				expected_flags |= le16_to_cpu(MFT_RECORD_IS_DIRECTORY);
+			} else if (saw_unnamed_data) {
+				can_derive_directory = TRUE;
+			} else {
+				expected_flags |= current_flags &
+						le16_to_cpu(MFT_RECORD_IS_DIRECTORY);
+			}
+			expected_flags &= valid_flags;
+			if (is_fsck && !NVolFsNoRepair(vol) &&
+					(current_flags != expected_flags) &&
+					(can_derive_directory || (current_flags & ~valid_flags))) {
+				fsck_err_found();
+				ntfs_log_error("Inode(%llu): MFT flags are corrupted (0x%x <> 0x%x). Fixed.\n",
+						(unsigned long long)MREF(mref),
+						(unsigned int)current_flags,
+						(unsigned int)expected_flags);
+				m->flags = cpu_to_le16(expected_flags);
+				fixed = TRUE;
+				fsck_err_fixed();
+			}
 			expected_next_attr_instance = saw_attr
 					? (u16)((max_attr_instance + 1) & 0xffff)
 					: 0;

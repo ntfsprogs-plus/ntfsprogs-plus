@@ -29,6 +29,7 @@
 #include <bitmap.h>
 #include <endians.h>
 #include <bootsect.h>
+#include <mft.h>
 #include <misc.h>
 #include <getopt.h>
 
@@ -233,6 +234,8 @@ static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
 		BOOL *need_fix, int set_bit);
 static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
 		ntfs_attr_search_ctx *actx, struct rl_size *rls, int set_bit);
+static ntfs_inode *ntfsck_open_inode_after_raw_mft_check(ntfs_volume *vol,
+		u64 mft_no);
 
 #define ntfsck_delete_mft	ntfsck_delete_orphaned_mft
 
@@ -243,6 +246,24 @@ static ntfs_inode *ntfsck_open_inode(ntfs_volume *vol, u64 mft_no)
 	ni = ntfsck_get_opened_ni_vol(vol, mft_no);
 	if (!ni)
 		ni = ntfs_inode_open(vol, mft_no);
+	return ni;
+}
+
+static ntfs_inode *ntfsck_open_inode_after_raw_mft_check(ntfs_volume *vol,
+		u64 mft_no)
+{
+	MFT_RECORD *mrec;
+	ntfs_inode *ni = NULL;
+
+	mrec = ntfs_malloc(vol->mft_record_size);
+	if (!mrec)
+		return NULL;
+
+	if (!ntfs_mft_record_read(vol, mft_no, mrec) &&
+			!ntfs_mft_record_check(vol, mft_no, mrec))
+		ni = ntfsck_open_inode(vol, mft_no);
+
+	ntfs_free(mrec);
 	return ni;
 }
 
@@ -1588,6 +1609,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	struct orphan_mft *of;
 	int is_used;
 	ntfs_attr_search_ctx *ctx = NULL;
+	BOOL raw_retry_done = FALSE;
 	problem_context_t pctx = {0, };
 
 	pctx.inum = mft_num;
@@ -1607,6 +1629,10 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	}
 
 	ni = ntfsck_open_inode(vol, mft_num);
+	if (!ni) {
+		raw_retry_done = TRUE;
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num);
+	}
 	if (!ni) {
 		/* check this mft is extend mft or not */
 		if (!ntfsck_check_if_extent_mft_record(vol, mft_num)) {
@@ -1628,6 +1654,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		return;
 	}
 
+	retry_validate:
 	ctx = ntfs_attr_get_search_ctx(ni, NULL);
 	if (!ctx) {
 		ntfs_log_error("Failed to allocate attribute context\n");
@@ -1682,7 +1709,16 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 err_check_inode:
 	ntfs_attr_put_search_ctx(ctx);
+	ctx = NULL;
 	ntfsck_close_inode(ni);
+	ni = NULL;
+
+	if (!raw_retry_done) {
+		raw_retry_done = TRUE;
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num);
+		if (ni)
+			goto retry_validate;
+	}
 
 	if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_CHECK_FAILURE, &pctx))
 		ntfsck_check_mft_record_unused(vol, mft_num);
@@ -5210,6 +5246,7 @@ static int ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	ntfs_inode *ni = NULL;
 	int is_used;
+	BOOL raw_retry_done = FALSE;
 
 	is_used = check_mftrec_in_use(vol, mft_num, 0);
 	if (is_used < 0) {
@@ -5225,11 +5262,16 @@ static int ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
 	}
 
 	ni = ntfsck_open_inode(vol, mft_num);
+	if (!ni) {
+		raw_retry_done = TRUE;
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num);
+	}
 	if (!ni)
 		return STATUS_ERROR;
 
 	total_valid_mft++;
 
+	retry_validate:
 	if (ni->attr_list) {
 		if (ntfsck_check_attr_list(ni))
 			goto err_check_inode;
@@ -5251,6 +5293,14 @@ static int ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
 err_check_inode:
 	ntfs_log_trace("Delete orphaned candidate inode(%"PRIu64")\n", ni->mft_no);
 	ntfsck_close_inode(ni);
+	ni = NULL;
+
+	if (!raw_retry_done) {
+		raw_retry_done = TRUE;
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num);
+		if (ni)
+			goto retry_validate;
+	}
 
 	ntfsck_check_mft_record_unused(vol, mft_num);
 	ntfs_fsck_mftbmp_clear(vol, mft_num);

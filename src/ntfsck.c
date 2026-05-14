@@ -31,6 +31,7 @@
 #include <bootsect.h>
 #include <mft.h>
 #include <misc.h>
+#include <mst.h>
 #include <getopt.h>
 
 #include "cluster.h"
@@ -249,11 +250,425 @@ static ntfs_inode *ntfsck_open_inode(ntfs_volume *vol, u64 mft_no)
 	return ni;
 }
 
+static s8 ntfsck_expected_clusters_per_index_block(const ntfs_volume *vol,
+		u32 block_size)
+{
+	if (vol->cluster_size <= block_size)
+		return block_size >> vol->cluster_size_bits;
+	return block_size >> NTFS_BLOCK_SIZE_BITS;
+}
+
+static BOOL ntfsck_attr_name_matches(const ATTR_RECORD *attr,
+		const ntfschar *name, u32 name_len)
+{
+	const ntfschar *attr_name;
+
+	if (!attr || attr->name_length != name_len)
+		return FALSE;
+	if (!name_len)
+		return TRUE;
+	if (!name)
+		return FALSE;
+
+	attr_name = (const ntfschar *)((const u8 *)attr +
+			le16_to_cpu(attr->name_offset));
+	return !memcmp(attr_name, name, name_len * sizeof(ntfschar));
+}
+
+static BOOL ntfsck_mrec_has_named_attr(const MFT_RECORD *mrec, ATTR_TYPES type,
+		const ntfschar *name, u32 name_len)
+{
+	const ATTR_RECORD *attr;
+	const u8 *record_end;
+
+	if (!mrec)
+		return FALSE;
+
+	record_end = (const u8 *)mrec + le32_to_cpu(mrec->bytes_in_use);
+	attr = (const ATTR_RECORD *)((const u8 *)mrec +
+			le16_to_cpu(mrec->attrs_offset));
+	while ((const u8 *)attr + sizeof(ATTR_RECORD) <= record_end &&
+			attr->type != AT_END) {
+		u32 attr_len = le32_to_cpu(attr->length);
+
+		if (!attr_len || (const u8 *)attr + attr_len > record_end)
+			break;
+		if (attr->type == type &&
+				ntfsck_attr_name_matches(attr, name, name_len))
+			return TRUE;
+		attr = (const ATTR_RECORD *)((const u8 *)attr + attr_len);
+	}
+
+	return FALSE;
+}
+
+static BOOL ntfsck_get_named_index_defaults(u64 mft_no,
+		const ntfschar *name, u32 name_len, ATTR_TYPES *type,
+		COLLATION_RULES *collation_rule)
+{
+	if (!name || !name_len || !type || !collation_rule)
+		return FALSE;
+
+	if (name_len == 4 &&
+			!memcmp(name, NTFS_INDEX_I30, 4 * sizeof(ntfschar))) {
+		*type = AT_FILE_NAME;
+		*collation_rule = COLLATION_FILE_NAME;
+		return TRUE;
+	}
+	if (name_len == 4 &&
+			!memcmp(name, NTFS_INDEX_SII, 4 * sizeof(ntfschar))) {
+		*type = AT_UNUSED;
+		*collation_rule = COLLATION_NTOFS_ULONG;
+		return TRUE;
+	}
+	if (name_len == 4 &&
+			!memcmp(name, NTFS_INDEX_SDH, 4 * sizeof(ntfschar))) {
+		*type = AT_UNUSED;
+		*collation_rule = COLLATION_NTOFS_SECURITY_HASH;
+		return TRUE;
+	}
+	if (name_len == 2 &&
+			!memcmp(name, NTFS_INDEX_Q, 2 * sizeof(ntfschar))) {
+		*type = AT_UNUSED;
+		*collation_rule = COLLATION_NTOFS_ULONG;
+		return TRUE;
+	}
+	if (name_len == 2 &&
+			!memcmp(name, NTFS_INDEX_R, 2 * sizeof(ntfschar))) {
+		*type = AT_UNUSED;
+		*collation_rule = COLLATION_NTOFS_ULONGS;
+		return TRUE;
+	}
+	if (name_len == 2 &&
+			!memcmp(name, NTFS_INDEX_O, 2 * sizeof(ntfschar))) {
+		*type = AT_UNUSED;
+		if (mft_no == 24) {
+			*collation_rule = COLLATION_NTOFS_SID;
+			return TRUE;
+		}
+		if (mft_no == 25) {
+			*collation_rule = COLLATION_NTOFS_ULONGS;
+			return TRUE;
+		}
+	}
+
+	return FALSE;
+}
+
+static u32 ntfsck_index_used_length(INDEX_HEADER *ih, const u8 *index_end,
+		BOOL *has_subnodes)
+{
+	u8 *entry;
+	BOOL found_subnode = FALSE;
+
+	if (!ih || !index_end)
+		return 0;
+
+	entry = (u8 *)ih + le32_to_cpu(ih->entries_offset);
+	if (le32_to_cpu(ih->entries_offset) < sizeof(INDEX_HEADER) ||
+			(le32_to_cpu(ih->entries_offset) & 7) || entry >= index_end)
+		return 0;
+
+	for (;;) {
+		INDEX_ENTRY *ie = (INDEX_ENTRY *)entry;
+		u16 length;
+
+		if (entry + sizeof(INDEX_ENTRY_HEADER) > index_end)
+			return 0;
+		length = le16_to_cpu(ie->length);
+		if (length < sizeof(INDEX_ENTRY_HEADER) || (length & 7) ||
+				entry + length > index_end)
+			return 0;
+		if (ie->ie_flags & INDEX_ENTRY_NODE)
+			found_subnode = TRUE;
+		entry += length;
+		if (ie->ie_flags & INDEX_ENTRY_END)
+			break;
+	}
+
+	if (has_subnodes)
+		*has_subnodes = found_subnode;
+	return entry - (u8 *)ih;
+}
+
+static BOOL ntfsck_repair_index_root_fields(ntfs_volume *vol, u64 mft_no,
+		ATTR_RECORD *attr, BOOL has_index_allocation)
+{
+	INDEX_ROOT *ir;
+	ATTR_TYPES expected_type = AT_UNUSED;
+	COLLATION_RULES expected_collation = COLLATION_BINARY;
+	u32 expected_block_size;
+	u32 payload_size;
+	u32 used_length;
+	s8 expected_clusters_per_index_block;
+	INDEX_HEADER_FLAGS expected_flags;
+	BOOL has_subnodes = FALSE;
+	BOOL changed = FALSE;
+	BOOL know_defaults;
+	const ntfschar *name = NULL;
+
+	if (!vol || !attr || attr->type != AT_INDEX_ROOT || attr->non_resident)
+		return FALSE;
+	if (le32_to_cpu(attr->value_length) < sizeof(INDEX_ROOT) +
+			sizeof(INDEX_ENTRY_HEADER))
+		return FALSE;
+
+	ir = (INDEX_ROOT *)((u8 *)attr + le16_to_cpu(attr->value_offset));
+	payload_size = le32_to_cpu(attr->value_length) - offsetof(INDEX_ROOT, index);
+	payload_size &= ~7U;
+	if (payload_size < sizeof(INDEX_HEADER) + sizeof(INDEX_ENTRY_HEADER))
+		return FALSE;
+
+	if (attr->name_length)
+		name = (const ntfschar *)((const u8 *)attr +
+				le16_to_cpu(attr->name_offset));
+	know_defaults = ntfsck_get_named_index_defaults(mft_no, name,
+			attr->name_length, &expected_type, &expected_collation);
+	if (know_defaults && ir->type != expected_type) {
+		ir->type = expected_type;
+		changed = TRUE;
+	}
+	if (know_defaults && ir->collation_rule != expected_collation) {
+		ir->collation_rule = expected_collation;
+		changed = TRUE;
+	}
+
+	expected_block_size = vol->indx_record_size;
+	if (le32_to_cpu(ir->index_block_size) != expected_block_size) {
+		ir->index_block_size = cpu_to_le32(expected_block_size);
+		changed = TRUE;
+	}
+	expected_clusters_per_index_block =
+		ntfsck_expected_clusters_per_index_block(vol, expected_block_size);
+	if (ir->clusters_per_index_block != expected_clusters_per_index_block) {
+		ir->clusters_per_index_block = expected_clusters_per_index_block;
+		changed = TRUE;
+	}
+	if (ir->reserved[0] || ir->reserved[1] || ir->reserved[2]) {
+		memset(ir->reserved, 0, sizeof(ir->reserved));
+		changed = TRUE;
+	}
+	if (le32_to_cpu(ir->index.entries_offset) != sizeof(INDEX_HEADER)) {
+		ir->index.entries_offset = const_cpu_to_le32(sizeof(INDEX_HEADER));
+		changed = TRUE;
+	}
+
+	used_length = ntfsck_index_used_length(&ir->index,
+			(u8 *)&ir->index + payload_size, &has_subnodes);
+	if (!used_length)
+		used_length = payload_size;
+	if (le32_to_cpu(ir->index.index_length) != used_length) {
+		ir->index.index_length = cpu_to_le32(used_length);
+		changed = TRUE;
+	}
+	if (le32_to_cpu(ir->index.allocated_size) != payload_size) {
+		ir->index.allocated_size = cpu_to_le32(payload_size);
+		changed = TRUE;
+	}
+	expected_flags = (has_index_allocation || has_subnodes) ?
+		LARGE_INDEX : SMALL_INDEX;
+	if (ir->index.ih_flags != expected_flags) {
+		ir->index.ih_flags = expected_flags;
+		changed = TRUE;
+	}
+	if (ir->index.reserved[0] || ir->index.reserved[1] ||
+			ir->index.reserved[2]) {
+		memset(ir->index.reserved, 0, sizeof(ir->index.reserved));
+		changed = TRUE;
+	}
+
+	return changed;
+}
+
+static BOOL ntfsck_repair_raw_index_root_fields(ntfs_volume *vol, u64 mft_no,
+		MFT_RECORD *mrec)
+{
+	ATTR_RECORD *attr;
+	u8 *record_end;
+	BOOL dirty = FALSE;
+
+	if (!vol || !mrec || !NVolFsck(vol) || NVolFsNoRepair(vol))
+		return FALSE;
+
+	record_end = (u8 *)mrec + le32_to_cpu(mrec->bytes_in_use);
+	attr = (ATTR_RECORD *)((u8 *)mrec + le16_to_cpu(mrec->attrs_offset));
+	while ((u8 *)attr + sizeof(ATTR_RECORD) <= record_end &&
+			attr->type != AT_END) {
+		u32 attr_len = le32_to_cpu(attr->length);
+		BOOL has_index_allocation;
+		const ntfschar *name = NULL;
+
+		if (!attr_len || (u8 *)attr + attr_len > record_end)
+			break;
+		if (attr->type != AT_INDEX_ROOT || attr->non_resident)
+			goto next;
+		if (attr->name_length)
+			name = (const ntfschar *)((const u8 *)attr +
+					le16_to_cpu(attr->name_offset));
+		has_index_allocation = ntfsck_mrec_has_named_attr(mrec,
+				AT_INDEX_ALLOCATION, name, attr->name_length);
+		if (ntfsck_repair_index_root_fields(vol, mft_no, attr,
+				has_index_allocation)) {
+			ntfs_log_error("Inode(%llu): INDEX_ROOT header fields are corrupted. Fixed.\n",
+					(unsigned long long)mft_no);
+			dirty = TRUE;
+		}
+next:
+		attr = (ATTR_RECORD *)((u8 *)attr + attr_len);
+	}
+
+	return dirty;
+}
+
+static int ntfsck_repair_named_index_root(ntfs_inode *ni,
+		ntfs_attr_search_ctx *ctx, ntfschar *name, u32 name_len)
+{
+	ntfs_volume *vol;
+	BOOL has_index_allocation;
+
+	if (!ni || !ctx || !ctx->attr)
+		return STATUS_ERROR;
+
+	vol = ni->vol;
+	if (!NVolFsck(vol) || NVolFsNoRepair(vol))
+		return STATUS_OK;
+
+	has_index_allocation = ntfs_attr_exist(ni, AT_INDEX_ALLOCATION,
+			name, name_len);
+	if (!ntfsck_repair_index_root_fields(vol, ni->mft_no, ctx->attr,
+			has_index_allocation))
+		return STATUS_OK;
+
+	fsck_err_found();
+	ntfs_log_error("Inode(%llu): INDEX_ROOT header fields are corrupted. Fixed.\n",
+			(unsigned long long)ni->mft_no);
+	if (ntfs_mft_record_write(vol, ni->mft_no, ctx->mrec))
+		return STATUS_ERROR;
+	fsck_err_fixed();
+
+	return STATUS_OK;
+}
+
+static int ntfsck_read_index_block(ntfs_index_context *ictx, VCN vcn,
+		INDEX_BLOCK *ib, BOOL *mst_salvaged)
+{
+	s64 bytes;
+	u16 expected_usa_count;
+
+	if (mst_salvaged)
+		*mst_salvaged = FALSE;
+
+	if (ntfs_attr_mst_pread(ictx->ia_na, ntfs_ib_vcn_to_pos(ictx, vcn), 1,
+				ictx->block_size, (u8 *)ib) == 1)
+		return STATUS_OK;
+	if (!NVolFsck(ictx->ni->vol) || NVolFsNoRepair(ictx->ni->vol))
+		return STATUS_ERROR;
+
+	bytes = ntfs_attr_pread(ictx->ia_na, ntfs_ib_vcn_to_pos(ictx, vcn),
+			ictx->block_size, ib);
+	if (bytes != ictx->block_size)
+		return STATUS_ERROR;
+
+	expected_usa_count = (ictx->block_size >= NTFS_BLOCK_SIZE) ?
+		ictx->block_size / NTFS_BLOCK_SIZE + 1 : 1;
+	if (le16_to_cpu(ib->usa_ofs) != sizeof(INDEX_BLOCK))
+		ib->usa_ofs = const_cpu_to_le16(sizeof(INDEX_BLOCK));
+	if (le16_to_cpu(ib->usa_count) != expected_usa_count)
+		ib->usa_count = cpu_to_le16(expected_usa_count);
+	if (ntfs_mst_post_read_fixup((NTFS_RECORD *)ib, ictx->block_size))
+		return STATUS_ERROR;
+
+	if (mst_salvaged)
+		*mst_salvaged = TRUE;
+	return STATUS_OK;
+}
+
+static int ntfsck_repair_index_block(ntfs_index_context *ictx, VCN vcn,
+		INDEX_BLOCK *ib, BOOL mst_salvaged)
+{
+	u16 expected_usa_count;
+	u32 expected_entries_offset;
+	u32 expected_allocated_size;
+	u32 used_length;
+	BOOL has_subnodes = FALSE;
+	BOOL changed = mst_salvaged;
+	INDEX_HEADER_FLAGS expected_flags;
+
+	if (!ictx || !ib)
+		return STATUS_ERROR;
+	if (!NVolFsck(ictx->ni->vol) || NVolFsNoRepair(ictx->ni->vol))
+		return STATUS_OK;
+
+	expected_usa_count = (ictx->block_size >= NTFS_BLOCK_SIZE) ?
+		ictx->block_size / NTFS_BLOCK_SIZE + 1 : 1;
+	expected_entries_offset = (sizeof(INDEX_HEADER) +
+			expected_usa_count * 2 + 7) & ~7;
+	expected_allocated_size = ictx->block_size -
+		(sizeof(INDEX_BLOCK) - sizeof(INDEX_HEADER));
+
+	if (!ntfs_is_indx_record(ib->magic)) {
+		ib->magic = magic_INDX;
+		changed = TRUE;
+	}
+	if (le16_to_cpu(ib->usa_ofs) != sizeof(INDEX_BLOCK)) {
+		ib->usa_ofs = const_cpu_to_le16(sizeof(INDEX_BLOCK));
+		changed = TRUE;
+	}
+	if (le16_to_cpu(ib->usa_count) != expected_usa_count) {
+		ib->usa_count = cpu_to_le16(expected_usa_count);
+		changed = TRUE;
+	}
+	if (sle64_to_cpu(ib->index_block_vcn) != vcn) {
+		ib->index_block_vcn = cpu_to_sle64(vcn);
+		changed = TRUE;
+	}
+	if (le32_to_cpu(ib->index.entries_offset) != expected_entries_offset) {
+		ib->index.entries_offset = cpu_to_le32(expected_entries_offset);
+		changed = TRUE;
+	}
+	if (le32_to_cpu(ib->index.allocated_size) != expected_allocated_size) {
+		ib->index.allocated_size = cpu_to_le32(expected_allocated_size);
+		changed = TRUE;
+	}
+	if (ib->index.reserved[0] || ib->index.reserved[1] ||
+			ib->index.reserved[2]) {
+		memset(ib->index.reserved, 0, sizeof(ib->index.reserved));
+		changed = TRUE;
+	}
+
+	used_length = ntfsck_index_used_length(&ib->index,
+			(u8 *)&ib->index + expected_allocated_size, &has_subnodes);
+	if (!used_length)
+		return STATUS_OK;
+	if (le32_to_cpu(ib->index.index_length) != used_length) {
+		ib->index.index_length = cpu_to_le32(used_length);
+		changed = TRUE;
+	}
+	expected_flags = has_subnodes ? INDEX_NODE : LEAF_NODE;
+	if (ib->index.ih_flags != expected_flags) {
+		ib->index.ih_flags = expected_flags;
+		changed = TRUE;
+	}
+
+	if (!changed)
+		return STATUS_OK;
+
+	fsck_err_found();
+	ntfs_log_error("Inode(%llu): INDEX_ALLOCATION block VCN(%lld) header fields are corrupted. Fixed.\n",
+			(unsigned long long)ictx->ni->mft_no, (long long)vcn);
+	if (ntfs_ib_write(ictx, ib))
+		return STATUS_ERROR;
+	fsck_err_fixed();
+
+	return STATUS_OK;
+}
+
 static ntfs_inode *ntfsck_open_inode_after_raw_mft_check(ntfs_volume *vol,
 		u64 mft_no, BOOL expect_in_use)
 {
 	MFT_RECORD *mrec;
 	ntfs_inode *ni = NULL;
+	BOOL dirty = FALSE;
 
 	mrec = ntfs_malloc(vol->mft_record_size);
 	if (!mrec)
@@ -261,12 +676,16 @@ static ntfs_inode *ntfsck_open_inode_after_raw_mft_check(ntfs_volume *vol,
 
 	if (!ntfs_mft_record_read(vol, mft_no, mrec) &&
 			!ntfs_mft_record_check(vol, mft_no, mrec)) {
+		dirty = ntfsck_repair_raw_index_root_fields(vol, mft_no, mrec);
 		if (expect_in_use && NVolFsck(vol) && !NVolFsNoRepair(vol) &&
 				!(mrec->flags & MFT_RECORD_IN_USE)) {
-			fsck_err_found();
 			ntfs_log_error("Inode(%llu): MFT in-use flag is cleared but the MFT bitmap marks it allocated. Fixed.\n",
 					(unsigned long long)mft_no);
 			mrec->flags |= MFT_RECORD_IN_USE;
+			dirty = TRUE;
+		}
+		if (dirty) {
+			fsck_err_found();
 			if (ntfs_mft_record_write(vol, mft_no, mrec))
 				goto out;
 			fsck_err_fixed();
@@ -3980,6 +4399,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	/* check index block and entries in INDEX_ALLOCATION */
 	for (vcn = 0; vcn < max_vcn; vcn += vcn_per_ib) {
 		u32 bmp_bit;	/* bit location in $BITMAP for vcn */
+		BOOL mst_salvaged = FALSE;
 
 		/* one bit of $Bitmap represents one index block,
 		 * so if vcn size is smaller than ib, one bit represent
@@ -3991,13 +4411,15 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		if (!ntfs_bit_get(bmp_buf, bmp_bit))
 			continue;
 
-		if (ntfs_attr_mst_pread(ictx->ia_na,
-					ntfs_ib_vcn_to_pos(ictx, vcn), 1,
-					ictx->block_size, ia_buf) != 1) {
-			ntfs_log_error("Failed to read index blocks of inode(%"PRIu64"), %d",
+		if (ntfsck_read_index_block(ictx, vcn,
+				(INDEX_BLOCK *)ia_buf, &mst_salvaged)) {
+			ntfs_log_error("Failed to read index blocks of inode(%"PRIu64"), %d\n",
 					ictx->ni->mft_no, errno);
 			goto initialize_index;
 		}
+		if (ntfsck_repair_index_block(ictx, vcn,
+				(INDEX_BLOCK *)ia_buf, mst_salvaged))
+			goto initialize_index;
 
 		if (ntfs_index_block_inconsistent(vol, ictx->ia_na,
 					(INDEX_ALLOCATION *)ia_buf,
@@ -4133,6 +4555,8 @@ static int ntfsck_validate_named_index(ntfs_inode *ni,
 				ni->mft_no);
 		goto out;
 	}
+	if (ntfsck_repair_named_index_root(ni, ctx, name, name_len))
+		goto out;
 
 	ictx = ntfs_index_ctx_get(ni, name, name_len);
 	if (!ictx)

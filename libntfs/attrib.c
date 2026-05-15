@@ -3464,6 +3464,103 @@ not_found:
 	}
 }
 
+static int ntfs_attr_check_standard_information(ntfs_volume *vol,
+		ATTR_RECORD *a, u64 inum, BOOL *fixed)
+{
+	STANDARD_INFORMATION *si;
+	u32 value_len;
+	u32 repaired_len;
+	u32 file_attributes;
+	u32 valid_si_flags;
+	int i;
+	BOOL reserved_dirty;
+	BOOL changed;
+
+	value_len = le32_to_cpu(a->value_length);
+	if (a->non_resident || value_len < offsetof(STANDARD_INFORMATION, v1_end)) {
+		ntfs_log_error("Corrupt standard information in MFT record %lld\n",
+				(long long)inum);
+		errno = EIO;
+		return -1;
+	}
+
+	si = (STANDARD_INFORMATION *)((u8 *)a + le16_to_cpu(a->value_offset));
+	valid_si_flags = const_le32_to_cpu(FILE_ATTR_VALID_FLAGS) |
+			const_le32_to_cpu(FILE_ATTR_VIEW_INDEX_PRESENT);
+	changed = FALSE;
+
+	if (value_len != offsetof(STANDARD_INFORMATION, v1_end) &&
+			value_len != offsetof(STANDARD_INFORMATION, v3_end)) {
+		if (!NVolFsck(vol)) {
+			ntfs_log_error("Corrupt standard information in MFT record %lld\n",
+					(long long)inum);
+			errno = EIO;
+			return -1;
+		}
+		repaired_len = (value_len < offsetof(STANDARD_INFORMATION, v3_end)) ?
+			offsetof(STANDARD_INFORMATION, v1_end) :
+			offsetof(STANDARD_INFORMATION, v3_end);
+		a->value_length = cpu_to_le32(repaired_len);
+		value_len = repaired_len;
+		changed = TRUE;
+	}
+
+	if (value_len == offsetof(STANDARD_INFORMATION, v1_end)) {
+		reserved_dirty = FALSE;
+		for (i = 0; i < (int)sizeof(si->reserved12); i++) {
+			if (si->reserved12[i]) {
+				reserved_dirty = TRUE;
+				break;
+			}
+		}
+		if (reserved_dirty) {
+			if (!NVolFsck(vol)) {
+				ntfs_log_error("Corrupt standard information in MFT record %lld\n",
+						(long long)inum);
+				errno = EIO;
+				return -1;
+			}
+			memset(si->reserved12, 0, sizeof(si->reserved12));
+			changed = TRUE;
+		}
+	}
+
+	file_attributes = le32_to_cpu(si->file_attributes);
+	if (file_attributes & ~valid_si_flags) {
+		if (!NVolFsck(vol)) {
+			ntfs_log_error("Corrupt standard information in MFT record %lld\n",
+					(long long)inum);
+			errno = EIO;
+			return -1;
+		}
+		si->file_attributes = cpu_to_le32(file_attributes & valid_si_flags);
+		changed = TRUE;
+	}
+
+	if (value_len >= offsetof(STANDARD_INFORMATION, v3_end) &&
+			!le32_to_cpu(si->maximum_versions) &&
+			le32_to_cpu(si->version_number)) {
+		if (!NVolFsck(vol)) {
+			ntfs_log_error("Corrupt standard information in MFT record %lld\n",
+					(long long)inum);
+			errno = EIO;
+			return -1;
+		}
+		si->version_number = const_cpu_to_le32(0);
+		changed = TRUE;
+	}
+
+	if (changed) {
+		fsck_err_found();
+		ntfs_log_error("Inode(%llu): STANDARD_INFORMATION fields are corrupted. Fixed.\n",
+				(unsigned long long)inum);
+		*fixed = TRUE;
+		fsck_err_fixed();
+	}
+
+	return 0;
+}
+
 /*
  *		Check the consistency of an attribute
  *
@@ -3741,16 +3838,8 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 
 				break;
 			case AT_STANDARD_INFORMATION :
-				if (a->non_resident
-						|| (le32_to_cpu(a->value_length)
-							< offsetof(STANDARD_INFORMATION,
-								v1_end))) {
-					ntfs_log_error("Corrupt standard information"
-							" in MFT record %lld\n",
-							(long long)inum);
-					errno = EIO;
-					ret = -1;
-				}
+				ret = ntfs_attr_check_standard_information(vol, mod_a,
+						inum, fixed);
 				break;
 			case AT_OBJECT_ID :
 				if (a->non_resident

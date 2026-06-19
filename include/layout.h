@@ -888,6 +888,12 @@ typedef enum {
 	 * $FILE_NAME attributes.
 	 */
 	FILE_ATTR_VIEW_INDEX_PRESENT	= const_cpu_to_le32(0x20000000),
+	/*
+	 * Undocumented flag observed on the $Txf (Transactional NTFS) directory
+	 * after a fresh Windows format.  Not defined by any public NTFS
+	 * specification; preserve it rather than treating it as corruption.
+	 */
+	FILE_ATTR_TXF_INTERNAL		= const_cpu_to_le32(0x80000000),
 } __attribute__((__packed__)) FILE_ATTR_FLAGS;
 
 /*

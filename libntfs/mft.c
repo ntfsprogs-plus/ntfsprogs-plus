@@ -262,7 +262,9 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 	u16 current_flags;
 	u16 expected_flags;
 	u16 valid_flags = le16_to_cpu(MFT_RECORD_IN_USE) |
-			le16_to_cpu(MFT_RECORD_IS_DIRECTORY);
+			le16_to_cpu(MFT_RECORD_IS_DIRECTORY) |
+			le16_to_cpu(MFT_RECORD_IS_4) |
+			le16_to_cpu(MFT_RECORD_IS_VIEW_INDEX);
 	u32 offset;	/* attribute start offset */
 	u32 min_offset;	/* minimum attribute start offset */
 	u32 biu;	/* bytes_in_use */
@@ -435,6 +437,9 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 			}
 			current_flags = le16_to_cpu(m->flags);
 			expected_flags = current_flags & le16_to_cpu(MFT_RECORD_IN_USE);
+			/* IS_4 and IS_VIEW_INDEX cannot be derived from attributes; carry as-is */
+			expected_flags |= current_flags & (le16_to_cpu(MFT_RECORD_IS_4) |
+					le16_to_cpu(MFT_RECORD_IS_VIEW_INDEX));
 			if (saw_i30_index) {
 				can_derive_directory = TRUE;
 				expected_flags |= le16_to_cpu(MFT_RECORD_IS_DIRECTORY);
@@ -462,8 +467,8 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 					: 0;
 			if (is_fsck && !NVolFsNoRepair(vol) &&
 					(MREF(mref) > FILE_MFTMirr || vol->mftmirr_na) &&
-					(le16_to_cpu(m->next_attr_instance) !=
-					 expected_next_attr_instance)) {
+					(le16_to_cpu(m->next_attr_instance) <=
+					 max_attr_instance)) {
 				fsck_err_found();
 				ntfs_log_error("Inode(%llu): MFT next attribute instance is corrupted (%u <> %u). Fixed.\n",
 						(unsigned long long)MREF(mref),

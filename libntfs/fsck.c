@@ -117,12 +117,6 @@ u8 *ntfs_fsck_find_mftbmp_block(ntfs_volume *vol, s64 pos)
 	return vol->fsck_mft_bitmap[bm_i];
 }
 
-void ntfs_fsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit)
-{
-	while (length--)
-		ntfs_bit_set(bm, pos++, bit);
-}
-
 u8 *ntfs_fsck_find_lcnbmp_block(ntfs_volume *vol, s64 pos)
 {
 	u32 bm_i = FB_ROUND_DOWN(pos);

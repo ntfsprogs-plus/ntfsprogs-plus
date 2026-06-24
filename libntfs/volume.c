@@ -80,49 +80,10 @@
 const char *ntfs_home =
 "News, support and information:  https://github.com/tuxera/ntfs-3g/\n";
 
-static const char *invalid_ntfs_msg =
-"The device '%s' doesn't seem to have a valid NTFS.\n"
-"Maybe the wrong device is used? Or the whole disk instead of a\n"
-"partition (e.g. /dev/sda, not /dev/sda1)? Or the other way around?\n";
-
-static const char *corrupt_volume_msg =
-"NTFS is either inconsistent, or there is a hardware fault, or it's a\n"
-"SoftRAID/FakeRAID hardware. In the first case run chkdsk /f on Windows\n"
-"then reboot into Windows twice. The usage of the /f parameter is very\n"
-"important! If the device is a SoftRAID/FakeRAID then first activate\n"
-"it and mount a different device under the /dev/mapper/ directory, (e.g.\n"
-"/dev/mapper/nvidia_eahaabcc1). Please see the 'dmraid' documentation\n"
-"for more details.\n";
-
-static const char *hibernated_volume_msg =
-"The NTFS partition is in an unsafe state. Please resume and shutdown\n"
-"Windows fully (no hibernation or fast restarting), or mount the volume\n"
-"read-only with the 'ro' mount option.\n";
-
 static const char *fallback_readonly_msg =
 "Falling back to read-only mount because the NTFS partition is in an\n"
 "unsafe state. Please resume and shutdown Windows fully (no hibernation\n"
 "or fast restarting.)\n";
-
-static const char *unclean_journal_msg =
-"Write access is denied because the disk wasn't safely powered\n"
-"off and the 'norecover' mount option was specified.\n";
-
-static const char *opened_volume_msg =
-"Mount is denied because the NTFS volume is already exclusively opened.\n"
-"The volume may be already mounted, or another software may use it which\n"
-"could be identified for example by the help of the 'fuser' command.\n";
-
-static const char *fakeraid_msg =
-"Either the device is missing or it's powered down, or you have\n"
-"SoftRAID hardware and must use an activated, different device under\n"
-"/dev/mapper/, (e.g. /dev/mapper/nvidia_eahaabcc1) to mount NTFS.\n"
-"Please see the 'dmraid' documentation for help.\n";
-
-static const char *access_denied_msg =
-"Please check '%s' and the ntfs-3g binary permissions,\n"
-"and the mounting user ID. More explanation is provided at\n"
-"https://github.com/tuxera/ntfs-3g/wiki/NTFS-3G-FAQ\n";
 
 int fsck_errors;
 int fsck_fixes;
@@ -1688,58 +1649,6 @@ error_exit:
 	return NULL;
 }
 
-/*
- *		Set appropriate flags for showing NTFS metafiles
- *	or files marked as hidden.
- *	Not set in ntfs_mount() to avoid breaking existing tools.
- */
-
-int ntfs_set_shown_files(ntfs_volume *vol,
-		BOOL show_sys_files, BOOL show_hid_files,
-		BOOL hide_dot_files)
-{
-	int res;
-
-	res = -1;
-	if (vol) {
-		NVolClearShowSysFiles(vol);
-		NVolClearShowHidFiles(vol);
-		NVolClearHideDotFiles(vol);
-		if (show_sys_files)
-			NVolSetShowSysFiles(vol);
-		if (show_hid_files)
-			NVolSetShowHidFiles(vol);
-		if (hide_dot_files)
-			NVolSetHideDotFiles(vol);
-		res = 0;
-	}
-	if (res)
-		ntfs_log_error("Failed to set file visibility\n");
-	return (res);
-}
-
-/*
- *		Set ignore case mode
- */
-
-int ntfs_set_ignore_case(ntfs_volume *vol)
-{
-	int res;
-
-	res = -1;
-	if (vol && vol->upcase) {
-		vol->locase = ntfs_locase_table_build(vol->upcase,
-				vol->upcase_len);
-		if (vol->locase) {
-			NVolClearCaseSensitive(vol);
-			res = 0;
-		}
-	}
-	if (res)
-		ntfs_log_error("Failed to set ignore_case mode\n");
-	return (res);
-}
-
 /**
  * ntfs_mount - open ntfs volume
  * @name:	name of device/file to open
@@ -2144,87 +2053,6 @@ err_out:
 	return ret;
 }
 
-int ntfs_volume_error(int err)
-{
-	int ret;
-
-	switch (err) {
-		case 0:
-			ret = NTFS_VOLUME_OK;
-			break;
-		case EINVAL:
-			ret = NTFS_VOLUME_NOT_NTFS;
-			break;
-		case EIO:
-			ret = NTFS_VOLUME_CORRUPT;
-			break;
-		case EPERM:
-			/*
-			 * Hibernation and fast restarting are seen the
-			 * same way on a non Windows-system partition.
-			 */
-			ret = NTFS_VOLUME_HIBERNATED;
-			break;
-		case EOPNOTSUPP:
-			ret = NTFS_VOLUME_UNCLEAN_UNMOUNT;
-			break;
-		case EBUSY:
-			ret = NTFS_VOLUME_LOCKED;
-			break;
-		case ENXIO:
-			ret = NTFS_VOLUME_RAID;
-			break;
-		case EACCES:
-			ret = NTFS_VOLUME_NO_PRIVILEGE;
-			break;
-		default:
-			ret = NTFS_VOLUME_UNKNOWN_REASON;
-			break;
-	}
-	return ret;
-}
-
-
-void ntfs_mount_error(const char *volume, const char *mntpoint, int err)
-{
-	switch (err) {
-		case NTFS_VOLUME_NOT_NTFS:
-			ntfs_log_error(invalid_ntfs_msg, volume);
-			break;
-		case NTFS_VOLUME_CORRUPT:
-			ntfs_log_error("%s", corrupt_volume_msg);
-			break;
-		case NTFS_VOLUME_HIBERNATED:
-			ntfs_log_error(hibernated_volume_msg, volume, mntpoint);
-			break;
-		case NTFS_VOLUME_UNCLEAN_UNMOUNT:
-			ntfs_log_error("%s", unclean_journal_msg);
-			break;
-		case NTFS_VOLUME_LOCKED:
-			ntfs_log_error("%s", opened_volume_msg);
-			break;
-		case NTFS_VOLUME_RAID:
-			ntfs_log_error("%s", fakeraid_msg);
-			break;
-		case NTFS_VOLUME_NO_PRIVILEGE:
-			ntfs_log_error(access_denied_msg, volume);
-			break;
-	}
-}
-
-int ntfs_set_locale(void)
-{
-	const char *locale;
-
-	locale = setlocale(LC_ALL, "");
-	if (!locale) {
-		locale = setlocale(LC_ALL, NULL);
-		ntfs_log_error("Couldn't set local environment, using default "
-				"'%s'.\n", locale);
-		return 1;
-	}
-	return 0;
-}
 
 /*
  *		Feed the counts of free clusters and free mft records

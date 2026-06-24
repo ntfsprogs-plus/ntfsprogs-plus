@@ -98,13 +98,6 @@ AC_ARG_ENABLE(
 )
 
 AC_ARG_ENABLE(
-	[posix-acls],
-	[AS_HELP_STRING([--enable-posix-acls],[enable POSIX ACL support])],
-	,
-	[enable_posix_acls="no"]
-)
-
-AC_ARG_ENABLE(
 	[xattr-mappings],
 	[AS_HELP_STRING([--enable-xattr-mappings],[enable system extended attributes mappings])],
 	,
@@ -432,16 +425,6 @@ AC_CHECK_FUNCS([ \
 ])
 AC_SYS_LARGEFILE
 
-# The dlopen API might be in libc or in libdl.  Check libc first, then
-# fall back to libdl.
-LIBDL=""
-if test "x${disable_plugins}" = "xno"; then
-	AC_CHECK_LIB(c, dlopen, ,
-		[AC_CHECK_LIB(dl, dlopen, [LIBDL="-ldl"],
-			[AC_MSG_ERROR(["Unable to find libdl (required for external plugin support)"])])])
-fi
-AC_SUBST([LIBDL])
-
 if test "$GCC" = "yes" ; then
 	# We add -Wall to enable some compiler warnings.
 	CFLAGS="${CFLAGS} -Wall -Wno-address-of-packed-member"
@@ -472,15 +455,12 @@ test "${enable_device_default_io_ops}" = "no" && AC_DEFINE(
 )
 
 test "${enable_mtab}" = "no" && AC_DEFINE([IGNORE_MTAB], [1], [Don't update /etc/mtab])
-test "${enable_posix_acls}" != "no" && AC_DEFINE([POSIXACLS], [1], [POSIX ACL support])
 test "${enable_xattr_mappings}" != "no" && AC_DEFINE([XATTR_MAPPINGS], [1], [system extended attributes mappings])
-test "${disable_plugins}" != "no" && AC_DEFINE([DISABLE_PLUGINS], [1], [Define to 1 for disabling reparse plugins])
 
 test "${enable_really_static}" = "yes" && enable_library="no"
 test "${enable_library}" = "no" && enable_ldconfig="no"
 
 if test "x${DISTCHECK_HACK}" != "x"; then
-	enable_mount_helper="no"
 	enable_ldconfig="no"
 fi
 
@@ -520,7 +500,6 @@ AM_CONDITIONAL([REALLYSTATIC], [test "${enable_really_static}" = "yes"])
 AM_CONDITIONAL([INSTALL_LIBRARY], [test "${enable_library}" = "yes"])
 AM_CONDITIONAL([ENABLE_EXTRAS], [test "${enable_extras}" = "yes"])
 AM_CONDITIONAL([ENABLE_QUARANTINED], [test "${enable_quarantined}" = "yes"])
-AM_CONDITIONAL([DISABLE_PLUGINS], [test "${disable_plugins}" != "no"])
 
 # workaround for <autoconf-2.60
 if test -z "${docdir}"; then

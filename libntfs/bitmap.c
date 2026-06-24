@@ -309,39 +309,6 @@ int ntfs_bitmap_clear_run(ntfs_attr *na, s64 start_bit, s64 count)
 
 #define ffzl(x)	ffsl(~(x))
 
-/* codes from linux, find_bit.c and find.h */
-static unsigned long _find_first_bit(const unsigned long *addr, unsigned long size)
-{
-	unsigned long idx;
-
-	for (idx = 0; idx * BITS_PER_LONG < size; idx++) {
-		if (addr[idx])
-			return idx * BITS_PER_LONG + ffsl(addr[idx]) - 1;
-	}
-
-	return size;
-}
-
-/**
- * ntfs_find_first_bit() find first set bit in addr with 'size'
- * addr : address to find set bit
- * size : size of address to find set bit
- *
- * return 0 ~ ('size' - 1) for set bit, and return 'size'
- * if 'addr' has no set bit within 'size'.
- */
-unsigned long ntfs_find_first_bit(const unsigned long *addr, unsigned long size)
-{
-	if (size > 0 && size <= BITS_PER_LONG) {
-		unsigned long val = *addr & GENMASK(size - 1, 0);
-
-		return val ? (ffsl(val) - 1) : size;
-	}
-
-	return _find_first_bit(addr, size);
-
-}
-
 static unsigned long _find_next_bit(const unsigned long *addr, unsigned long nbits,
 		unsigned long start, unsigned long invert)
 {
@@ -369,24 +336,6 @@ static unsigned long _find_next_bit(const unsigned long *addr, unsigned long nbi
 	}
 
 	return tmp ? (start + ffsl(tmp) - 1) : nbits;
-}
-
-/**
- *
- */
-unsigned long ntfs_find_next_bit(const unsigned long *addr, unsigned long size, unsigned long offset)
-{
-	if (size > 0 && size <= BITS_PER_LONG) {
-		unsigned long val;
-
-		if (offset >= size)
-			return size;
-
-		val = *addr & GENMASK(size - 1, offset);
-		return val ? ffsl(val) - 1 : size;
-	}
-
-	return _find_next_bit(addr, size, offset, 0UL);
 }
 
 /*

@@ -21,7 +21,6 @@ headers = \
 	fsck.h		\
 	index.h		\
 	inode.h		\
-	ioctl.h		\
 	layout.h	\
 	lcnalloc.h	\
 	lib_utils.h	\
@@ -33,7 +32,6 @@ headers = \
 	ntfstime.h	\
 	object_id.h	\
 	param.h		\
-	plugin.h	\
 	problem.h	\
 	realpath.h	\
 	reparse.h	\

@@ -289,28 +289,6 @@ char *ntfs_ie_filename_get(INDEX_ENTRY *ie)
 	return ntfs_attr_name_get(fn->file_name, fn->file_name_length);
 }
 
-void ntfs_ie_filename_dump(INDEX_ENTRY *ie)
-{
-	char *s;
-
-	s = ntfs_ie_filename_get(ie);
-	ntfs_log_debug("'%s' ", s);
-	ntfs_attr_name_free(&s);
-}
-
-void ntfs_ih_filename_dump(INDEX_HEADER *ih)
-{
-	INDEX_ENTRY *ie;
-
-	ntfs_log_trace("Entering\n");
-
-	ie = ntfs_ie_get_first(ih);
-	while (!ntfs_ie_end(ie)) {
-		ntfs_ie_filename_dump(ie);
-		ie = ntfs_ie_get_next(ie);
-	}
-}
-
 static int ntfs_ih_numof_entries(INDEX_HEADER *ih)
 {
 	int n;

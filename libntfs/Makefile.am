@@ -31,7 +31,6 @@ libntfs_la_SOURCES =	\
 	fsck.c		\
 	index.c 	\
 	inode.c 	\
-	ioctl.c 	\
 	lcnalloc.c 	\
 	lib_utils.c	\
 	logfile.c 	\

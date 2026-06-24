@@ -902,57 +902,6 @@ out:
 }
 
 /**
- * ntfs_attr_vcn_to_lcn - convert a vcn into a lcn given an ntfs attribute
- * @na:		ntfs attribute whose runlist to use for conversion
- * @vcn:	vcn to convert
- *
- * Convert the virtual cluster number @vcn of an attribute into a logical
- * cluster number (lcn) of a device using the runlist @na->rl to map vcns to
- * their corresponding lcns.
- *
- * If the @vcn is not mapped yet, attempt to map the attribute extent
- * containing the @vcn and retry the vcn to lcn conversion.
- *
- * Since lcns must be >= 0, we use negative return values with special meaning:
- *
- * Return value		Meaning / Description
- * ==========================================
- *  -1 = LCN_HOLE	Hole / not allocated on disk.
- *  -3 = LCN_ENOENT	There is no such vcn in the attribute.
- *  -4 = LCN_EINVAL	Input parameter error.
- *  -5 = LCN_EIO	Corrupt fs, disk i/o error, or not enough memory.
- */
-LCN ntfs_attr_vcn_to_lcn(ntfs_attr *na, const VCN vcn)
-{
-	LCN lcn;
-	BOOL is_retry = FALSE;
-
-	if (!na || !NAttrNonResident(na) || vcn < 0)
-		return (LCN)LCN_EINVAL;
-
-	ntfs_log_trace("Entering for inode 0x%llx, attr 0x%x.\n", (unsigned long
-				long)na->ni->mft_no, le32_to_cpu(na->type));
-retry:
-	/* Convert vcn to lcn. If that fails map the runlist and retry once. */
-	lcn = ntfs_rl_vcn_to_lcn(na->rl, vcn);
-	if (lcn >= 0)
-		return lcn;
-	if (!is_retry && !ntfs_attr_map_runlist(na, vcn)) {
-		is_retry = TRUE;
-		goto retry;
-	}
-	/*
-	 * If the attempt to map the runlist failed, or we are getting
-	 * LCN_RL_NOT_MAPPED despite having mapped the attribute extent
-	 * successfully, something is really badly wrong...
-	 */
-	if (!is_retry || lcn == (LCN)LCN_RL_NOT_MAPPED)
-		return (LCN)LCN_EIO;
-	/* lcn contains the appropriate error code. */
-	return lcn;
-}
-
-/**
  * ntfs_attr_find_vcn - find a vcn in the runlist of an ntfs attribute
  * @na:		ntfs attribute whose runlist to search
  * @vcn:	vcn to find
@@ -7149,15 +7098,6 @@ int ntfs_attr_truncate(ntfs_attr *na, const s64 newsize)
 	NAttrClearDataAppending(na);
 	NAttrClearBeingNonResident(na);
 	return (r);
-}
-
-/*
- *		Resize an attribute, avoiding hole creation
- */
-
-int ntfs_attr_truncate_solid(ntfs_attr *na, const s64 newsize)
-{
-	return (ntfs_attr_truncate_i(na, newsize, HOLES_NO));
 }
 
 /*

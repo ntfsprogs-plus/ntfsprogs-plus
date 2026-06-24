@@ -164,25 +164,6 @@ int ntfs_device_free(struct ntfs_device *dev)
 	return 0;
 }
 
-/*
- *		Sync the device
- *
- *	returns zero if successful.
- */
-
-int ntfs_device_sync(struct ntfs_device *dev)
-{
-	int ret;
-	struct ntfs_device_operations *dops;
-
-	if (NDevDirty(dev)) {
-		dops = dev->d_ops;
-		ret = dops->sync(dev);
-	} else
-		ret = 0;
-	return ret;
-}
-
 /**
  * ntfs_pread - positioned read from disk
  * @dev:	device to read from
@@ -417,81 +398,6 @@ s64 ntfs_mst_pwrite(struct ntfs_device *dev, const s64 pos, s64 count,
 		return written;
 	/* Finally, return the number of complete blocks written. */
 	return written / bksize;
-}
-
-/**
- * ntfs_cluster_read - read ntfs clusters
- * @vol:	volume to read from
- * @lcn:	starting logical cluster number
- * @count:	number of clusters to read
- * @b:		output data buffer
- *
- * Read @count ntfs clusters starting at logical cluster number @lcn from
- * volume @vol into buffer @b. Return number of clusters read or -1 on error,
- * with errno set to the error code.
- */
-s64 ntfs_cluster_read(const ntfs_volume *vol, const s64 lcn, const s64 count,
-		void *b)
-{
-	s64 br;
-
-	if (!vol || lcn < 0 || count < 0) {
-		errno = EINVAL;
-		return -1;
-	}
-	if (vol->nr_clusters < lcn + count) {
-		errno = ESPIPE;
-		ntfs_log_perror("Trying to read outside of volume "
-				"(%lld < %lld)", (long long)vol->nr_clusters,
-				(long long)lcn + count);
-		return -1;
-	}
-	br = ntfs_pread(vol->dev, lcn << vol->cluster_size_bits,
-			count << vol->cluster_size_bits, b);
-	if (br < 0) {
-		ntfs_log_perror("Error reading cluster(s)");
-		return br;
-	}
-	return br >> vol->cluster_size_bits;
-}
-
-/**
- * ntfs_cluster_write - write ntfs clusters
- * @vol:	volume to write to
- * @lcn:	starting logical cluster number
- * @count:	number of clusters to write
- * @b:		data buffer to write to disk
- *
- * Write @count ntfs clusters starting at logical cluster number @lcn from
- * buffer @b to volume @vol. Return the number of clusters written or -1 on
- * error, with errno set to the error code.
- */
-s64 ntfs_cluster_write(const ntfs_volume *vol, const s64 lcn,
-		const s64 count, const void *b)
-{
-	s64 bw;
-
-	if (!vol || lcn < 0 || count < 0) {
-		errno = EINVAL;
-		return -1;
-	}
-	if (vol->nr_clusters < lcn + count) {
-		errno = ESPIPE;
-		ntfs_log_perror("Trying to write outside of volume "
-				"(%lld < %lld)", (long long)vol->nr_clusters,
-				(long long)lcn + count);
-		return -1;
-	}
-	if (!NVolReadOnly(vol))
-		bw = ntfs_pwrite(vol->dev, lcn << vol->cluster_size_bits,
-				count << vol->cluster_size_bits, b);
-	else
-		bw = count << vol->cluster_size_bits;
-	if (bw < 0) {
-		ntfs_log_perror("Error writing cluster(s)");
-		return bw;
-	}
-	return bw >> vol->cluster_size_bits;
 }
 
 /**

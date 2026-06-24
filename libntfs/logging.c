@@ -142,52 +142,6 @@ u32 ntfs_log_clear_levels(u32 levels)
 }
 
 
-/**
- * ntfs_log_get_flags - Get a list of logging style flags
- *
- * Find out which logging flags are enabled.
- *
- * Returns:  Logging flags in a 32-bit field
- */
-u32 ntfs_log_get_flags(void)
-{
-	return ntfs_log.flags;
-}
-
-/**
- * ntfs_log_set_flags - Enable extra logging style flags
- * @flags:	32-bit field of logging flags to set
- *
- * Enable one or more logging flags.
- * The log flags are named: NTFS_LOG_LEVEL_*.
- *
- * Returns:  Logging flags that were enabled before the call
- */
-u32 ntfs_log_set_flags(u32 flags)
-{
-	u32 old;
-	old = ntfs_log.flags;
-	ntfs_log.flags |= flags;
-	return old;
-}
-
-/**
- * ntfs_log_clear_flags - Disable some logging styles
- * @flags:	32-bit field of logging flags to clear
- *
- * Disable one or more logging flags.
- * The log flags are named: NTFS_LOG_LEVEL_*.
- *
- * Returns:  Logging flags that were enabled before the call
- */
-u32 ntfs_log_clear_flags(u32 flags)
-{
-	u32 old;
-	old = ntfs_log.flags;
-	ntfs_log.flags &= (~flags);
-	return old;
-}
-
 
 /**
  * ntfs_log_get_stream - Default output streams for logging levels
@@ -508,36 +462,6 @@ int ntfs_log_handler_null(const char *function __attribute__((unused)), const ch
 		const char *format __attribute__((unused)), va_list args __attribute__((unused)))
 {
 	return 0;
-}
-
-/**
- * ntfs_log_handler_stdout - All logs go to stdout
- * @function:	Function in which the log line occurred
- * @file:	File in which the log line occurred
- * @line:	Line number on which the log line occurred
- * @level:	Level at which the line is logged
- * @data:	User specified data, possibly specific to a handler
- * @format:	printf-style formatting string
- * @args:	Arguments to be formatted
- *
- * Display a log message to stdout.
- *
- * Note: For this handler, @data is a pointer to a FILE output stream.
- *       If @data is NULL, then stdout will be used.
- *
- * Note: This function calls ntfs_log_handler_fprintf to do the main work.
- *
- * Returns:  -1  Error occurred
- *            0  Message wasn't logged
- *          num  Number of output characters
- */
-int ntfs_log_handler_stdout(const char *function, const char *file,
-		int line, u32 level, void *data, const char *format, va_list args)
-{
-	if (!data)
-		data = stdout;
-
-	return ntfs_log_handler_fprintf(function, file, line, level, data, format, args);
 }
 
 /**

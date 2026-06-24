@@ -657,64 +657,6 @@ err_out:
 }
 
 /**
- * ntfs_is_logfile_clean - check in the journal if the volume is clean
- * @log_na:	ntfs attribute of loaded journal $LogFile to check
- * @rp:         copy of the current restart page
- *
- * Analyze the $LogFile journal and return TRUE if it indicates the volume was
- * shutdown cleanly and FALSE if not.
- *
- * At present we only look at the two restart pages and ignore the log record
- * pages.  This is a little bit crude in that there will be a very small number
- * of cases where we think that a volume is dirty when in fact it is clean.
- * This should only affect volumes that have not been shutdown cleanly but did
- * not have any pending, non-check-pointed i/o, i.e. they were completely idle
- * at least for the five seconds preceding the unclean shutdown.
- *
- * This function assumes that the $LogFile journal has already been consistency
- * checked by a call to ntfs_check_logfile() and in particular if the $LogFile
- * is empty this function requires that NVolLogFileEmpty() is true otherwise an
- * empty volume will be reported as dirty.
- */
-BOOL ntfs_is_logfile_clean(ntfs_attr *log_na, RESTART_PAGE_HEADER *rp)
-{
-	RESTART_AREA *ra;
-
-	ntfs_log_trace("Entering.\n");
-	/* An empty $LogFile must have been clean before it got emptied. */
-	if (NVolLogFileEmpty(log_na->ni->vol)) {
-		ntfs_log_trace("$LogFile is empty\n");
-		return TRUE;
-	}
-	if (!rp) {
-		ntfs_log_error("Restart page header is NULL\n");
-		return FALSE;
-	}
-	if (!ntfs_is_rstr_record(rp->magic) &&
-			!ntfs_is_chkd_record(rp->magic)) {
-		ntfs_log_error("Restart page buffer is invalid\n");
-		return FALSE;
-	}
-
-	ra = (RESTART_AREA*)((u8*)rp + le16_to_cpu(rp->restart_area_offset));
-	/*
-	 * If the $LogFile has active clients, i.e. it is open, and we do not
-	 * have the RESTART_VOLUME_IS_CLEAN bit set in the restart area flags,
-	 * we assume there was an unclean shutdown.
-	 */
-	if (ra->client_in_use_list != LOGFILE_NO_CLIENT &&
-			!(ra->flags & RESTART_VOLUME_IS_CLEAN)) {
-		ntfs_log_error("The disk contains an unclean file system (%d, "
-				"%d).\n", le16_to_cpu(ra->client_in_use_list),
-				le16_to_cpu(ra->flags));
-		return FALSE;
-	}
-	/* $LogFile indicates a clean shutdown. */
-	ntfs_log_trace("$LogFile indicates a clean shutdown\n");
-	return TRUE;
-}
-
-/**
  * ntfs_empty_logfile - empty the contents of the $LogFile journal
  * @na:		ntfs attribute of journal $LogFile to empty
  *

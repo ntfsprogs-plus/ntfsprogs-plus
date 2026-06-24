@@ -28,7 +28,6 @@
 AC_PREREQ([2.59])
 AC_INIT([ntfsprogs-plus],[1.0.0],[linkinjeon@kernel.org])
 AC_CONFIG_SRCDIR([config.h.in])
-LIBNTFS_VERSION="90"
 
 # Environment
 AC_CANONICAL_HOST
@@ -85,9 +84,9 @@ AC_ARG_ENABLE(
 
 AC_ARG_ENABLE(
 	[library],
-	[AS_HELP_STRING([--disable-library],[do not install libntfs but link it into ntfs])],
+	[AS_HELP_STRING([--enable-library],[install libntfs as a shared library instead of linking it statically into the tools])],
 	,
-	[enable_library="yes"]
+	[enable_library="no"]
 )
 
 AC_ARG_ENABLE(
@@ -485,7 +484,6 @@ AC_SUBST([ntfsincludedir])
 AC_SUBST([rootbindir])
 AC_SUBST([rootsbindir])
 AC_SUBST([rootlibdir])
-AC_SUBST([LIBNTFS_VERSION])
 AC_SUBST([MKNTFS_CPPFLAGS])
 AC_SUBST([MKNTFS_LIBS])
 AC_SUBST([LIBNTFS_CPPFLAGS])

@@ -12,14 +12,32 @@ endif
 # Workaround to make REALLYSTATIC work with automake 1.5.
 LINK=$(STATIC_LINK) $(LIBTOOL_LINK)
 
-bin_PROGRAMS		= ntfsinfo ntfscluster
-sbin_PROGRAMS		= mkntfs ntfslabel ntfsclone ntfsck ntfsresize
+bin_PROGRAMS		= ntfsinfo ntfscluster ntfsls ntfscat ntfscmp
+sbin_PROGRAMS		= mkntfs ntfslabel ntfsclone ntfsck ntfsresize \
+			  ntfsundelete ntfscp
+
+# Built only with --enable-extras (and ntfsmove also needs --enable-quarantined),
+# matching upstream ntfsprogs classification.
+EXTRA_PROGRAM_NAMES	= ntfswipe
+QUARANTINED_PROGRAM_NAMES = ntfsmove
 
 man_MANS		= mkntfs.8 ntfslabel.8 ntfsinfo.8 ntfsck.8 \
 			  ntfsprogs-plus.8 ntfsclone.8 ntfscluster.8 \
-			  ntfsresize.8
+			  ntfsresize.8 ntfsls.8 ntfscat.8 ntfscmp.8 \
+			  ntfswipe.8 ntfsundelete.8 ntfscp.8
 
 EXTRA_MANS		=
+
+CLEANFILES		= $(EXTRA_PROGRAMS)
+
+if ENABLE_EXTRAS
+bin_PROGRAMS		+= $(EXTRA_PROGRAM_NAMES)
+if ENABLE_QUARANTINED
+bin_PROGRAMS		+= $(QUARANTINED_PROGRAM_NAMES)
+endif
+else
+EXTRA_PROGRAMS		= $(EXTRA_PROGRAM_NAMES) $(QUARANTINED_PROGRAM_NAMES)
+endif
 
 MAINTAINERCLEANFILES = Makefile.in
 
@@ -55,6 +73,34 @@ ntfsck_SOURCES		= ntfsck.c utils.c utils.h
 ntfsck_LDADD		= $(AM_LIBS)
 ntfsck_LDFLAGS		= $(AM_LFLAGS)
 
+ntfsls_SOURCES		= ntfsls.c utils.c utils.h list.h
+ntfsls_LDADD		= $(AM_LIBS)
+ntfsls_LDFLAGS		= $(AM_LFLAGS)
+
+ntfscat_SOURCES		= ntfscat.c ntfscat.h utils.c utils.h
+ntfscat_LDADD		= $(AM_LIBS)
+ntfscat_LDFLAGS		= $(AM_LFLAGS)
+
+ntfscmp_SOURCES		= ntfscmp.c utils.c utils.h
+ntfscmp_LDADD		= $(AM_LIBS)
+ntfscmp_LDFLAGS		= $(AM_LFLAGS)
+
+ntfsundelete_SOURCES	= ntfsundelete.c ntfsundelete.h utils.c utils.h list.h
+ntfsundelete_LDADD	= $(AM_LIBS)
+ntfsundelete_LDFLAGS	= $(AM_LFLAGS)
+
+ntfscp_SOURCES		= ntfscp.c utils.c utils.h
+ntfscp_LDADD		= $(AM_LIBS)
+ntfscp_LDFLAGS		= $(AM_LFLAGS)
+
+ntfswipe_SOURCES	= ntfswipe.c ntfswipe.h utils.c utils.h
+ntfswipe_LDADD		= $(AM_LIBS)
+ntfswipe_LDFLAGS	= $(AM_LFLAGS)
+
+ntfsmove_SOURCES	= ntfsmove.c ntfsmove.h utils.c utils.h
+ntfsmove_LDADD		= $(AM_LIBS)
+ntfsmove_LDFLAGS	= $(AM_LFLAGS)
+
 # Extra targets
 
 strip:	$(bin_PROGRAMS) $(sbin_PROGRAMS)
@@ -62,6 +108,8 @@ strip:	$(bin_PROGRAMS) $(sbin_PROGRAMS)
 
 libs:
 	(cd ../libntfs && $(MAKE) libs) || exit 1;
+
+extras:	libs $(EXTRA_PROGRAMS)
 
 # mkfs.ntfs[.8] hard link
 

@@ -1043,3 +1043,69 @@ char *ntfs_utils_unix_path(const char *in)
 }
 
 #endif /* HAVE_WINDOWS_H */
+
+/**
+ * utils_cluster_in_use - Determine if a cluster is in use
+ * @vol:  An ntfs volume obtained from ntfs_mount
+ * @lcn:  The Logical Cluster Number to test
+ *
+ * The metadata file $Bitmap has one binary bit representing each cluster on
+ * disk.  The bit will be set for each cluster that is in use.  The function
+ * reads the relevant part of $Bitmap into a buffer and tests the bit.
+ *
+ * This function has a static buffer in which it caches a section of $Bitmap.
+ * If the lcn, being tested, lies outside the range, the buffer will be
+ * refreshed. @bmplcn stores offset to the first bit (in bits) stored in the
+ * buffer.
+ *
+ * NOTE: Be very carefull with shifts by 3 everywhere in this function.
+ *
+ * Return:  1  Cluster is in use
+ *	    0  Cluster is free space
+ *	   -1  Error occurred
+ */
+int utils_cluster_in_use(ntfs_volume *vol, long long lcn)
+{
+	static unsigned char buffer[512];
+	static long long bmplcn = -(sizeof(buffer) << 3);
+	int byte, bit;
+	ntfs_attr *attr;
+
+	if (!vol) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	/* Does lcn lie in the section of $Bitmap we already have cached? */
+	if ((lcn < bmplcn)
+			|| (lcn >= (long long)(bmplcn + (sizeof(buffer) << 3)))) {
+		ntfs_log_debug("Bit lies outside cache.\n");
+		attr = ntfs_attr_open(vol->lcnbmp_ni, AT_DATA, AT_UNNAMED, 0);
+		if (!attr) {
+			ntfs_log_perror("Couldn't open $Bitmap");
+			return -1;
+		}
+
+		/* Mark the buffer as in use, in case the read is shorter. */
+		memset(buffer, 0xFF, sizeof(buffer));
+		bmplcn = lcn & (~((sizeof(buffer) << 3) - 1));
+
+		if (ntfs_attr_pread(attr, (bmplcn >> 3), sizeof(buffer),
+					buffer) < 0) {
+			ntfs_log_perror("Couldn't read $Bitmap");
+			ntfs_attr_close(attr);
+			return -1;
+		}
+
+		ntfs_log_debug("Reloaded bitmap buffer.\n");
+		ntfs_attr_close(attr);
+	}
+
+	bit  = 1 << (lcn & 7);
+	byte = (lcn >> 3) & (sizeof(buffer) - 1);
+	ntfs_log_debug("cluster = %lld, bmplcn = %lld, byte = %d, bit = %d, "
+			"in use %d\n", lcn, bmplcn, byte, bit, buffer[byte] &
+			bit);
+
+	return (buffer[byte] & bit);
+}

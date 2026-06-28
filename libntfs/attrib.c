@@ -7101,6 +7101,15 @@ int ntfs_attr_truncate(ntfs_attr *na, const s64 newsize)
 }
 
 /*
+ *		Resize an attribute, avoiding hole creation
+ */
+
+int ntfs_attr_truncate_solid(ntfs_attr *na, const s64 newsize)
+{
+	return (ntfs_attr_truncate_i(na, newsize, HOLES_NO));
+}
+
+/*
  *		Stuff a hole in a compressed file
  *
  *	An unallocated hole must be aligned on compression block size.

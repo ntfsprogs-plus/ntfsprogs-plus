@@ -90,6 +90,20 @@ AC_ARG_ENABLE(
 )
 
 AC_ARG_ENABLE(
+	[extras],
+	[AS_HELP_STRING([--enable-extras],[build the extra ntfsprogs utilities (e.g. ntfswipe)])],
+	,
+	[enable_extras="no"]
+)
+
+AC_ARG_ENABLE(
+	[quarantined],
+	[AS_HELP_STRING([--enable-quarantined],[build the quarantined ntfsprogs utilities (e.g. ntfsmove); requires --enable-extras])],
+	,
+	[enable_quarantined="no"]
+)
+
+AC_ARG_ENABLE(
 	[mtab],
 	[AS_HELP_STRING([--disable-mtab],[disable and ignore usage of /etc/mtab])],
 	,
@@ -524,6 +538,12 @@ AC_CONFIG_FILES([
 	src/ntfslabel.8
 	src/ntfsprogs-plus.8
 	src/ntfsck.8
+	src/ntfsls.8
+	src/ntfscat.8
+	src/ntfscmp.8
+	src/ntfswipe.8
+	src/ntfsundelete.8
+	src/ntfscp.8
 ])
 AC_OUTPUT
 

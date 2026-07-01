@@ -5392,6 +5392,164 @@ static ntfs_inode *ntfsck_get_opened_ni_vol(ntfs_volume *vol, s64 mft_num)
 	return ni;
 }
 
+/*
+ * $SDS layout constants. Security descriptors are stored in 0x40000-byte
+ * blocks that alternate primary / backup: block 0 is primary, block 1 holds
+ * the byte-for-byte backup of block 0, block 2 is primary again, and so on.
+ */
+#define NTFSCK_SDS_BLOCK	0x40000
+#define NTFSCK_SDS_ALIGN	16
+/* On-disk $SDS entry header size (before the embedded descriptor). */
+#define NTFSCK_SDS_HDR		((u32)offsetof(SDS_ENTRY, sid))
+
+/*
+ * ntfsck_security_hash - Windows security-descriptor hash.
+ *
+ * The hash accumulates 32-bit little-endian words of the self-relative
+ * descriptor with a rotate-left-by-3 between each step. This is the value
+ * cached in the $SDS entry header and mirrored in the $SII / $SDH indices.
+ */
+static le32 ntfsck_security_hash(const SECURITY_DESCRIPTOR_RELATIVE *sd, u32 len)
+{
+	const le32 *pos = (const le32 *)sd;
+	const le32 *end = pos + (len >> 2);
+	u32 hash = 0;
+
+	while (pos < end) {
+		hash = (hash << 3) | (hash >> (32 - 3));
+		hash += le32_to_cpu(*pos);
+		pos++;
+	}
+	return cpu_to_le32(hash);
+}
+
+/*
+ * ntfsck_check_secure - deep cross-validation of $Secure ($SDS).
+ *
+ * Walks the $SDS stream one primary/backup block pair at a time and, for every
+ * security descriptor, verifies:
+ *   - the entry's self-recorded offset matches its physical position;
+ *   - the entry length and descriptor stay within the stream;
+ *   - the descriptor revision is valid;
+ *   - the recomputed hash matches the hash cached in the entry header;
+ *   - the backup copy (primary offset + 0x40000) is byte-identical.
+ *
+ * This is a read-only integrity pass: the security database is never rewritten,
+ * because reconstructing $SDS / $SII / $SDH from partial data risks corrupting
+ * the access control of every file. Detected inconsistencies are reported so
+ * that an operator can decide how to recover.
+ */
+static void ntfsck_check_secure(ntfs_inode *ni)
+{
+	ntfs_volume *vol = ni->vol;
+	ntfs_attr *na;
+	u8 *pbuf = NULL, *bbuf = NULL;
+	s64 data_size, base;
+	problem_context_t pctx = {0, };
+
+	na = ntfs_attr_open(ni, AT_DATA, STREAM_SDS, 4);
+	if (!na)
+		return;		/* no $SDS stream - nothing to validate */
+
+	data_size = na->data_size;
+	if (data_size < (s64)NTFSCK_SDS_HDR)
+		goto out;
+
+	pbuf = ntfs_malloc(NTFSCK_SDS_BLOCK);
+	bbuf = ntfs_malloc(NTFSCK_SDS_BLOCK);
+	if (!pbuf || !bbuf)
+		goto out;
+
+	ntfs_init_problem_ctx(&pctx, ni, na, NULL, NULL, ni->mrec, NULL, NULL);
+
+	/* Iterate over primary blocks; each has its backup 0x40000 later. */
+	for (base = 0; base < data_size; base += 2 * NTFSCK_SDS_BLOCK) {
+		s64 plen = data_size - base;
+		s64 blen;
+		s64 p;
+
+		if (plen > NTFSCK_SDS_BLOCK)
+			plen = NTFSCK_SDS_BLOCK;
+		if (ntfs_attr_pread(na, base, plen, pbuf) != plen)
+			break;
+
+		blen = data_size - (base + NTFSCK_SDS_BLOCK);
+		if (blen > NTFSCK_SDS_BLOCK)
+			blen = NTFSCK_SDS_BLOCK;
+		if (blen > 0) {
+			if (ntfs_attr_pread(na, base + NTFSCK_SDS_BLOCK, blen,
+					bbuf) != blen)
+				blen = 0;
+		} else
+			blen = 0;
+
+		p = 0;
+		while (p + (s64)NTFSCK_SDS_HDR <= plen) {
+			SDS_ENTRY *e = (SDS_ENTRY *)(pbuf + p);
+			u32 length = le32_to_cpu(e->length);
+			u32 descr_len;
+			SECURITY_DESCRIPTOR_RELATIVE *sd;
+
+			/* A zero-length entry marks the end of this block. */
+			if (!length && !le32_to_cpu(e->security_id))
+				break;
+
+			/* Self-recorded offset must match the real position. */
+			if (le64_to_cpu(e->offset) != (u64)(base + p) ||
+					length < NTFSCK_SDS_HDR ||
+					p + length > plen) {
+				fsck_err_found();
+				ntfs_log_error("$Secure $SDS: entry at offset %"
+						PRId64" is inconsistent "
+						"(offset=%"PRIu64" length=%u)\n",
+						base + p, le64_to_cpu(e->offset),
+						length);
+				ntfs_fix_problem(vol,
+						PR_SECURE_SDS_ENTRY_CORRUPTED, &pctx);
+				break;
+			}
+
+			descr_len = length - NTFSCK_SDS_HDR;
+			sd = (SECURITY_DESCRIPTOR_RELATIVE *)(pbuf + p +
+					NTFSCK_SDS_HDR);
+
+			if (descr_len < sizeof(SECURITY_DESCRIPTOR_RELATIVE) ||
+					sd->revision != SECURITY_DESCRIPTOR_REVISION) {
+				fsck_err_found();
+				ntfs_log_error("$Secure $SDS: descriptor at offset "
+						"%"PRId64" is invalid\n", base + p);
+				ntfs_fix_problem(vol,
+						PR_SECURE_SDS_ENTRY_CORRUPTED, &pctx);
+			} else if (ntfsck_security_hash(sd, descr_len) != e->hash) {
+				fsck_err_found();
+				ntfs_log_error("$Secure $SDS: hash mismatch at "
+						"offset %"PRId64" (id=%u)\n",
+						base + p,
+						le32_to_cpu(e->security_id));
+				ntfs_fix_problem(vol,
+						PR_SECURE_SDS_HASH_MISMATCH, &pctx);
+			}
+
+			/* Compare against the backup copy when available. */
+			if (blen >= p + (s64)length &&
+					memcmp(pbuf + p, bbuf + p, length)) {
+				fsck_err_found();
+				ntfs_log_error("$Secure $SDS: backup copy differs "
+						"at offset %"PRId64"\n", base + p);
+				ntfs_fix_problem(vol,
+						PR_SECURE_SDS_MIRROR_MISMATCH, &pctx);
+			}
+
+			p = (p + length + NTFSCK_SDS_ALIGN - 1) &
+					~(s64)(NTFSCK_SDS_ALIGN - 1);
+		}
+	}
+
+out:
+	free(pbuf);
+	free(bbuf);
+	ntfs_attr_close(na);
+}
 static int ntfsck_validate_system_file(ntfs_inode *ni)
 {
 	ntfs_volume *vol = ni->vol;
@@ -5415,6 +5573,10 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 		if ((ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) &&
 				ntfsck_check_directory(ni))
 			return -EIO;
+
+		/* Deep cross-validation of the security database. */
+		if (ni->mft_no == FILE_Secure)
+			ntfsck_check_secure(ni);
 		break;
 	case FILE_Bitmap:
 		s64 max_lcnbmp_size;

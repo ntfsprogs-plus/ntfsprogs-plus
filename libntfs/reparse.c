@@ -181,6 +181,20 @@ static BOOL valid_reparse_data(ntfs_inode *ni,
 }
 
 /*
+ *		Public wrapper around valid_reparse_data() so that fsck can
+ *	structurally validate a reparse point (tag, length and payload
+ *	bounds) using the same tested logic as the rest of libntfs.
+ *
+ *	Returns TRUE if the reparse data is structurally valid.
+ */
+
+BOOL ntfs_reparse_data_is_valid(ntfs_inode *ni,
+		const REPARSE_POINT *reparse_attr, size_t size)
+{
+	return valid_reparse_data(ni, reparse_attr, size);
+}
+
+/*
  *		Check whether a reparse point looks like a junction point
  *	or a symbolic link.
  *	Should only be called for files or directories with reparse data

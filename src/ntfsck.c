@@ -3746,6 +3746,155 @@ out:
 	return ret;
 }
 
+/*
+ * RFC Phase 6: validate the $EA (extended attribute) chain.
+ *
+ * Walk the EA_ATTR linked list applying the structural rules used by
+ * ntfs_set_ntfs_ea() (chain integrity, name/value bounds, null terminator)
+ * and cross-check the packed size / NEED_EA count against $EA_INFORMATION.
+ * Following the RFC's "deletion over dubious repair" principle, a corrupt
+ * chain causes both $EA and $EA_INFORMATION to be removed together; the
+ * primary $DATA is never touched. Name characters are intentionally not
+ * validated, matching chkdsk (and ntfs_set_ntfs_ea()), to avoid destroying
+ * otherwise valid extended attributes.
+ */
+#define NTFSCK_EA_MAX_SIZE	(256 * 1024)
+static int ntfsck_check_ea(ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *ctx;
+	ntfs_attr *ea_na = NULL;
+	ntfs_attr *eainfo_na = NULL;
+	EA_INFORMATION eainfo;
+	u8 *buf = NULL;
+	s64 ea_size;
+	size_t offs, nextoffs = 0;
+	u32 ea_packed = 0;
+	int ea_count = 0;
+	BOOL have_eainfo = FALSE;
+	BOOL corrupt = FALSE;
+	problem_context_t pctx = {0, };
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return STATUS_ERROR;
+
+	if (!ntfs_attr_lookup(AT_EA_INFORMATION, AT_UNNAMED, 0, CASE_SENSITIVE,
+				0, NULL, 0, ctx)) {
+		have_eainfo = TRUE;
+		if (le32_to_cpu(ctx->attr->value_length) < sizeof(EA_INFORMATION))
+			corrupt = TRUE;
+		else
+			memcpy(&eainfo, (u8 *)ctx->attr +
+					le16_to_cpu(ctx->attr->value_offset),
+					sizeof(EA_INFORMATION));
+	}
+	ntfs_attr_put_search_ctx(ctx);
+
+	ea_na = ntfs_attr_open(ni, AT_EA, AT_UNNAMED, 0);
+
+	/* Neither present: nothing to validate. */
+	if (!ea_na && !have_eainfo)
+		return STATUS_OK;
+
+	/* One present without the other, or malformed $EA_INFORMATION. */
+	if (!ea_na || !have_eainfo) {
+		corrupt = TRUE;
+		goto verdict;
+	}
+	if (corrupt)
+		goto verdict;
+
+	ea_size = ea_na->data_size;
+	if (ea_size <= 0 || ea_size > NTFSCK_EA_MAX_SIZE) {
+		corrupt = TRUE;
+		goto verdict;
+	}
+
+	buf = ntfs_malloc(ea_size);
+	if (!buf) {
+		ntfs_attr_close(ea_na);
+		return STATUS_ERROR;
+	}
+	if (ntfs_attr_pread(ea_na, 0, ea_size, buf) != ea_size) {
+		corrupt = TRUE;
+		goto verdict;
+	}
+
+	/* Walk the chain (mirrors ntfs_set_ntfs_ea()'s consistency check). */
+	offs = 0;
+	while (offs < (size_t)ea_size) {
+		const EA_ATTR *p_ea = (const EA_ATTR *)&buf[offs];
+		u32 entry_end;
+
+		if (offs + offsetof(EA_ATTR, name) > (size_t)ea_size) {
+			corrupt = TRUE;
+			break;
+		}
+
+		nextoffs = offs + le32_to_cpu(p_ea->next_entry_offset);
+		entry_end = offs + offsetof(EA_ATTR, name) + p_ea->name_length +
+				1 + le16_to_cpu(p_ea->value_length);
+
+		if (!(nextoffs > offs &&
+				nextoffs <= (size_t)ea_size &&
+				!(nextoffs & 3) &&
+				p_ea->name_length &&
+				entry_end <= nextoffs &&
+				entry_end >= (nextoffs - 3) &&
+				!p_ea->name[p_ea->name_length])) {
+			corrupt = TRUE;
+			break;
+		}
+
+		if (p_ea->flags & NEED_EA)
+			ea_count++;
+		/* header(4) + name + 1 + value, excluding next_entry_offset */
+		ea_packed += 5 + p_ea->name_length +
+				le16_to_cpu(p_ea->value_length);
+		offs = nextoffs;
+	}
+
+	/*
+	 * Cross-validate against $EA_INFORMATION. Only the well-defined packed size
+	 * and NEED_EA count are compared; ea_query_length (the unpacked
+	 * ZwQueryEaFile buffer size) uses a different layout across Windows
+	 * versions, so comparing it would risk false positives.
+	 */
+	if (!corrupt &&
+			(le16_to_cpu(eainfo.ea_length) != ea_packed ||
+			 le16_to_cpu(eainfo.need_ea_count) != ea_count))
+		corrupt = TRUE;
+
+verdict:
+	free(buf);
+
+	if (corrupt) {
+		ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec,
+				NULL, NULL);
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_EA_CHAIN_CORRUPTED, &pctx)) {
+			int rm_ok = 1;
+
+			if (ea_na && ntfs_attr_rm(ea_na))
+				rm_ok = 0;
+			eainfo_na = ntfs_attr_open(ni, AT_EA_INFORMATION,
+					AT_UNNAMED, 0);
+			if (eainfo_na) {
+				if (ntfs_attr_rm(eainfo_na))
+					rm_ok = 0;
+				ntfs_attr_close(eainfo_na);
+			}
+			if (rm_ok) {
+				ntfs_inode_mark_dirty(ni);
+				fsck_err_fixed();
+			}
+		}
+	}
+
+	if (ea_na)
+		ntfs_attr_close(ea_na);
+	return STATUS_OK;
+}
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx)
 {
@@ -3790,6 +3939,9 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		if (ret)
 			goto remove_index_out;
 	}
+
+	/* validate extended attribute chain ($EA / $EA_INFORMATION) */
+	ntfsck_check_ea(ni);
 
 	/* check $FILE_NAME */
 	ret = ntfsck_check_file_name_attr(ni, ie_fn, ictx);

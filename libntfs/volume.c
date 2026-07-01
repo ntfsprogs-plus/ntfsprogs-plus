@@ -1221,6 +1221,54 @@ static int fix_txf_data(ntfs_volume *vol)
 	return (res);
 }
 
+/*
+ * ntfs_mftmirr_semantic_valid - semantic sanity of a fixed system-file record
+ * @vol:	ntfs volume
+ * @m:		MFT record to validate
+ * @mftno:	expected mft record number (0 .. 11)
+ *
+ * ntfs_mft_record_check() only proves that a record is *structurally*
+ * parseable. Before letting a differing $MFT record overwrite the matching
+ * $MFTMirr copy (or vice versa) we confirm the invariants that every live
+ * named system-file base record must satisfy. This is the semantic barrier
+ * that keeps a structurally-intact-but-semantically-dead record from wiping
+ * out the last good copy on the mirror.
+ *
+ * Only records with a well-known identity (0 .. 11) are covered; the reserved
+ * records 12 .. 15 may legitimately be unused, so callers must not apply this
+ * to them.
+ *
+ * Returns TRUE if the record looks semantically sound.
+ */
+static BOOL ntfs_mftmirr_semantic_valid(ntfs_volume *vol, MFT_RECORD *m,
+		u64 mftno)
+{
+	/* Named system files are always live base records. */
+	if (!(m->flags & MFT_RECORD_IN_USE))
+		return FALSE;
+
+	/* A live record must have been (re)used at least once. */
+	if (le16_to_cpu(m->sequence_number) == 0)
+		return FALSE;
+
+	/* System files are base records, never extents. */
+	if (le64_to_cpu(m->base_mft_record) != 0)
+		return FALSE;
+
+	/* They must be referenced from at least one directory. */
+	if (le16_to_cpu(m->link_count) < 1)
+		return FALSE;
+
+	/* On NTFS 3.1+ the record stores its own number; it must match. */
+	if ((vol->major_ver > 3 || (vol->major_ver == 3 && vol->minor_ver)) &&
+			le16_to_cpu(m->usa_ofs) >= 48) {
+		if (le32_to_cpu(m->mft_record_number) != mftno)
+			return FALSE;
+	}
+
+	return TRUE;
+}
+
 /**
  * ntfs_device_mount - open ntfs volume
  * @dev:	device to open
@@ -1324,6 +1372,28 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 		if (!ntfs_mft_record_check(vol, FILE_MFT + i, mrec)) {
 			if (!memcmp(mrec, mrec2, vol->mft_record_size))
 				continue;
+
+			/*
+			 * $MFT and $MFTMirr disagree. $MFT is structurally valid, but the default
+			 * action - overwriting the mirror with $MFT - is only safe if $MFT is also
+			 * semantically valid.
+			 */
+			if (i < 12 &&
+					!ntfs_mftmirr_semantic_valid(vol, mrec, FILE_MFT + i) &&
+					!ntfs_mft_record_check(vol, FILE_MFT + i, mrec2) &&
+					ntfs_mftmirr_semantic_valid(vol, mrec2, FILE_MFT + i)) {
+				fsck_err_found();
+				if (ntfs_fix_problem(vol, PR_MOUNT_REPAIRED_MFTMIRR_CORRUPTED, &pctx)) {
+					if (ntfs_recover_mft(vol, mrec2, vol->mft_lcn, FILE_MFT + i)) {
+						ntfs_log_perror("Error correcting $MFT record : %d", i);
+						goto io_error_exit;
+					}
+					fsck_err_fixed();
+				} else
+					goto io_error_exit;
+				continue;
+			}
+
 			fsck_err_found();
 			if (ntfs_fix_problem(vol, PR_MOUNT_MFT_MFTMIRR_MISMATCH, &pctx)) {
 				if (ntfs_recover_mft(vol, mrec, vol->mftmirr_lcn, FILE_MFT + i)) {

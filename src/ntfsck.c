@@ -146,6 +146,8 @@ struct orphan_mft {
 int parse_count = 1;
 s64 clear_mft_cnt;
 s64 total_valid_mft;
+s64 total_inuse_mft;	/* MFT records the bitmap marks in-use */
+s64 fsck_scan_eio;	/* MFT records that failed to read/open with EIO */
 
 struct progress_bar prog;
 int pb_flags;
@@ -5675,6 +5677,103 @@ close_inode:
 
 typedef u8 *(*get_bmp_func)(ntfs_volume *, s64);
 
+/*
+ * Count clusters that the on-disk $Bitmap marks in-use but the fsck-computed
+ * bitmap marks free. These are the clusters a FINAL apply would release.
+ */
+static s64 ntfsck_bitmap_count_to_free(ntfs_volume *vol, ntfs_attr *na,
+		get_bmp_func func)
+{
+	s64 count, pos, total, remain, rcnt;
+	s64 to_free = 0;
+	u8 *disk_bm, *fsck_bm;
+	s64 j;
+
+	disk_bm = ntfs_calloc(NTFS_BUF_SIZE);
+	if (!disk_bm)
+		return -1;
+
+	pos = 0;
+	count = NTFS_BUF_SIZE;
+	total = na->data_size;
+	remain = total;
+	if (total < count)
+		count = total;
+
+	while (1) {
+		memset(disk_bm, 0, NTFS_BUF_SIZE);
+		rcnt = ntfs_attr_pread(na, pos, count, disk_bm);
+		if (rcnt != count) {
+			free(disk_bm);
+			return -1;
+		}
+
+		fsck_bm = func(vol, pos);
+		/* bits set on disk but clear in fsck => would be freed */
+		for (j = 0; j < count; j++) {
+			u8 b = disk_bm[j] & ~fsck_bm[j];
+
+			if (b)
+				to_free += __builtin_popcount((unsigned)b);
+		}
+
+		pos += count;
+		remain -= count;
+		if (remain && remain < NTFS_BUF_SIZE)
+			count = remain;
+		if (!remain)
+			break;
+	}
+
+	free(disk_bm);
+	return to_free;
+}
+
+/*
+ * Consensus barrier for a cluster $Bitmap mass-free. When the FINAL apply
+ * would release a large fraction of the volume, the scan that produced the
+ * fsck ground-truth must itself be trustworthy; otherwise we may be about to
+ * free clusters that belong to files we simply failed to read.
+ *
+ * Three independent indicators are evaluated; if two or more fail, the
+ * mass-free is refused (the caller keeps the on-disk bits set - the safe
+ * direction, which leaks space but never destroys data).
+ *
+ * Returns TRUE if the mass-free must be blocked.
+ */
+static BOOL ntfsck_bitmap_consensus_block(ntfs_volume *vol, s64 to_free)
+{
+	s64 nr_clusters = vol->nr_clusters;
+	int fails = 0;
+
+	/* Only engage for a genuine mass-free (> 5% of the volume). */
+	if (nr_clusters <= 0 || to_free * 20 < nr_clusters)
+		return FALSE;
+
+	/* Indicator 1: EIO rate during the MFT scan must be < 0.1%. */
+	if (total_inuse_mft > 0 && fsck_scan_eio * 1000 > total_inuse_mft)
+		fails++;
+
+	/* Indicator 2: MFT yield (opened / in-use) must be > 90%. */
+	if (total_inuse_mft > 0 &&
+			total_valid_mft * 100 < total_inuse_mft * 90)
+		fails++;
+
+	/* Indicator 3: lost-cluster ratio must be < 10% of the volume. */
+	if (to_free * 10 >= nr_clusters)
+		fails++;
+
+	if (fails >= 2) {
+		ntfs_log_error("Cluster bitmap consensus failed: to_free=%"PRId64
+				" of %"PRId64" clusters, in-use MFT=%"PRId64
+				", valid MFT=%"PRId64", scan EIO=%"PRId64
+				" (indicators failed=%d)\n",
+				to_free, nr_clusters, total_inuse_mft,
+				total_valid_mft, fsck_scan_eio, fails);
+		return TRUE;
+	}
+	return FALSE;
+}
 static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func func, int wtype)
 {
 	s64 count, pos, total, remain;
@@ -5689,10 +5788,25 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 	unsigned long *dbml;
 	unsigned long *fbml;
 	int ret = STATUS_OK;
+	BOOL block_mass_free = FALSE;
 	problem_context_t pctx = {0, };
 
 	if (na != vol->lcnbmp_na && na != vol->mftbmp_na)
 		return STATUS_ERROR;
+
+	/*
+	 * Before a FINAL cluster-bitmap apply, decide whether the scan is
+	 * trustworthy enough to free a large number of clusters. Only the cluster
+	 * bitmap is subject to this barrier - the MFT bitmap is validated
+	 * record-by-record elsewhere.
+	 */
+	if (na == vol->lcnbmp_na && wtype == FSCK_BMP_FINAL) {
+		s64 to_free = ntfsck_bitmap_count_to_free(vol, na, func);
+
+		if (to_free > 0)
+			block_mass_free = ntfsck_bitmap_consensus_block(vol,
+					to_free);
+	}
 
 	disk_bm = ntfs_calloc(NTFS_BUF_SIZE);
 	if (!disk_bm)
@@ -5707,6 +5821,12 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 		count = total;
 
 	ntfs_init_problem_ctx(&pctx, na->ni, na, NULL, NULL, na->ni->mrec, NULL, NULL);
+
+	if (block_mass_free) {
+		fsck_err_found();
+		ntfs_fix_problem(vol, PR_CLUSTER_BITMAP_CONSENSUS_FAIL, &pctx);
+	}
+
 	/* apply btimap(fsck OR lcnbmp) to disk */
 	while (1) {
 		/* read bitmap from disk */
@@ -5763,7 +5883,13 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 		if (ntfs_fix_problem(vol, PR_CLUSTER_BITMAP_MISMATCH, &pctx)) {
 			if (wtype == FSCK_BMP_INITIAL)
 				wcnt = ntfs_attr_pwrite(na, pos, count, disk_bm);
-			else if (wtype == FSCK_BMP_FINAL) {
+			else if (block_mass_free) {
+				/*
+				 * Consensus barrier tripped: write the OR of disk and fsck bitmaps so
+				 * that used clusters are still marked, but no cluster is freed.
+				 */
+				wcnt = ntfs_attr_pwrite(na, pos, count, disk_bm);
+			} else if (wtype == FSCK_BMP_FINAL) {
 				wcnt = ntfs_attr_pwrite(na, pos, count, fsck_bm);
 				fsck_err_fixed();
 			}
@@ -5933,8 +6059,13 @@ static int ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
 		return STATUS_ERROR;
 	}
 
+	/* The bitmap says this record is allocated (in-use). */
+	total_inuse_mft++;
+
 	ni = ntfsck_open_inode(vol, mft_num);
 	if (!ni) {
+		if (errno == EIO)
+			fsck_scan_eio++;
 		raw_retry_done = TRUE;
 		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num,
 				is_used > 0);

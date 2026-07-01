@@ -2,7 +2,7 @@
 .\" Copyright (c) 2005 Richard Russon.
 .\" This file may be copied under the terms of the GNU Public License.
 .\"
-.TH NTFSLS 8 "November 2005" "ntfs-3g @VERSION@"
+.TH NTFSLS 8 "November 2005" "ntfsprogs-plus @VERSION@"
 .SH NAME
 ntfsls \- list directory contents on an NTFS filesystem
 .SH SYNOPSIS
@@ -151,7 +151,7 @@ If you find a bug please send an email describing the problem to the
 development team:
 .br
 .nh
-ntfs\-3g\-devel@lists.sf.net
+linkinjeon@kernel.org
 .hy
 .SH AUTHORS
 This version of
@@ -162,11 +162,11 @@ It was ported to ntfs-3g by Erik Larsson.
 .SH AVAILABILITY
 .B ntfsls
 is part of the
-.B ntfs-3g
+.B ntfsprogs-plus
 package and is available from:
 .br
 .nh
-https://github.com/tuxera/ntfs-3g/wiki/
+https://github.com/ntfsprogs-plus/ntfsprogs-plus
 .hy
 .SH SEE ALSO
 .BR ntfsprogs (8)

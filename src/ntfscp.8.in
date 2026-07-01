@@ -2,7 +2,7 @@
 .\" Copyright (c) 2005 Richard Russon.
 .\" This file may be copied under the terms of the GNU Public License.
 .\"
-.TH NTFSCP 8 "September 2007" "ntfs-3g @VERSION@"
+.TH NTFSCP 8 "September 2007" "ntfsprogs-plus @VERSION@"
 .SH NAME
 ntfscp \- copy file to an NTFS volume.
 .SH SYNOPSIS
@@ -98,7 +98,7 @@ There are no known problems with \fBntfscp\fR. If you find a bug please send an
 email describing the problem to the development team:
 .br
 .nh
-ntfs\-3g\-devel@lists.sf.net
+linkinjeon@kernel.org
 .hy
 .SH AUTHORS
 \fBntfscp\fR was written by Yura Pakhuchiy, with contributions from Anton
@@ -109,11 +109,11 @@ With love to Marina Sapego.
 .SH AVAILABILITY
 .B ntfscp
 is part of the
-.B ntfs-3g
+.B ntfsprogs-plus
 package and is available from:
 .br
 .nh
-https://github.com/tuxera/ntfs-3g
+https://github.com/ntfsprogs-plus/ntfsprogs-plus
 .hy
 .SH SEE ALSO
 .BR ntfsprogs (8)

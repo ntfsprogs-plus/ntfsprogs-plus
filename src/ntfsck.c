@@ -179,6 +179,7 @@ static void usage(int error)
 		"-q, --quiet		No progress bar\n"
 		"-r, --repair		Repair interactively\n"
 		"-y, --repair-yes		all yes about all question\n"
+		"-S, --salvage		aggressive salvage (may discard unrecoverable data)\n"
 		"-v, --verbose		verbose\n"
 		"-V, --version		version\n\n"
 		"NOTE: -a/-p, -C, -n, -r, -y options are mutually exclusive with each other options\n\n"
@@ -205,6 +206,7 @@ static const struct option opts[] = {
 	{"repair",		no_argument,		NULL,	'r' },
 	{"repair-yes",		no_argument,		NULL,	'y' },
 	{"quiet",		no_argument,		NULL,	'q' },
+	{"salvage",		no_argument,		NULL,	'S' },
 	{"verbose",		no_argument,		NULL,	'v' },
 	{"version",		no_argument,		NULL,	'V' },
 	{NULL,			0,			NULL,	 0  }
@@ -6570,7 +6572,7 @@ int main(int argc, char **argv)
 	opterr = 0;
 	option.flags = NTFS_MNT_FSCK | NTFS_MNT_IGNORE_HIBERFILE;
 
-	while ((c = getopt_long(argc, argv, "aCnpqryhvV", opts, NULL)) != EOF) {
+	while ((c = getopt_long(argc, argv, "aCnpqryhSvV", opts, NULL)) != EOF) {
 		switch (c) {
 		case 'a':
 		case 'p':
@@ -6611,6 +6613,9 @@ conflict_option:
 			break;
 		case 'q':
 			pb_flags |= ~NTFS_PROGBAR;
+			break;
+		case 'S':
+			opt_salvage = TRUE;
 			break;
 		case 'r':
 			if (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
@@ -6656,6 +6661,25 @@ conflict_option:
 					NTFS_MNT_FS_ASK_REPAIR |
 					NTFS_MNT_FS_YES_REPAIR))) {
 		option.flags |= NTFS_MNT_FS_ASK_REPAIR;
+	}
+
+	/*
+	 * Salvage-aggressive mode only makes sense together with a repair mode: it
+	 * performs destructive recovery (e.g. sparsing out compression units that
+	 * will not decompress). With a read-only check it has nothing to act on, so
+	 * warn and disable it rather than silently doing extra work.
+	 */
+	if (opt_salvage) {
+		if (option.flags & (NTFS_MNT_FS_NO_REPAIR | NTFS_MNT_RDONLY) ||
+				check_dirty_only == TRUE) {
+			ntfs_log_warning("Salvage mode (-S) has no effect without "
+					"a repair mode; ignoring it.\n");
+			opt_salvage = FALSE;
+		} else {
+			ntfs_log_warning("Salvage-aggressive mode enabled: "
+					"unrecoverable data may be discarded to "
+					"make the volume usable.\n");
+		}
 	}
 
 	if (optind != argc - 1)

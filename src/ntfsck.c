@@ -39,6 +39,7 @@
 #include "list.h"
 #include "dir.h"
 #include "lcnalloc.h"
+#include "reparse.h"
 #include "fsck.h"
 
 #define RETURN_FS_NO_ERRORS (0)
@@ -3895,6 +3896,84 @@ verdict:
 		ntfs_attr_close(ea_na);
 	return STATUS_OK;
 }
+/*
+ * RFC reparse-point validation.
+ *
+ * Checks performed:
+ *   - consistency between the $STANDARD_INFORMATION reparse flag and the
+ *     presence of a $REPARSE_POINT attribute (the attribute is ground truth);
+ *   - structural validity of the reparse data (tag not reserved-zero,
+ *     reparse_data_length <= 16 KiB, header/length consistency and payload
+ *     bounds), reusing ntfs_reparse_data_is_valid();
+ * On corruption the reparse data and its $Extend/$Reparse index entry are
+ * removed together via ntfs_remove_ntfs_reparse_data(), which also clears the
+ * reparse flag.
+ *
+ * NOTE: full multi-hop circular-reference detection (RFC "Floyd" cycle check)
+ * is not implemented here: it requires offline resolution of NT target paths
+ * (\??\C:\...) to MFT records, infrastructure ntfsck does not yet have.
+ * Doing it hastily risks deleting valid links, so it is deliberately left out.
+ */
+#define NTFSCK_REPARSE_MAX_DATA		(16 * 1024)
+static int ntfsck_check_reparse(ntfs_inode *ni)
+{
+	REPARSE_POINT *rp = NULL;
+	s64 attr_size = 0;
+	BOOL has_attr, has_flag;
+	BOOL corrupt = FALSE;
+	problem_context_t pctx = {0, };
+
+	has_flag = (ni->flags & FILE_ATTR_REPARSE_POINT) ? TRUE : FALSE;
+
+	rp = (REPARSE_POINT *)ntfs_attr_readall(ni, AT_REPARSE_POINT,
+			(ntfschar *)NULL, 0, &attr_size);
+	has_attr = (rp != NULL);
+
+	if (!has_attr && !has_flag)
+		return STATUS_OK;
+
+	/* Attribute present: validate its structure. */
+	if (has_attr) {
+		if (attr_size < (s64)sizeof(REPARSE_POINT) ||
+				attr_size > NTFSCK_REPARSE_MAX_DATA +
+					(s64)(sizeof(REPARSE_POINT) + sizeof(GUID)) ||
+				le16_to_cpu(rp->reparse_data_length) >
+					NTFSCK_REPARSE_MAX_DATA ||
+				!ntfs_reparse_data_is_valid(ni, rp,
+					(size_t)attr_size))
+			corrupt = TRUE;
+	}
+	free(rp);
+
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec, NULL, NULL);
+
+	if (corrupt) {
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_REPARSE_ATTR_CORRUPTED, &pctx)) {
+			if (!ntfs_remove_ntfs_reparse_data(ni)) {
+				ntfs_inode_mark_dirty(ni);
+				fsck_err_fixed();
+			}
+		}
+		return STATUS_OK;
+	}
+
+	/* Structure is fine (or absent): reconcile the reparse flag. */
+	if (has_attr != has_flag) {
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_REPARSE_FLAG_MISMATCH, &pctx)) {
+			if (has_attr)
+				ni->flags |= FILE_ATTR_REPARSE_POINT;
+			else
+				ni->flags &= ~FILE_ATTR_REPARSE_POINT;
+			NInoFileNameSetDirty(ni);
+			ntfs_inode_mark_dirty(ni);
+			fsck_err_fixed();
+		}
+	}
+
+	return STATUS_OK;
+}
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx)
 {
@@ -3942,6 +4021,9 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 
 	/* validate extended attribute chain ($EA / $EA_INFORMATION) */
 	ntfsck_check_ea(ni);
+
+	/* validate reparse point ($REPARSE_POINT / $Extend/$Reparse) */
+	ntfsck_check_reparse(ni);
 
 	/* check $FILE_NAME */
 	ret = ntfsck_check_file_name_attr(ni, ie_fn, ictx);

@@ -28,6 +28,9 @@ char *ntfs_make_symlink(ntfs_inode *ni, const char *mnt_point);
 
 BOOL ntfs_possible_symlink(ntfs_inode *ni);
 
+BOOL ntfs_reparse_data_is_valid(ntfs_inode *ni,
+		const REPARSE_POINT *reparse_attr, size_t size);
+
 int ntfs_get_ntfs_reparse_data(ntfs_inode *ni, char *value, size_t size);
 
 char *ntfs_get_abslink(ntfs_volume *vol, ntfschar *junction,

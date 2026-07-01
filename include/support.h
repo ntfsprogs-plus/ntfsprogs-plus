@@ -33,7 +33,7 @@
 /*
  * Our mailing list. Use this define to prevent typos in email address.
  */
-#define NTFS_DEV_LIST	"ntfs-3g-devel@lists.sf.net"
+#define NTFS_DEV_LIST	"linkinjeon@kernel.org"
 
 /*
  * Generic macro to convert pointers to values for comparison purposes.

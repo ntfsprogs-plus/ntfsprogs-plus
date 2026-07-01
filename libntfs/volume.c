@@ -78,7 +78,7 @@
 #include "problem.h"
 
 const char *ntfs_home =
-"News, support and information:  https://github.com/tuxera/ntfs-3g/\n";
+"News, support and information:  https://github.com/ntfsprogs-plus/ntfsprogs-plus/\n";
 
 static const char *fallback_readonly_msg =
 "Falling back to read-only mount because the NTFS partition is in an\n"

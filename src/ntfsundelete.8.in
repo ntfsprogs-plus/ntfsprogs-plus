@@ -1,7 +1,7 @@
 .\" Copyright (c) 2002\-2005 Richard Russon.
 .\" This file may be copied under the terms of the GNU Public License.
 .\"
-.TH NTFSUNDELETE 8 "November 2005" "ntfs-3g @VERSION@"
+.TH NTFSUNDELETE 8 "November 2005" "ntfsprogs-plus @VERSION@"
 .SH NAME
 ntfsundelete \- recover a deleted file from an NTFS volume.
 .SH SYNOPSIS
@@ -303,7 +303,7 @@ but currently no known bugs.  If you find a bug please send an email describing
 the problem to the development team:
 .br
 .nh
-ntfs\-3g\-devel@lists.sf.net
+linkinjeon@kernel.org
 .hy
 .SH AUTHORS
 .B ntfsundelete
@@ -313,11 +313,11 @@ It was ported to ntfs-3g by Erik Larsson and Jean-Pierre Andre.
 .SH AVAILABILITY
 .B ntfsundelete
 is part of the
-.B ntfs-3g
+.B ntfsprogs-plus
 package and is available from:
 .br
 .nh
-https://github.com/tuxera/ntfs-3g/wiki/
+https://github.com/ntfsprogs-plus/ntfsprogs-plus
 .hy
 .SH SEE ALSO
 .BR ntfsinfo (8),

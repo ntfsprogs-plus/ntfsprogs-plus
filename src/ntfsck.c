@@ -5497,6 +5497,55 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	fsck_end_step();
 }
 
+/* Flush every pending device write to stable storage. */
+static int ntfsck_device_sync(ntfs_volume *vol)
+{
+	if (!vol || !vol->dev || !vol->dev->d_ops || !vol->dev->d_ops->sync)
+		return STATUS_OK;
+	return vol->dev->d_ops->sync(vol->dev);
+}
+
+static BOOL ntfsck_repair_enabled(void)
+{
+	return (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
+				NTFS_MNT_FS_ASK_REPAIR |
+				NTFS_MNT_FS_YES_REPAIR)) != 0;
+}
+
+/*
+ * ntfsck_begin_repair - open a crash-safe repair transaction.
+ *
+ * Before the first repair write, durably record on disk that a repair is in
+ * progress by making sure VOLUME_IS_DIRTY is set and flushed. If ntfsck is
+ * then interrupted, the volume stays marked dirty and is re-checked on the
+ * next run instead of being trusted as clean. This is the same fail-safe
+ * guarantee a write-ahead log provides - an interrupted repair never leaves
+ * the volume advertised as consistent - enforced here at the volume level.
+ * The matching commit is ntfsck_reset_dirty(), which only runs after all
+ * repair writes have been flushed (see main()).
+ */
+static int ntfsck_begin_repair(ntfs_volume *vol)
+{
+	if (!ntfsck_repair_enabled())
+		return STATUS_OK;
+
+	if (!(vol->flags & VOLUME_IS_DIRTY)) {
+		le16 flags = vol->flags | VOLUME_IS_DIRTY;
+
+		if (ntfs_volume_write_flags(vol, flags)) {
+			ntfs_log_error("Failed to mark volume dirty before "
+					"repair.\n");
+			return STATUS_ERROR;
+		}
+	}
+
+	/* Make the in-progress marker durable before touching metadata. */
+	if (ntfsck_device_sync(vol))
+		ntfs_log_verbose("Warning: could not flush the dirty marker.\n");
+
+	return STATUS_OK;
+}
+
 static int ntfsck_reset_dirty(ntfs_volume *vol)
 {
 	le16 flags;
@@ -5505,6 +5554,16 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 		return STATUS_OK;
 
 	ntfs_log_verbose("Resetting dirty flag.\n");
+
+	/*
+	 * Commit point of the repair transaction: every repair write must be
+	 * on stable storage before the volume is advertised clean, otherwise a
+	 * power loss between clearing the flag and flushing the data would
+	 * leave a "clean" but inconsistent volume.
+	 */
+	if (ntfsck_device_sync(vol))
+		ntfs_log_verbose("Warning: device sync before clearing dirty "
+				"flag failed.\n");
 
 	flags = vol->flags & ~VOLUME_IS_DIRTY;
 
@@ -6656,6 +6715,9 @@ conflict_option:
 	}
 
 	ntfsck_check_backup_boot(vol);
+
+	/* Open a crash-safe repair transaction before any repair write. */
+	ntfsck_begin_repair(vol);
 
 	/* pass 1 */
 	ntfsck_scan_mft_records(vol);

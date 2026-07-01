@@ -119,6 +119,14 @@ static struct {
 	ntfs_mount_flags flags;
 } option;
 
+/*
+ * Salvage-aggressive mode. When set, ntfsck is allowed to take destructive
+ * recovery actions that trade unrecoverable data for a mountable volume - for
+ * example replacing a compression unit that will not decompress with a sparse
+ * hole.
+ */
+static BOOL opt_salvage;
+
 struct dir {
 	struct ntfs_list_head list;
 	u64 mft_no;
@@ -3976,6 +3984,180 @@ static int ntfsck_check_reparse(ntfs_inode *ni)
 
 	return STATUS_OK;
 }
+static int ntfsck_sparse_compression_unit(ntfs_attr *na, s64 cb_vcn_bytes);
+
+/*
+ * ntfsck_check_compressed - validate every compression unit of an inode.
+ *
+ * Each non-resident compressed $DATA attribute is read one compression unit at
+ * a time, which drives the LZNT1 decompressor. A unit that fails to
+ * decompress is reported. In salvage-aggressive mode (and when repairs are
+ * allowed) the unrecoverable unit is replaced with a sparse hole so that the
+ * rest of the file becomes readable instead of the whole file erroring out.
+ */
+static void ntfsck_check_compressed(ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *ctx;
+	u8 *buf = NULL;
+	s64 buf_size = 0;
+	problem_context_t pctx = {0, };
+
+	/*
+	 * Decompressing every compression unit of every compressed file is expensive
+	 * (Windows volumes compress many files), so this deep pass is opt-in via
+	 * salvage-aggressive mode, which is also the only mode that can act on what
+	 * it finds.
+	 */
+	if (!opt_salvage)
+		return;
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return;
+
+	while (!ntfs_attr_lookup(AT_DATA, NULL, 0, CASE_SENSITIVE, 0, NULL, 0,
+				ctx)) {
+		ATTR_RECORD *a = ctx->attr;
+		ntfschar *name;
+		ntfs_attr *na;
+		s64 vcn, size, cb_size;
+
+		/* Only non-resident compressed attributes contain CBs. */
+		if (!a->non_resident ||
+				!(a->flags & ATTR_COMPRESSION_MASK))
+			continue;
+
+		name = (ntfschar *)((u8 *)a + le16_to_cpu(a->name_offset));
+		na = ntfs_attr_open(ni, AT_DATA,
+				a->name_length ? name : AT_UNNAMED,
+				a->name_length);
+		if (!na)
+			continue;
+
+		if (!NAttrCompressed(na) || na->compression_block_size == 0) {
+			ntfs_attr_close(na);
+			continue;
+		}
+
+		cb_size = na->compression_block_size;
+		size = na->data_size;
+
+		if (cb_size > buf_size) {
+			u8 *nbuf = realloc(buf, cb_size);
+
+			if (!nbuf) {
+				ntfs_attr_close(na);
+				break;
+			}
+			buf = nbuf;
+			buf_size = cb_size;
+		}
+
+		for (vcn = 0; vcn < size; vcn += cb_size) {
+			s64 want = size - vcn;
+			s64 got;
+
+			if (want > cb_size)
+				want = cb_size;
+
+			got = ntfs_attr_pread(na, vcn, want, buf);
+			if (got == want)
+				continue;
+
+			/* This compression unit could not be decompressed. */
+			ntfs_init_problem_ctx(&pctx, ni, na, NULL, NULL,
+					ni->mrec, a, NULL);
+			fsck_err_found();
+			ntfs_log_error("Inode(%"PRIu64"): compression unit at "
+					"offset %"PRId64" failed to decompress\n",
+					ni->mft_no, vcn);
+			ntfs_fix_problem(ni->vol, PR_COMPRESSED_UNIT_CORRUPTED,
+					&pctx);
+
+			/*
+			 * Destructive salvage: turn the dead unit into a hole.
+			 * Only under -S, and only if the operator agrees to the
+			 * PR_COMPRESSED_UNIT_SPARSED prompt.
+			 */
+			if (opt_salvage &&
+					ntfs_fix_problem(ni->vol,
+						PR_COMPRESSED_UNIT_SPARSED, &pctx)) {
+				if (!ntfsck_sparse_compression_unit(na, vcn))
+					fsck_err_fixed();
+			}
+		}
+		ntfs_attr_close(na);
+	}
+
+	free(buf);
+	ntfs_attr_put_search_ctx(ctx);
+}
+
+/*
+ * ntfsck_sparse_compression_unit - replace one compression unit with a hole.
+ *
+ * @na:		compressed attribute
+ * @cb_vcn_bytes: byte offset (compression-unit aligned) of the dead unit
+ *
+ * The unit's real clusters are freed and its VCN range becomes a single sparse
+ * hole, so the file reads back zeros there instead of failing to decompress.
+ * The attribute's mapping pairs and compressed-size accounting are rewritten to
+ * match. This is destructive (the unit's contents are gone) and is only
+ * reached under salvage-aggressive mode.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+static int ntfsck_sparse_compression_unit(ntfs_attr *na, s64 cb_vcn_bytes)
+{
+	ntfs_volume *vol = na->ni->vol;
+	runlist *new_rl, *punch_rl = NULL;
+	VCN start_vcn;
+	s64 len, alloc_clusters;
+	int rl_size;
+
+	if (!NAttrCompressed(na) || na->compression_block_clusters == 0)
+		return -1;
+
+	if (ntfs_attr_map_whole_runlist(na))
+		return -1;
+
+	start_vcn = cb_vcn_bytes >> vol->cluster_size_bits;
+	len = na->compression_block_clusters;
+
+	/* Keep the hole within the attribute's allocated cluster range. */
+	alloc_clusters = na->allocated_size >> vol->cluster_size_bits;
+	if (start_vcn >= alloc_clusters)
+		return -1;
+	if (start_vcn + len > alloc_clusters)
+		len = alloc_clusters - start_vcn;
+	if (len <= 0)
+		return -1;
+
+	for (rl_size = 0; na->rl[rl_size].length; rl_size++)
+		;
+	rl_size++;	/* count the terminator too */
+
+	new_rl = ntfs_rl_punch_hole(na->rl, rl_size, start_vcn, len, &punch_rl);
+	if (!new_rl)
+		return -1;
+	na->rl = new_rl;
+
+	/* Release the clusters that used to back the (now dead) unit. */
+	if (punch_rl) {
+		ntfs_cluster_free_from_rl(vol, punch_rl);
+		free(punch_rl);
+	}
+
+	/* Recompute the compressed size from the new (holier) runlist. */
+	na->compressed_size = ntfs_rl_get_compressed_size(vol, na->rl);
+
+	NAttrSetRunlistDirty(na);
+	if (ntfs_attr_update_mapping_pairs(na, 0))
+		return -1;
+
+	ntfs_inode_mark_dirty(na->ni);
+	return 0;
+}
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx)
 {
@@ -4026,6 +4208,9 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 
 	/* validate reparse point ($REPARSE_POINT / $Extend/$Reparse) */
 	ntfsck_check_reparse(ni);
+
+	/* validate compression units of compressed data attributes */
+	ntfsck_check_compressed(ni);
 
 	/* check $FILE_NAME */
 	ret = ntfsck_check_file_name_attr(ni, ie_fn, ictx);

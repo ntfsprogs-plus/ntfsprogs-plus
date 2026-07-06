@@ -180,6 +180,8 @@ static void usage(int error)
 		"-r, --repair		Repair interactively\n"
 		"-y, --repair-yes		all yes about all question\n"
 		"-S, --salvage		aggressive salvage (may discard unrecoverable data)\n"
+		"-D, --scratch-dir DIR	back the cluster bitmap with a scratch file under DIR\n"
+		"			(use a filesystem other than the volume being checked)\n"
 		"-v, --verbose		verbose\n"
 		"-V, --version		version\n\n"
 		"NOTE: -a/-p, -C, -n, -r, -y options are mutually exclusive with each other options\n\n"
@@ -207,6 +209,7 @@ static const struct option opts[] = {
 	{"repair-yes",		no_argument,		NULL,	'y' },
 	{"quiet",		no_argument,		NULL,	'q' },
 	{"salvage",		no_argument,		NULL,	'S' },
+	{"scratch-dir",		required_argument,	NULL,	'D' },
 	{"verbose",		no_argument,		NULL,	'v' },
 	{"version",		no_argument,		NULL,	'V' },
 	{NULL,			0,			NULL,	 0  }
@@ -6603,7 +6606,7 @@ int main(int argc, char **argv)
 	opterr = 0;
 	option.flags = NTFS_MNT_FSCK | NTFS_MNT_IGNORE_HIBERFILE;
 
-	while ((c = getopt_long(argc, argv, "aCnpqryhSvV", opts, NULL)) != EOF) {
+	while ((c = getopt_long(argc, argv, "aCnpqryhSvVD:", opts, NULL)) != EOF) {
 		switch (c) {
 		case 'a':
 		case 'p':
@@ -6647,6 +6650,10 @@ conflict_option:
 			break;
 		case 'S':
 			opt_salvage = TRUE;
+			break;
+		case 'D':
+			/* Consumed by libntfs ntfs_fsck_mount() via getenv(). */
+			setenv("NTFSCK_SCRATCH_DIR", optarg, 1);
 			break;
 		case 'r':
 			if (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |

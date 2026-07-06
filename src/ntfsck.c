@@ -5287,6 +5287,19 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			goto err_continue;
 		}
 
+		/*
+		 * Repair INDEX_ROOT header fields (index_block_size,
+		 * clusters_per_index_block, collation_rule, entries_offset, index_length,
+		 * ...) before trusting ir->index_block_size below. View indexes get this
+		 * through ntfsck_validate_named_index(); the directory $I30 path needs the
+		 * same fix-up, otherwise a corrupt header makes the whole directory skip
+		 * repair.
+		 */
+		if (ntfsck_repair_named_index_root(dir_ni, ctx, NTFS_INDEX_I30, 4)) {
+			ntfs_attr_put_search_ctx(ctx);
+			goto err_continue;
+		}
+
 		ictx = ntfs_index_ctx_get(dir_ni, NTFS_INDEX_I30, 4);
 		if (!ictx) {
 			ntfs_attr_put_search_ctx(ctx);

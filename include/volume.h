@@ -359,6 +359,9 @@ struct _ntfs_volume {
 	u64 lost_found;		/* mft record number for lost_found directory */
 	u8 **fsck_lcn_bitmap;	/* lcn bitmap of fsck */
 	u32 *fsck_lcn_setcnt;	/* per-block count of set bits, for all-ones collapse */
+	u8 *fsck_lcn_arena;	/* mmap'd scratch backing literal blocks (opt-in), else NULL */
+	s64 fsck_lcn_arena_size;	/* byte size of the mmap arena */
+	int fsck_lcn_arena_fd;	/* fd of the unlinked scratch file, or -1 */
 	u64 max_flb_cnt;
 	u8 **fsck_mft_bitmap;	/* mft bitmap of fsck */
 	u64 max_fmb_cnt;

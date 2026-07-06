@@ -47,6 +47,21 @@
 #include "runlist.h"
 #include "problem.h"
 
+/*
+ * Optional disk-backed cluster shadow bitmap. On Linux the literal (partially
+ * filled) blocks can be carried in a memory-mapped, immediately-unlinked
+ * scratch file instead of the heap, so the resident set is bounded by the
+ * kernel page cache rather than by the number of literal blocks.
+ */
+#if defined(__linux__)
+#include <sys/mman.h>
+#define NTFSCK_HAVE_SCRATCH	1
+/* Below this projected arena size the RAM backend is used (scratch not worth it). */
+#define NTFSCK_SCRATCH_MIN	(64LL << 20)
+/* System page size; MADV_DONTNEED is only used when a block spans whole pages. */
+static long fsck_scratch_page;
+#endif
+
 u8 zero_bm[NTFS_BUF_SIZE];
 
 /*
@@ -66,11 +81,27 @@ static u8 ones_bm[NTFS_BUF_SIZE];
 /*
  * Ensure fsck_lcn_bitmap[idx] is a private, writable literal block,
  * converting either sentinel (all-free NULL or all-allocated FB_ONES) into
- * real storage. Returns the literal buffer, or NULL on allocation failure.
+ * real storage. When a scratch arena is active the storage is a fixed slice
+ * of the mmap'd file (arena + idx * NTFS_BUF_SIZE) rather than the heap.
  */
 static u8 *ntfs_fsck_lcnbmp_materialize(ntfs_volume *vol, s64 idx)
 {
 	u8 *buf = vol->fsck_lcn_bitmap[idx];
+
+	/* Already a literal block. */
+	if (buf && buf != FB_ONES)
+		return buf;
+
+	if (vol->fsck_lcn_arena) {
+		u8 *slot = vol->fsck_lcn_arena + (size_t)idx * NTFS_BUF_SIZE;
+
+		/* The arena slice may hold stale data from a collapsed block, so
+		 * always initialize on the sentinel -> literal transition. */
+		memset(slot, (buf == FB_ONES) ? 0xff : 0x00, NTFS_BUF_SIZE);
+		vol->fsck_lcn_setcnt[idx] = (buf == FB_ONES) ? FB_BLOCK_BITS : 0;
+		vol->fsck_lcn_bitmap[idx] = slot;
+		return slot;
+	}
 
 	if (buf == FB_ONES) {
 		buf = (u8 *)ntfs_malloc(NTFS_BUF_SIZE);
@@ -78,7 +109,7 @@ static u8 *ntfs_fsck_lcnbmp_materialize(ntfs_volume *vol, s64 idx)
 			return NULL;
 		memset(buf, 0xff, NTFS_BUF_SIZE);
 		vol->fsck_lcn_setcnt[idx] = FB_BLOCK_BITS;
-	} else if (!buf) {
+	} else {
 		buf = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
 		if (!buf)
 			return NULL;
@@ -89,18 +120,110 @@ static u8 *ntfs_fsck_lcnbmp_materialize(ntfs_volume *vol, s64 idx)
 }
 
 /*
- * Collapse a fully-set literal block into the all-ones sentinel, freeing its
- * NTFS_BUF_SIZE storage. No-op unless every bit in the block is set.
+ * Collapse a fully-set literal block into the all-ones sentinel, releasing
+ * its NTFS_BUF_SIZE storage. No-op unless every bit in the block is set.
  */
 static void ntfs_fsck_lcnbmp_try_collapse(ntfs_volume *vol, s64 idx)
 {
 	u8 *buf = vol->fsck_lcn_bitmap[idx];
 
-	if (buf && buf != FB_ONES &&
-			vol->fsck_lcn_setcnt[idx] == FB_BLOCK_BITS) {
+	if (!buf || buf == FB_ONES ||
+			vol->fsck_lcn_setcnt[idx] != FB_BLOCK_BITS)
+		return;
+
+#ifdef NTFSCK_HAVE_SCRATCH
+	if (vol->fsck_lcn_arena) {
+		/*
+		 * Drop the arena slice's resident pages. Only when a block is a whole
+		 * number of pages, so this can never disturb a neighbouring block that
+		 * shares a page (large-page systems).
+		 */
+		if (fsck_scratch_page > 0 && (NTFS_BUF_SIZE % fsck_scratch_page) == 0)
+			madvise(buf, NTFS_BUF_SIZE, MADV_DONTNEED);
+	} else
+#endif
 		free(buf);
-		vol->fsck_lcn_bitmap[idx] = FB_ONES;
+	vol->fsck_lcn_bitmap[idx] = FB_ONES;
+}
+
+/*
+ * Set up (or decline) the disk-backed scratch arena for the cluster shadow
+ * bitmap. On any failure the RAM backend is left in place (arena == NULL).
+ */
+static void ntfs_fsck_scratch_init(ntfs_volume *vol, const char *dir)
+{
+	vol->fsck_lcn_arena = NULL;
+	vol->fsck_lcn_arena_size = 0;
+	vol->fsck_lcn_arena_fd = -1;
+
+#ifdef NTFSCK_HAVE_SCRATCH
+	{
+		char tmpl[PATH_MAX];
+		s64 size = (s64)vol->max_flb_cnt * NTFS_BUF_SIZE;
+		void *arena;
+		int fd, ret;
+
+		if (!dir || !*dir)
+			return;			/* not requested */
+		if (size < NTFSCK_SCRATCH_MIN)
+			return;			/* too small to be worth it */
+
+		fsck_scratch_page = sysconf(_SC_PAGESIZE);
+
+		snprintf(tmpl, sizeof(tmpl), "%s/ntfsck-lcnbmp-XXXXXX", dir);
+		fd = mkstemp(tmpl);
+		if (fd < 0) {
+			ntfs_log_perror("fsck scratch: mkstemp(%s) failed, "
+					"using RAM cluster bitmap", dir);
+			return;
+		}
+		/* Unlink immediately: nothing is left behind on a crash or an
+		 * unplug, and the space is reclaimed when the fd is closed. */
+		unlink(tmpl);
+
+		/* Reserve the whole arena up front. A later page fault can then
+		 * never hit ENOSPC, which on an mmap would raise SIGBUS and abort
+		 * the repair mid-flight. */
+		ret = posix_fallocate(fd, 0, size);
+		if (ret) {
+			errno = ret;
+			ntfs_log_perror("fsck scratch: cannot reserve %lld bytes "
+					"in %s, using RAM cluster bitmap",
+					(long long)size, dir);
+			close(fd);
+			return;
+		}
+
+		arena = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+		if (arena == MAP_FAILED) {
+			ntfs_log_perror("fsck scratch: mmap failed, "
+					"using RAM cluster bitmap");
+			close(fd);
+			return;
+		}
+
+		vol->fsck_lcn_arena = (u8 *)arena;
+		vol->fsck_lcn_arena_size = size;
+		vol->fsck_lcn_arena_fd = fd;
+		ntfs_log_info("fsck: using %lld MiB disk-backed cluster bitmap "
+				"under %s\n", (long long)(size >> 20), dir);
 	}
+#else
+	(void)dir;
+#endif
+}
+
+static void ntfs_fsck_scratch_free(ntfs_volume *vol)
+{
+#ifdef NTFSCK_HAVE_SCRATCH
+	if (vol->fsck_lcn_arena)
+		munmap(vol->fsck_lcn_arena, vol->fsck_lcn_arena_size);
+#endif
+	if (vol->fsck_lcn_arena_fd >= 0)
+		close(vol->fsck_lcn_arena_fd);
+	vol->fsck_lcn_arena = NULL;
+	vol->fsck_lcn_arena_size = 0;
+	vol->fsck_lcn_arena_fd = -1;
 }
 
 /*
@@ -610,11 +733,15 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 		return NULL;
 	}
 
+	/* Optionally back literal blocks with a disk scratch file (opt-in). */
+	ntfs_fsck_scratch_init(vol, getenv("NTFSCK_SCRATCH_DIR"));
+
 	/* Initialize fsck mft bitmap buffer array */
 	vol->max_fmb_cnt = FB_ROUND_DOWN((vol->mft_na->initialized_size >>
 				vol->mft_record_size_bits) >> NTFSCK_BYTE_TO_BITS) + 1;
 	vol->fsck_mft_bitmap = (u8 **)ntfs_calloc(sizeof(u8 *) * vol->max_fmb_cnt);
 	if (!vol->fsck_mft_bitmap) {
+		ntfs_fsck_scratch_free(vol);
 		free(vol->fsck_lcn_setcnt);
 		free(vol->fsck_lcn_bitmap);
 		ntfs_umount(vol, FALSE);
@@ -631,10 +758,16 @@ void ntfs_fsck_umount(ntfs_volume *vol)
 {
 	int bm_i;
 
-	for (bm_i = 0; bm_i < vol->max_flb_cnt; bm_i++)
-		if (vol->fsck_lcn_bitmap[bm_i] &&
-				vol->fsck_lcn_bitmap[bm_i] != FB_ONES)
-			free(vol->fsck_lcn_bitmap[bm_i]);
+	/*
+	 * Arena-backed literal blocks are slices of the mmap and are released
+	 * by ntfs_fsck_scratch_free(); only heap blocks are freed individually.
+	 */
+	if (!vol->fsck_lcn_arena)
+		for (bm_i = 0; bm_i < vol->max_flb_cnt; bm_i++)
+			if (vol->fsck_lcn_bitmap[bm_i] &&
+					vol->fsck_lcn_bitmap[bm_i] != FB_ONES)
+				free(vol->fsck_lcn_bitmap[bm_i]);
+	ntfs_fsck_scratch_free(vol);
 	free(vol->fsck_lcn_bitmap);
 	free(vol->fsck_lcn_setcnt);
 

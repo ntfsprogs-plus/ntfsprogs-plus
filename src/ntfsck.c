@@ -4727,6 +4727,8 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	ntfs_inode *ni = ictx->ni;
 	VCN vcn;
 	u32 ir_size = le32_to_cpu(ir->index.index_length);
+	u32 ir_entries_offset;
+	u32 ir_entries_len;
 	u8 *ir_buf = NULL, *ia_buf = NULL, *bmp_buf = NULL, *index_end;
 	u64 max_ib_bits;
 	u32 vcn_per_ib;
@@ -4756,19 +4758,35 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		goto out;
 	}
 
-	ir_buf = malloc(le32_to_cpu(ir->index.index_length));
+	/*
+	 * index_length is measured from the start of the INDEX_HEADER, so the
+	 * entries occupy only (index_length - entries_offset) bytes. Copy just that
+	 * region; using index_length as the copy length would over-read
+	 * entries_offset bytes past the last entry (and malloc(0) when index_length
+	 * is zero).
+	 */
+	ir_entries_offset = le32_to_cpu(ir->index.entries_offset);
+	if (ir_size < ir_entries_offset ||
+			ir_entries_offset < sizeof(INDEX_HEADER)) {
+		ntfs_log_error("INDEX_ROOT of inode %"PRIu64" has an invalid "
+				"index_length(%u)/entries_offset(%u)\n",
+				ni->mft_no, ir_size, ir_entries_offset);
+		goto initialize_index;
+	}
+	ir_entries_len = ir_size - ir_entries_offset;
+
+	ir_buf = malloc(ir_entries_len ? ir_entries_len : 1);
 	if (!ir_buf) {
 		ntfs_log_error("Failed to allocate ir buffer\n");
 		goto out;
 	}
 
-	memcpy(ir_buf, (u8 *)&ir->index + le32_to_cpu(ir->index.entries_offset),
-			ir_size);
+	memcpy(ir_buf, (u8 *)&ir->index + ir_entries_offset, ir_entries_len);
 
 	/* check entries in INDEX_ROOT */
 	ie = (INDEX_ENTRY *)ir_buf;
 	ih = &ir->index;
-	index_end = (u8 *)ie + le32_to_cpu(ih->index_length);
+	index_end = (u8 *)ir_buf + ir_entries_len;
 	for (; (u8 *)ie < index_end;
 			ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
 		/* check length bound */

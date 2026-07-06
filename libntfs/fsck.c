@@ -50,6 +50,60 @@
 u8 zero_bm[NTFS_BUF_SIZE];
 
 /*
+ * All-ones sentinel for the fsck cluster (lcn) shadow bitmap. A slot in
+ * vol->fsck_lcn_bitmap[] can be: NULL - block is entirely free (reads share
+ * read-only zero_bm) FB_ONES - block is entirely allocated (reads share
+ * read-only ones_bm) other ptr - a private literal NTFS_BUF_SIZE block
+ * (partially filled) The two sentinels cost no per-block storage, which
+ * collapses the common "large contiguous allocation / mostly-used volume"
+ * cases from ~1 bit per cluster down to almost nothing.
+ */
+static u8 ones_bm[NTFS_BUF_SIZE];
+#define FB_ONES		((u8 *)ones_bm)
+/* Number of cluster bits represented by one NTFS_BUF_SIZE bitmap block. */
+#define FB_BLOCK_BITS	(1 << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS))
+
+/*
+ * Ensure fsck_lcn_bitmap[idx] is a private, writable literal block,
+ * converting either sentinel (all-free NULL or all-allocated FB_ONES) into
+ * real storage. Returns the literal buffer, or NULL on allocation failure.
+ */
+static u8 *ntfs_fsck_lcnbmp_materialize(ntfs_volume *vol, s64 idx)
+{
+	u8 *buf = vol->fsck_lcn_bitmap[idx];
+
+	if (buf == FB_ONES) {
+		buf = (u8 *)ntfs_malloc(NTFS_BUF_SIZE);
+		if (!buf)
+			return NULL;
+		memset(buf, 0xff, NTFS_BUF_SIZE);
+		vol->fsck_lcn_setcnt[idx] = FB_BLOCK_BITS;
+	} else if (!buf) {
+		buf = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
+		if (!buf)
+			return NULL;
+		vol->fsck_lcn_setcnt[idx] = 0;
+	}
+	vol->fsck_lcn_bitmap[idx] = buf;
+	return buf;
+}
+
+/*
+ * Collapse a fully-set literal block into the all-ones sentinel, freeing its
+ * NTFS_BUF_SIZE storage. No-op unless every bit in the block is set.
+ */
+static void ntfs_fsck_lcnbmp_try_collapse(ntfs_volume *vol, s64 idx)
+{
+	u8 *buf = vol->fsck_lcn_bitmap[idx];
+
+	if (buf && buf != FB_ONES &&
+			vol->fsck_lcn_setcnt[idx] == FB_BLOCK_BITS) {
+		free(buf);
+		vol->fsck_lcn_bitmap[idx] = FB_ONES;
+	}
+}
+
+/*
  * function to set fsck mft bitmap value
  *
  * vol : ntfs_volume structure
@@ -121,6 +175,14 @@ u8 *ntfs_fsck_find_lcnbmp_block(ntfs_volume *vol, s64 pos)
 {
 	u32 bm_i = FB_ROUND_DOWN(pos);
 	u32 last_idx = FB_ROUND_DOWN((vol->nr_clusters - 1) >> NTFSCK_BYTE_TO_BITS);
+
+	/*
+	 * Fully-allocated block: return the shared read-only all-ones buffer.
+	 * The trailing-pad fill-up (fill_unused) only sets bits to 1, so it is
+	 * redundant here and is skipped.
+	 */
+	if (bm_i < vol->max_flb_cnt && vol->fsck_lcn_bitmap[bm_i] == FB_ONES)
+		return ones_bm;
 
 	if (bm_i >= vol->max_flb_cnt || !vol->fsck_lcn_bitmap[bm_i]) {
 		memset(zero_bm, 0, NTFS_BUF_SIZE);
@@ -306,6 +368,8 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
 
 	s64 idx;
 	u8 *buf;
+	u8 *cur;
+	BOOL full_cover;
 	int i;
 
 	if (length <= 0)
@@ -313,13 +377,7 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
 
 	remain_length = length;
 	for (idx = s_idx; idx <= e_idx; idx++) {
-		if (!vol->fsck_lcn_bitmap[idx]) {
-			vol->fsck_lcn_bitmap[idx] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
-			if (!vol->fsck_lcn_bitmap[idx])
-				return -ENOMEM;
-		}
-
-		buf = vol->fsck_lcn_bitmap[idx];
+		cur = vol->fsck_lcn_bitmap[idx];
 
 		idx_slcn = idx << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
 		if (rel_slcn)
@@ -329,14 +387,40 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
 		if (remain_length < rel_length)
 			rel_length = remain_length;
 
-		for (i = 0; i < rel_length; i++) {
-			if (ntfs_bit_get_and_set(buf, rel_slcn + i, bit)) {
-				if (bit)
+		full_cover = (rel_slcn == 0 && rel_length == FB_BLOCK_BITS);
+
+		if (bit) {
+			if (!cur && full_cover) {
+				/* whole empty block becomes all-ones: no storage */
+				vol->fsck_lcn_bitmap[idx] = FB_ONES;
+				goto next_block;
+			}
+
+			buf = ntfs_fsck_lcnbmp_materialize(vol, idx);
+			if (!buf)
+				return -ENOMEM;
+
+			for (i = 0; i < rel_length; i++) {
+				if (ntfs_bit_get_and_set(buf, rel_slcn + i, bit))
 					ntfs_log_error("Cluster Duplication %"PRIu64" - do not fix\n",
 							(idx_slcn + rel_slcn) + i);
+				else
+					vol->fsck_lcn_setcnt[idx]++;
+			}
+			ntfs_fsck_lcnbmp_try_collapse(vol, idx);
+		} else if (cur) {
+			/* clear: an already-free (NULL) block needs no work */
+			buf = ntfs_fsck_lcnbmp_materialize(vol, idx);
+			if (!buf)
+				return -ENOMEM;
+
+			for (i = 0; i < rel_length; i++) {
+				if (ntfs_bit_get_and_set(buf, rel_slcn + i, bit))
+					vol->fsck_lcn_setcnt[idx]--;
 			}
 		}
 
+next_block:
 		remain_length -= rel_length;
 		if (remain_length <= 0)
 			break;
@@ -397,15 +481,7 @@ runlist *ntfs_fsck_check_and_set_lcnbmp(ntfs_volume *vol, ntfs_attr *na, int rl_
 	tmp_rl[0].lcn = -1;
 	checked_vcn = 0;
 	for (idx = s_idx; idx <= e_idx; idx++) {
-		if (!vol->fsck_lcn_bitmap[idx]) {
-			vol->fsck_lcn_bitmap[idx] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
-			if (!vol->fsck_lcn_bitmap[idx]) {
-				ntfs_log_error("Can't allocate lcn_bitmap buffer\n");
-				return dup_rl;
-			}
-		}
-
-		buf = vol->fsck_lcn_bitmap[idx];
+		BOOL full_cover;
 
 		/* calculate first lcn of fsck_lcn_bitmap[idx] */
 		idx_slcn = idx << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
@@ -416,12 +492,39 @@ runlist *ntfs_fsck_check_and_set_lcnbmp(ntfs_volume *vol, ntfs_attr *na, int rl_
 		if (remain_length < rel_length)
 			rel_length = remain_length;
 
-		for (i = 0; i < rel_length; i++) {
-			if (!ntfs_bit_get_and_set(buf, rel_slcn + i, bit))
-				continue;
+		full_cover = (rel_slcn == 0 && rel_length == FB_BLOCK_BITS);
 
-			if (!bit)
+		/*
+		 * Fast path: marking a wholly-unset block as fully allocated.
+		 * No prior bits were set, so no duplicates are possible and no
+		 * literal storage is needed.
+		 */
+		if (bit && !vol->fsck_lcn_bitmap[idx] && full_cover) {
+			vol->fsck_lcn_bitmap[idx] = FB_ONES;
+			goto next_block;
+		}
+
+		/* clearing an already-free block is a no-op */
+		if (!bit && !vol->fsck_lcn_bitmap[idx])
+			goto next_block;
+
+		buf = ntfs_fsck_lcnbmp_materialize(vol, idx);
+		if (!buf) {
+			ntfs_log_error("Can't allocate lcn_bitmap buffer\n");
+			return dup_rl;
+		}
+
+		for (i = 0; i < rel_length; i++) {
+			if (!ntfs_bit_get_and_set(buf, rel_slcn + i, bit)) {
+				if (bit)
+					vol->fsck_lcn_setcnt[idx]++;
 				continue;
+			}
+
+			if (!bit) {
+				vol->fsck_lcn_setcnt[idx]--;
+				continue;
+			}
 
 			/* duplicated */
 			ntfs_log_error("Cluster Duplication %"PRIu64"\n",
@@ -455,6 +558,9 @@ runlist *ntfs_fsck_check_and_set_lcnbmp(ntfs_volume *vol, ntfs_attr *na, int rl_
 			}
 		}
 
+		ntfs_fsck_lcnbmp_try_collapse(vol, idx);
+
+next_block:
 		remain_length -= rel_length;
 		checked_vcn += rel_length;
 		if (remain_length <= 0)
@@ -484,6 +590,9 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 	if (!vol)
 		return NULL;
 
+	/* Read-only all-ones payload shared by every FB_ONES sentinel block. */
+	memset(ones_bm, 0xff, NTFS_BUF_SIZE);
+
 	/* Initialize fsck lcn bitmap buffer array */
 	vol->max_flb_cnt = FB_ROUND_DOWN((vol->nr_clusters - 1) >>
 			NTFSCK_BYTE_TO_BITS) + 1;
@@ -493,11 +602,20 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 		return NULL;
 	}
 
+	/* Per-block set-bit counts, used to collapse full blocks to FB_ONES. */
+	vol->fsck_lcn_setcnt = (u32 *)ntfs_calloc(sizeof(u32) * vol->max_flb_cnt);
+	if (!vol->fsck_lcn_setcnt) {
+		free(vol->fsck_lcn_bitmap);
+		ntfs_umount(vol, FALSE);
+		return NULL;
+	}
+
 	/* Initialize fsck mft bitmap buffer array */
 	vol->max_fmb_cnt = FB_ROUND_DOWN((vol->mft_na->initialized_size >>
 				vol->mft_record_size_bits) >> NTFSCK_BYTE_TO_BITS) + 1;
 	vol->fsck_mft_bitmap = (u8 **)ntfs_calloc(sizeof(u8 *) * vol->max_fmb_cnt);
 	if (!vol->fsck_mft_bitmap) {
+		free(vol->fsck_lcn_setcnt);
 		free(vol->fsck_lcn_bitmap);
 		ntfs_umount(vol, FALSE);
 		return NULL;
@@ -514,9 +632,11 @@ void ntfs_fsck_umount(ntfs_volume *vol)
 	int bm_i;
 
 	for (bm_i = 0; bm_i < vol->max_flb_cnt; bm_i++)
-		if (vol->fsck_lcn_bitmap[bm_i])
+		if (vol->fsck_lcn_bitmap[bm_i] &&
+				vol->fsck_lcn_bitmap[bm_i] != FB_ONES)
 			free(vol->fsck_lcn_bitmap[bm_i]);
 	free(vol->fsck_lcn_bitmap);
+	free(vol->fsck_lcn_setcnt);
 
 	for (bm_i = 0; bm_i < vol->max_fmb_cnt; bm_i++)
 		if (vol->fsck_mft_bitmap[bm_i])

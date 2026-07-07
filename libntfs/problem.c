@@ -196,6 +196,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_UPCASE_CORRUPTED,
 		"$UpCase table is corrupted, regenerate the default table",
 	},
+	{ PR_ATTRDEF_CORRUPTED,
+		"$AttrDef table is corrupted, regenerate the default table",
+	},
 	{ 0, },
 };
 

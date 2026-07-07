@@ -74,6 +74,7 @@ typedef enum {
 	PR_ORPHANED_MFT_CHECK_FAILURE,
 
 	PR_UPCASE_CORRUPTED,
+	PR_ATTRDEF_CORRUPTED,
 } problem_code_t;
 
 typedef struct problem_context {

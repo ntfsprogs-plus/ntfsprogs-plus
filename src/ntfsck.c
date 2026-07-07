@@ -5710,6 +5710,65 @@ static le32 ntfsck_security_hash(const SECURITY_DESCRIPTOR_RELATIVE *sd, u32 len
 }
 
 /*
+ * ntfsck_check_secure_index - cross-check one $SDS entry against $SII or $SDH.
+ *
+ * The index must hold an entry for @key whose cached header
+ * {hash, security_id, offset, length} matches the $SDS entry @ref. A missing
+ * or disagreeing index entry means the security database is inconsistent.
+ * Read-only: inconsistencies are reported, never rewritten.
+ */
+static void ntfsck_check_secure_index(ntfs_volume *vol,
+		ntfs_index_context *ictx, const void *key, int key_len,
+		const SECURITY_DESCRIPTOR_HEADER *ref, problem_code_t pcode,
+		const char *idxname, problem_context_t *pctx)
+{
+	const INDEX_ENTRY *ie;
+	const SECURITY_DESCRIPTOR_HEADER *h;
+	u16 doff;
+
+	if (!ictx)
+		return;		/* index absent - already reported by caller */
+
+	ntfs_index_ctx_reinit(ictx);
+	if (ntfs_index_lookup(key, key_len, ictx)) {
+		fsck_err_found();
+		ntfs_log_error("$Secure %s: no index entry for security_id %u "
+				"(offset %"PRIu64")\n", idxname,
+				le32_to_cpu(ref->security_id),
+				le64_to_cpu(ref->offset));
+		ntfs_fix_problem(vol, pcode, pctx);
+		return;
+	}
+
+	/*
+	 * The entry data (a SECURITY_DESCRIPTOR_HEADER for both $SII and $SDH)
+	 * lives at ie->data_offset, not at ictx->data (which points at the key).
+	 */
+	ie = ictx->entry;
+	doff = le16_to_cpu(ie->data_offset);
+	if (doff + sizeof(*h) > le16_to_cpu(ie->length)) {
+		fsck_err_found();
+		ntfs_log_error("$Secure %s: index entry for security_id %u "
+				"has a truncated data record (offset %"PRIu64")\n",
+				idxname, le32_to_cpu(ref->security_id),
+				le64_to_cpu(ref->offset));
+		ntfs_fix_problem(vol, pcode, pctx);
+		return;
+	}
+
+	h = (const SECURITY_DESCRIPTOR_HEADER *)((const u8 *)ie + doff);
+	if (h->hash != ref->hash || h->security_id != ref->security_id ||
+			h->offset != ref->offset || h->length != ref->length) {
+		fsck_err_found();
+		ntfs_log_error("$Secure %s: index entry for security_id %u "
+				"disagrees with $SDS (offset %"PRIu64")\n",
+				idxname, le32_to_cpu(ref->security_id),
+				le64_to_cpu(ref->offset));
+		ntfs_fix_problem(vol, pcode, pctx);
+	}
+}
+
+/*
  * ntfsck_check_secure - deep cross-validation of $Secure ($SDS).
  *
  * Walks the $SDS stream one primary/backup block pair at a time and, for every
@@ -5718,7 +5777,9 @@ static le32 ntfsck_security_hash(const SECURITY_DESCRIPTOR_RELATIVE *sd, u32 len
  *   - the entry length and descriptor stay within the stream;
  *   - the descriptor revision is valid;
  *   - the recomputed hash matches the hash cached in the entry header;
- *   - the backup copy (primary offset + 0x40000) is byte-identical.
+ *   - the backup copy (primary offset + 0x40000) is byte-identical;
+ *   - the $SII and $SDH index entries for the descriptor exist and their
+ *     cached {hash, security_id, offset, length} header agrees with $SDS.
  *
  * This is a read-only integrity pass: the security database is never rewritten,
  * because reconstructing $SDS / $SII / $SDH from partial data risks corrupting
@@ -5729,6 +5790,7 @@ static void ntfsck_check_secure(ntfs_inode *ni)
 {
 	ntfs_volume *vol = ni->vol;
 	ntfs_attr *na;
+	ntfs_index_context *sii = NULL, *sdh = NULL;
 	u8 *pbuf = NULL, *bbuf = NULL;
 	s64 data_size, base;
 	problem_context_t pctx = {0, };
@@ -5747,6 +5809,22 @@ static void ntfsck_check_secure(ntfs_inode *ni)
 		goto out;
 
 	ntfs_init_problem_ctx(&pctx, ni, na, NULL, NULL, ni->mrec, NULL, NULL);
+
+	/* Index contexts for cross-checking each descriptor against $SII/$SDH. */
+	if (ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_SII, 4))
+		sii = ntfs_index_ctx_get(ni, NTFS_INDEX_SII, 4);
+	else {
+		fsck_err_found();
+		ntfs_log_error("$Secure: $SII index is missing\n");
+		ntfs_fix_problem(vol, PR_SECURE_SII_MISMATCH, &pctx);
+	}
+	if (ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_SDH, 4))
+		sdh = ntfs_index_ctx_get(ni, NTFS_INDEX_SDH, 4);
+	else {
+		fsck_err_found();
+		ntfs_log_error("$Secure: $SDH index is missing\n");
+		ntfs_fix_problem(vol, PR_SECURE_SDH_MISMATCH, &pctx);
+	}
 
 	/* Iterate over primary blocks; each has its backup 0x40000 later. */
 	for (base = 0; base < data_size; base += 2 * NTFSCK_SDS_BLOCK) {
@@ -5826,12 +5904,41 @@ static void ntfsck_check_secure(ntfs_inode *ni)
 						PR_SECURE_SDS_MIRROR_MISMATCH, &pctx);
 			}
 
+			/* Cross-check the descriptor's $SII and $SDH entries. */
+			{
+				SECURITY_DESCRIPTOR_HEADER ref;
+				SII_INDEX_KEY siikey;
+				SDH_INDEX_KEY sdhkey;
+
+				ref.hash = e->hash;
+				ref.security_id = e->security_id;
+				ref.offset = e->offset;
+				ref.length = e->length;
+
+				siikey.security_id = e->security_id;
+				ntfsck_check_secure_index(vol, sii, &siikey,
+						sizeof(siikey), &ref,
+						PR_SECURE_SII_MISMATCH, "$SII",
+						&pctx);
+
+				sdhkey.hash = e->hash;
+				sdhkey.security_id = e->security_id;
+				ntfsck_check_secure_index(vol, sdh, &sdhkey,
+						sizeof(sdhkey), &ref,
+						PR_SECURE_SDH_MISMATCH, "$SDH",
+						&pctx);
+			}
+
 			p = (p + length + NTFSCK_SDS_ALIGN - 1) &
 					~(s64)(NTFSCK_SDS_ALIGN - 1);
 		}
 	}
 
 out:
+	if (sii)
+		ntfs_index_ctx_put(sii);
+	if (sdh)
+		ntfs_index_ctx_put(sdh);
 	free(pbuf);
 	free(bbuf);
 	ntfs_attr_close(na);

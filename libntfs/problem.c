@@ -193,6 +193,9 @@ static struct ntfs_problem problem_table[] = {
 		"Inode(@In) check failed. Delete orphaned NFT candidiates",
 		PR_PREEN_NOMSG,
 	},
+	{ PR_UPCASE_CORRUPTED,
+		"$UpCase table is corrupted, regenerate the default table",
+	},
 	{ 0, },
 };
 

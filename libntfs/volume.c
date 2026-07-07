@@ -1269,6 +1269,61 @@ static BOOL ntfs_mftmirr_semantic_valid(ntfs_volume *vol, MFT_RECORD *m,
 	return TRUE;
 }
 
+/*
+ * ntfs_upcase_repair - regenerate a corrupt $UpCase from the default table
+ *
+ * The ASCII upper-case mapping is invariant across every Windows build, so a
+ * $UpCase whose ASCII range is wrong is definitely corrupt and its collation is
+ * already broken; rebuilding the standard table is the correct repair (this is
+ * also what chkdsk does). Both the in-core table - used by the remainder of
+ * the mount and by every fsck pass for name collation - and the on-disk
+ * $UpCase/$DATA are replaced.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+static int ntfs_upcase_repair(ntfs_volume *vol)
+{
+	ntfs_inode *ni = NULL;
+	ntfs_attr *na = NULL;
+	ntfschar *uc = NULL;
+	u32 uc_len;
+	s64 uc_bytes;
+	int ret = -1;
+
+	uc_len = ntfs_upcase_build_default(&uc);
+	if (!uc_len || !uc) {
+		free(uc);
+		return -1;
+	}
+	uc_bytes = (s64)uc_len << 1;
+
+	ni = ntfs_inode_open(vol, FILE_UpCase);
+	if (!ni)
+		goto out;
+	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
+	if (!na)
+		goto out;
+
+	if (na->data_size != uc_bytes && ntfs_attr_truncate(na, uc_bytes))
+		goto out;
+	if (ntfs_attr_pwrite(na, 0, uc_bytes, uc) != uc_bytes)
+		goto out;
+
+	/* Replace the in-core table used by the rest of the mount + fsck. */
+	free(vol->upcase);
+	vol->upcase = uc;
+	vol->upcase_len = uc_len;
+	uc = NULL;
+	ret = 0;
+out:
+	if (na)
+		ntfs_attr_close(na);
+	if (ni)
+		ntfs_inode_close(ni);
+	free(uc);
+	return ret;
+}
+
 /**
  * ntfs_device_mount - open ntfs volume
  * @dev:	device to open
@@ -1509,9 +1564,25 @@ skip_compare_mft:
 				== ((k < 'a') || (k > 'z') ? k : k + 'A' - 'a')))
 		k++;
 	if (k < 0x7f) {
+		/*
+		 * The ASCII mapping is corrupt, so the whole table cannot be
+		 * trusted. In fsck mode regenerate the standard table instead
+		 * of failing the mount outright.
+		 */
+		if (NVolFsck(vol)) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_UPCASE_CORRUPTED, &pctx)
+					&& !ntfs_upcase_repair(vol)) {
+				ntfs_log_info("$UpCase regenerated from the "
+						"default table\n");
+				fsck_err_fixed();
+				goto upcase_ok;
+			}
+		}
 		ntfs_log_error("Corrupted file $UpCase\n");
 		goto io_error_exit;
 	}
+upcase_ok:
 
 	/*
 	 * Now load $Volume and set the version information and flags in the

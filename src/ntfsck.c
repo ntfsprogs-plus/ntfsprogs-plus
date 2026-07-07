@@ -4881,6 +4881,21 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 				le32_to_cpu(ia->index.entries_offset));
 
 		for (;; ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
+			/*
+			 * Check the entry bounds before dereferencing ie. Advancing by ie->length
+			 * can move ie past index_end (ntfs_index_block_inconsistent() only
+			 * validated the block header, not the entry chain), so reading
+			 * ie->ie_flags or the sub-node VCN first would over-read the index block
+			 * buffer.
+			 */
+			if (((u8 *)ie < (u8 *)ia) ||
+					((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end) ||
+					((u8 *)ie + le16_to_cpu(ie->length) > index_end)) {
+				ntfs_log_error("Index entry out of bounds in inode "
+						"(%"PRId64")\n", ni->mft_no);
+				goto initialize_index;
+			}
+
 			/* check bitmap for sub-node */
 			if (ie->ie_flags & INDEX_ENTRY_NODE) {
 				VCN vcn = ntfs_ie_get_vcn(ie);
@@ -4900,15 +4915,6 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 							ni->mft_no);
 					goto initialize_index;
 				}
-			}
-
-			/* check length bound */
-			if (((u8 *)ie < (u8 *)ia) ||
-					((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end) ||
-					((u8 *)ie + le16_to_cpu(ie->length) > index_end)) {
-				ntfs_log_error("Index entry out of bounds in inode "
-						"(%"PRId64")\n", ni->mft_no);
-				goto initialize_index;
 			}
 
 			/* The index key must not overflow from the entry. */

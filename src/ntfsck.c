@@ -3368,6 +3368,28 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 	}
 
 	/*
+	 * $INDEX_ALLOCATION is never sparse and never has an uninitialized
+	 * tail: every allocated index block is written, so initialized_size
+	 * always equals data_size, and data_size is a whole number of index
+	 * blocks. (data_size need not equal allocated_size, which is only
+	 * cluster-aligned.)  A violation means the size fields are corrupt, so
+	 * rebuild the index from scratch -- the same safe path used below for
+	 * a runlist/allocation mismatch.
+	 */
+	if (na->type == AT_INDEX_ALLOCATION &&
+			(init_size != data_size ||
+			 (vol->indx_record_size &&
+			  (data_size & (vol->indx_record_size - 1))))) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_ATTR_NON_RESIDENT_SIZES_MISMATCH,
+					&pctx)) {
+			ntfsck_initialize_index_attr(ni);
+			fsck_err_fixed();
+		}
+		goto out;
+	}
+
+	/*
 	 * Reset non-residnet if sizes are invalid,
 	 * And then make it resident attribute.
 	 */

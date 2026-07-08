@@ -6834,6 +6834,60 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 	fsck_end_step();
 }
 
+/*
+ * Upper bound on repair rounds. Each round strictly reduces the number of
+ * errors left (see the loop in main()), so a handful of rounds is plenty; the
+ * cap only guards against a pathological volume that never settles.
+ */
+#define NTFSCK_MAX_REPAIR_ROUNDS	8
+
+/*
+ * ntfsck_run_repair_passes - run the whole check/repair sequence once.
+ *
+ * Returns 0 when every pass ran to completion, -1 on a critical error that
+ * makes continuing pointless. Accumulates into the global fsck_errors /
+ * fsck_fixes counters; the caller resets those (and re-mounts) between rounds.
+ */
+static int ntfsck_run_repair_passes(ntfs_volume *vol)
+{
+	int ret = 0;
+
+	/* pass 1 */
+	ntfsck_scan_mft_records(vol);
+
+	/* pass 2 */
+	if (ntfsck_check_system_files(vol))
+		return -1;
+
+	if (ntfsck_replay_log(vol))
+		return -1;
+
+	mrec_temp_buf = ntfs_malloc(vol->sector_size);
+	if (!mrec_temp_buf) {
+		ntfs_log_perror("Couldn't allocate mrec_temp_buf buffer");
+		return -1;
+	}
+
+	/* pass 3 */
+	if (ntfsck_scan_index_entries(vol)) {
+		ntfs_log_error("Stop processing fsck due to critical problems\n");
+		ret = -1;
+		goto out;
+	}
+
+	/* pass 4 */
+	/* apply mft bitmap & cluster bitmap to disk */
+	ntfsck_check_mft_records(vol);
+
+	/* pass 5 */
+	ntfsck_check_orphaned_mft(vol);
+
+out:
+	free(mrec_temp_buf);
+	mrec_temp_buf = NULL;
+	return ret;
+}
+
 /**
  * main - Does just what C99 claim it does.
  *
@@ -7026,41 +7080,67 @@ conflict_option:
 		}
 	}
 
-	ntfsck_check_backup_boot(vol);
+	/*
+	 * Run the check/repair sequence until the volume stops changing. A single
+	 * sweep is not always enough: a later pass can legitimately disturb
+	 * something an earlier pass already validated -- most notably orphan
+	 * recovery (pass 5) re-links inodes into directories the index scan (pass 3)
+	 * has already walked, and reparse/index removals touch view indexes checked
+	 * earlier in the run.
+	 */
+	{
+		int max_rounds = ntfsck_repair_enabled() ?
+				NTFSCK_MAX_REPAIR_ROUNDS : 1;
+		int prev_fixes = -1;
+		int round;
 
-	/* Open a crash-safe repair transaction before any repair write. */
-	ntfsck_begin_repair(vol);
+		for (round = 0; ; round++) {
+			ntfsck_check_backup_boot(vol);
 
-	/* pass 1 */
-	ntfsck_scan_mft_records(vol);
+			/* Open a crash-safe repair transaction before any write. */
+			ntfsck_begin_repair(vol);
 
-	/* pass 2 */
-	if (ntfsck_check_system_files(vol))
-		goto err_out;
+			if (ntfsck_run_repair_passes(vol))
+				goto err_out;
 
-	if (ntfsck_replay_log(vol))
-		goto err_out;
+			/*
+			 * A round that changed nothing means the volume has settled: whatever
+			 * errors remain (if any) are ones this build cannot fix, and no earlier
+			 * fix can have created a fresh inconsistency. Note that "errors == fixes"
+			 * is NOT enough -- a fix can silently disturb a structure an earlier pass
+			 * already accepted, so we must re-verify after any repair, not just when
+			 * errors are left over.
+			 */
+			if (fsck_fixes == 0)
+				break;			/* settled */
+			if (round + 1 >= max_rounds)
+				break;			/* iteration cap reached */
+			if (prev_fixes >= 0 && fsck_fixes >= prev_fixes &&
+					(fsck_errors - fsck_fixes) > 0)
+				break;			/* not converging: give up */
+			prev_fixes = fsck_fixes;
 
-	mrec_temp_buf = ntfs_malloc(vol->sector_size);
-	if (!mrec_temp_buf) {
-		ntfs_log_perror("Couldn't allocate mrec_temp_buf buffer");
-		goto err_out;
+			ntfs_log_info("Repairs applied; re-checking the volume "
+					"(round %d)...\n", round + 2);
+
+			/* Re-mount for a fresh, self-consistent fsck state. */
+			ntfs_fsck_umount(vol);
+			vol = NULL;
+			fsck_errors = 0;
+			fsck_fixes = 0;
+			total_cnt = 0;
+			checked_cnt = 0;
+
+			vol = ntfs_fsck_mount(path, option.flags);
+			if (!vol) {
+				ntfs_log_error("Failed to re-mount %s for repair "
+						"round %d (errno %d)\n", path,
+						round + 2, errno);
+				fsck_err_found();
+				goto err_out;
+			}
+		}
 	}
-
-	/* pass 3 */
-	if (ntfsck_scan_index_entries(vol)) {
-		ntfs_log_error("Stop processing fsck due to critical problems\n");
-		goto err_out;
-	}
-
-	/* pass 4 */
-	/* apply mft bitmap & cluster bitmap to disk */
-	ntfsck_check_mft_records(vol);
-
-	/* pass 5 */
-	ntfsck_check_orphaned_mft(vol);
-
-	free(mrec_temp_buf);
 
 err_out:
 	errors = fsck_errors - fsck_fixes;

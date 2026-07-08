@@ -3310,6 +3310,7 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 
 	s64 data_size;
 	s64 alloc_size;
+	s64 init_size;
 	s64 new_size;
 	s64 aligned_data_size;
 	s64 lowest_vcn;
@@ -3347,6 +3348,24 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 	data_size = le64_to_cpu(a->data_size);
 	alloc_size = le64_to_cpu(a->allocated_size);
 	aligned_data_size = (data_size + vol->cluster_size - 1) & ~(vol->cluster_size - 1);
+
+	/*
+	 * initialized_size records how many bytes of data_size have actually been
+	 * written; everything from there up to data_size reads back as zero. It must
+	 * therefore stay within [0, data_size] -- a value past data_size would
+	 * expose uninitialized cluster contents as file data.
+	 */
+	init_size = sle64_to_cpu(a->initialized_size);
+	if (init_size < 0 || init_size > data_size) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_ATTR_INITIALIZED_SIZE_MISMATCH, &pctx)) {
+			init_size = (init_size < 0) ? 0 : data_size;
+			a->initialized_size = cpu_to_sle64(init_size);
+			na->initialized_size = init_size;
+			ntfs_inode_mark_dirty(actx->ntfs_ino);
+			fsck_err_fixed();
+		}
+	}
 
 	/*
 	 * Reset non-residnet if sizes are invalid,

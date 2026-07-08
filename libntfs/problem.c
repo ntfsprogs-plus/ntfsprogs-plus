@@ -207,6 +207,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_ATTRDEF_CORRUPTED,
 		"$AttrDef table is corrupted, regenerate the default table",
 	},
+	{ PR_ATTR_INITIALIZED_SIZE_MISMATCH,
+		"Inode(@In:@At): Initialized size of non resident attribute is out of range.",
+	},
 	{ 0, },
 };
 

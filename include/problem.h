@@ -77,6 +77,7 @@ typedef enum {
 
 	PR_UPCASE_CORRUPTED,
 	PR_ATTRDEF_CORRUPTED,
+	PR_ATTR_INITIALIZED_SIZE_MISMATCH,
 } problem_code_t;
 
 typedef struct problem_context {

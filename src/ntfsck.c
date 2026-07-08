@@ -4469,6 +4469,17 @@ static int ntfsck_check_orphan_inode(ntfs_inode *parent_ni, ntfs_inode *ni)
 			goto err_out;
 	}
 
+	/*
+	 * Re-linked orphans must get the same attribute validation as inodes
+	 * reached through the normal directory walk (see ntfsck_check_inode());
+	 * otherwise corruption inside an orphan -- a bad reparse point, a broken
+	 * $EA chain, an undecompressable unit -- survives the recovery pass and
+	 * is only caught on the next full run, so ntfsck never converges.
+	 */
+	ntfsck_check_ea(ni);
+	ntfsck_check_reparse(ni);
+	ntfsck_check_compressed(ni);
+
 	return STATUS_OK;
 
 err_out:

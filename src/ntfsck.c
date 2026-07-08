@@ -3999,16 +3999,25 @@ static int ntfsck_check_reparse(ntfs_inode *ni)
 
 	has_flag = (ni->flags & FILE_ATTR_REPARSE_POINT) ? TRUE : FALSE;
 
-	rp = (REPARSE_POINT *)ntfs_attr_readall(ni, AT_REPARSE_POINT,
-			(ntfschar *)NULL, 0, &attr_size);
-	has_attr = (rp != NULL);
+	/*
+	 * Probe for the attribute quietly: this runs on every checked inode and
+	 * ntfs_attr_readall() logs a perror for each inode that lacks the attribute
+	 * -- which is the overwhelming majority. ntfs_attr_exist() only reports
+	 * presence, and we read the data (which then cannot fail with ENOENT) only
+	 * when it is actually there.
+	 */
+	has_attr = ntfs_attr_exist(ni, AT_REPARSE_POINT, AT_UNNAMED, 0) ?
+			TRUE : FALSE;
 
 	if (!has_attr && !has_flag)
 		return STATUS_OK;
 
-	/* Attribute present: validate its structure. */
+	/* Attribute present: read and validate its structure. */
 	if (has_attr) {
-		if (attr_size < (s64)sizeof(REPARSE_POINT) ||
+		rp = (REPARSE_POINT *)ntfs_attr_readall(ni, AT_REPARSE_POINT,
+				(ntfschar *)NULL, 0, &attr_size);
+		if (!rp ||
+				attr_size < (s64)sizeof(REPARSE_POINT) ||
 				attr_size > NTFSCK_REPARSE_MAX_DATA +
 					(s64)(sizeof(REPARSE_POINT) + sizeof(GUID)) ||
 				le16_to_cpu(rp->reparse_data_length) >
@@ -4016,8 +4025,8 @@ static int ntfsck_check_reparse(ntfs_inode *ni)
 				!ntfs_reparse_data_is_valid(ni, rp,
 					(size_t)attr_size))
 			corrupt = TRUE;
+		free(rp);
 	}
-	free(rp);
 
 	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec, NULL, NULL);
 

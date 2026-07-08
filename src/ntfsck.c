@@ -506,6 +506,15 @@ static BOOL ntfsck_repair_raw_index_root_fields(ntfs_volume *vol, u64 mft_no,
 	if (!vol || !mrec || !NVolFsck(vol) || NVolFsNoRepair(vol))
 		return FALSE;
 
+	/*
+	 * An extent record only carries overflow attributes of its base inode. Any
+	 * INDEX_ROOT stored here belongs to that base, whose $IA presence (and hence
+	 * the correct LARGE/SMALL flag) cannot be judged from the extent alone;
+	 * repairing it here would fight the base's own repair and never converge.
+	 */
+	if (MREF_LE(mrec->base_mft_record) != 0)
+		return FALSE;
+
 	record_end = (u8 *)mrec + le32_to_cpu(mrec->bytes_in_use);
 	attr = (ATTR_RECORD *)((u8 *)mrec + le16_to_cpu(mrec->attrs_offset));
 	while ((u8 *)attr + sizeof(ATTR_RECORD) <= record_end &&
@@ -540,6 +549,7 @@ static int ntfsck_repair_named_index_root(ntfs_inode *ni,
 		ntfs_attr_search_ctx *ctx, ntfschar *name, u32 name_len)
 {
 	ntfs_volume *vol;
+	ntfs_inode *hosting;
 	BOOL has_index_allocation;
 
 	if (!ni || !ctx || !ctx->attr)
@@ -558,7 +568,15 @@ static int ntfsck_repair_named_index_root(ntfs_inode *ni,
 	fsck_err_found();
 	ntfs_log_error("Inode(%llu): INDEX_ROOT header fields are corrupted. Fixed.\n",
 			(unsigned long long)ni->mft_no);
-	if (ntfs_mft_record_write(vol, ni->mft_no, ctx->mrec))
+	/*
+	 * INDEX_ROOT can be relocated into an extent MFT record via the attribute
+	 * list, in which case ctx->mrec is that extent record, not the base one.
+	 * Persist the record that actually holds the attribute (ctx->ntfs_ino);
+	 * writing ctx->mrec back to the base slot would stamp the base record with
+	 * the extent's contents and record number.
+	 */
+	hosting = ctx->ntfs_ino ? ctx->ntfs_ino : ni;
+	if (ntfs_mft_record_write(vol, hosting->mft_no, ctx->mrec))
 		return STATUS_ERROR;
 	fsck_err_fixed();
 

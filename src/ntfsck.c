@@ -4024,7 +4024,35 @@ static int ntfsck_check_reparse(ntfs_inode *ni)
 	if (corrupt) {
 		fsck_err_found();
 		if (ntfs_fix_problem(ni->vol, PR_REPARSE_ATTR_CORRUPTED, &pctx)) {
+			BOOL removed = FALSE;
+
 			if (!ntfs_remove_ntfs_reparse_data(ni)) {
+				removed = TRUE;
+			} else {
+				ntfs_attr *rna;
+
+				/*
+				 * ntfs_remove_ntfs_reparse_data() removes the $Extend/$Reparse index
+				 * entry first and gives up on the whole operation if that fails -- e.g.
+				 * the reparse data is too corrupt to yield a tag, or the $Reparse index
+				 * itself is damaged -- leaving the bad $REPARSE_POINT attribute in place
+				 * to be re-detected on every run. Force the attribute out so the
+				 * corruption cannot persist; any stale $Reparse index entry is reconciled
+				 * when that index is structurally revalidated.
+				 */
+				rna = ntfs_attr_open(ni, AT_REPARSE_POINT,
+						AT_UNNAMED, 0);
+				if (rna) {
+					if (!ntfs_attr_rm(rna)) {
+						ni->flags &=
+							~FILE_ATTR_REPARSE_POINT;
+						NInoFileNameSetDirty(ni);
+						removed = TRUE;
+					}
+					ntfs_attr_close(rna);
+				}
+			}
+			if (removed) {
 				ntfs_inode_mark_dirty(ni);
 				fsck_err_fixed();
 			}

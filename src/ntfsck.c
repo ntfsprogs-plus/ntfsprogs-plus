@@ -5769,10 +5769,47 @@ static void ntfsck_check_secure_index(ntfs_volume *vol,
 }
 
 /*
+ * ntfsck_secure_is_live - is this $SDS entry part of the authoritative live set?
+ *
+ * $SDS is not a densely packed array: Windows leaves gaps and stale descriptors
+ * between live entries as security_ids are added and retired, and only the $SII
+ * index (keyed by security_id) authoritatively enumerates the descriptors the
+ * filesystem actually uses. An entry is live iff $SII lists its security_id and
+ * points back at the very offset the entry occupies; anything else is dead space
+ * that must not be validated or reported as corrupt.
+ */
+static int ntfsck_secure_is_live(ntfs_index_context *sii, le32 sid, le64 offset)
+{
+	const INDEX_ENTRY *ie;
+	const SECURITY_DESCRIPTOR_HEADER *h;
+	SII_INDEX_KEY key;
+	u16 doff;
+
+	if (!sii)
+		return 0;
+
+	ntfs_index_ctx_reinit(sii);
+	key.security_id = sid;
+	if (ntfs_index_lookup(&key, sizeof(key), sii))
+		return 0;
+
+	ie = sii->entry;
+	doff = le16_to_cpu(ie->data_offset);
+	if (doff + sizeof(*h) > le16_to_cpu(ie->length))
+		return 0;
+
+	h = (const SECURITY_DESCRIPTOR_HEADER *)((const u8 *)ie + doff);
+	return h->offset == offset;
+}
+
+/*
  * ntfsck_check_secure - deep cross-validation of $Secure ($SDS).
  *
- * Walks the $SDS stream one primary/backup block pair at a time and, for every
- * security descriptor, verifies:
+ * Walks the $SDS stream one primary/backup block pair at a time. Because $SDS
+ * legitimately contains gaps and retired descriptors between live entries, only
+ * the entries the $SII index still references are validated; dead space is
+ * skipped rather than mistaken for corruption. For every live descriptor it
+ * verifies:
  *   - the entry's self-recorded offset matches its physical position;
  *   - the entry length and descriptor stay within the stream;
  *   - the descriptor revision is valid;
@@ -5853,25 +5890,34 @@ static void ntfsck_check_secure(ntfs_inode *ni)
 			u32 length = le32_to_cpu(e->length);
 			u32 descr_len;
 			SECURITY_DESCRIPTOR_RELATIVE *sd;
+			SECURITY_DESCRIPTOR_HEADER ref;
+			SII_INDEX_KEY siikey;
+			SDH_INDEX_KEY sdhkey;
 
 			/* A zero-length entry marks the end of this block. */
 			if (!length && !le32_to_cpu(e->security_id))
 				break;
 
-			/* Self-recorded offset must match the real position. */
+			/*
+			 * A live entry records its own stream offset and stays within the block.
+			 * Anything else at this 16-byte slot is a gap or a retired descriptor, so
+			 * resync onto the next slot instead of flagging dead space as corrupt.
+			 */
 			if (le64_to_cpu(e->offset) != (u64)(base + p) ||
 					length < NTFSCK_SDS_HDR ||
 					p + length > plen) {
-				fsck_err_found();
-				ntfs_log_error("$Secure $SDS: entry at offset %"
-						PRId64" is inconsistent "
-						"(offset=%"PRIu64" length=%u)\n",
-						base + p, le64_to_cpu(e->offset),
-						length);
-				ntfs_fix_problem(vol,
-						PR_SECURE_SDS_ENTRY_CORRUPTED, &pctx);
-				break;
+				p += NTFSCK_SDS_ALIGN;
+				continue;
 			}
+
+			/*
+			 * Only validate descriptors $SII still references; an
+			 * entry $SII does not point back to is retired and must
+			 * not be reported.
+			 */
+			if (!ntfsck_secure_is_live(sii, e->security_id,
+						e->offset))
+				goto next_entry;
 
 			descr_len = length - NTFSCK_SDS_HDR;
 			sd = (SECURITY_DESCRIPTOR_RELATIVE *)(pbuf + p +
@@ -5905,30 +5951,23 @@ static void ntfsck_check_secure(ntfs_inode *ni)
 			}
 
 			/* Cross-check the descriptor's $SII and $SDH entries. */
-			{
-				SECURITY_DESCRIPTOR_HEADER ref;
-				SII_INDEX_KEY siikey;
-				SDH_INDEX_KEY sdhkey;
+			ref.hash = e->hash;
+			ref.security_id = e->security_id;
+			ref.offset = e->offset;
+			ref.length = e->length;
 
-				ref.hash = e->hash;
-				ref.security_id = e->security_id;
-				ref.offset = e->offset;
-				ref.length = e->length;
+			siikey.security_id = e->security_id;
+			ntfsck_check_secure_index(vol, sii, &siikey,
+					sizeof(siikey), &ref,
+					PR_SECURE_SII_MISMATCH, "$SII", &pctx);
 
-				siikey.security_id = e->security_id;
-				ntfsck_check_secure_index(vol, sii, &siikey,
-						sizeof(siikey), &ref,
-						PR_SECURE_SII_MISMATCH, "$SII",
-						&pctx);
+			sdhkey.hash = e->hash;
+			sdhkey.security_id = e->security_id;
+			ntfsck_check_secure_index(vol, sdh, &sdhkey,
+					sizeof(sdhkey), &ref,
+					PR_SECURE_SDH_MISMATCH, "$SDH", &pctx);
 
-				sdhkey.hash = e->hash;
-				sdhkey.security_id = e->security_id;
-				ntfsck_check_secure_index(vol, sdh, &sdhkey,
-						sizeof(sdhkey), &ref,
-						PR_SECURE_SDH_MISMATCH, "$SDH",
-						&pctx);
-			}
-
+next_entry:
 			p = (p + length + NTFSCK_SDS_ALIGN - 1) &
 					~(s64)(NTFSCK_SDS_ALIGN - 1);
 		}

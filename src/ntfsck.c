@@ -32,6 +32,7 @@
 #include <mft.h>
 #include <misc.h>
 #include <mst.h>
+#include <unistr.h>
 #include <getopt.h>
 
 #include "cluster.h"
@@ -6092,6 +6093,76 @@ out:
 	free(bbuf);
 	ntfs_attr_close(na);
 }
+
+/*
+ * ntfsck_check_upcase - restore $UpCase to its canonical size.
+ *
+ * $UpCase/$DATA must hold the full 65536-character upcase table (131072
+ * bytes). ntfs_device_mount() already regenerates a table whose ASCII range
+ * is corrupt, but a size that is merely truncated -- with the low characters
+ * still intact -- passes that check and leaves the collation table short,
+ * which silently breaks case-insensitive name comparisons. When the on-disk
+ * size differs from the default, rewrite both the size and the contents from
+ * the standard table (this mirrors ntfs_upcase_repair()).
+ *
+ * $UpCase is not one of the inodes the volume keeps open, and the pass-2
+ * system-file loop skips inodes it does not already hold open, so this runs as
+ * a one-shot over its own freshly opened inode rather than per-inode.
+ * ntfs_device_mount() closes $UpCase after loading it, so opening it here
+ * cannot create a duplicate in-core inode.
+ */
+static void ntfsck_check_upcase(ntfs_volume *vol)
+{
+	ntfs_inode *ni;
+	ntfs_attr *na;
+	ntfschar *uc = NULL;
+	u32 uc_len;
+	s64 uc_bytes;
+	problem_context_t pctx = {0, };
+
+	ni = ntfs_inode_open(vol, FILE_UpCase);
+	if (!ni)
+		return;
+
+	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
+	if (!na) {
+		ntfs_inode_close(ni);
+		return;
+	}
+
+	uc_len = ntfs_upcase_build_default(&uc);
+	if (!uc_len || !uc) {
+		free(uc);
+		ntfs_attr_close(na);
+		ntfs_inode_close(ni);
+		return;
+	}
+	uc_bytes = (s64)uc_len << 1;
+
+	if (na->data_size != uc_bytes) {
+		ntfs_init_problem_ctx(&pctx, ni, na, NULL, NULL, ni->mrec,
+				NULL, NULL);
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_UPCASE_CORRUPTED, &pctx)) {
+			if (!ntfs_attr_truncate(na, uc_bytes) &&
+					ntfs_attr_pwrite(na, 0, uc_bytes, uc) ==
+						uc_bytes) {
+				/* Adopt the fresh table for the rest of fsck. */
+				free(vol->upcase);
+				vol->upcase = uc;
+				vol->upcase_len = uc_len;
+				uc = NULL;
+				ntfs_inode_mark_dirty(ni);
+				fsck_err_fixed();
+			}
+		}
+	}
+
+	free(uc);
+	ntfs_attr_close(na);
+	ntfs_inode_close(ni);
+}
+
 static int ntfsck_validate_system_file(ntfs_inode *ni)
 {
 	ntfs_volume *vol = ni->vol;
@@ -6212,6 +6283,9 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	/* check lost found here */
 	ntfsck_check_lost_found(vol, root_ni, ictx);
 	ntfs_index_ctx_reinit(ictx);
+
+	/* Restore a truncated $UpCase collation table to its full size. */
+	ntfsck_check_upcase(vol);
 
 	progress_update(&prog, 1);
 

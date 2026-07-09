@@ -636,8 +636,14 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 		}
 	}
 
+	/*
+	 * An end entry carries no key, so the overflow checks below do not apply.
+	 * Return @ret rather than 0: the repairs above may have turned this very
+	 * entry into an end entry, and callers only write the entry back when a
+	 * positive value says something changed.
+	 */
 	if (ie->ie_flags & INDEX_ENTRY_END)
-		return 0;
+		return ret;
 
 	if (ie->key_length &&
 			((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key)) >

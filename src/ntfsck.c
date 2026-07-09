@@ -3333,12 +3333,6 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 		goto out;
 
 	/*
-	 * Skip size check of metadata files
-	 */
-	if (utils_is_metadata(ni))
-		goto out;
-
-	/*
 	 * Check size only atrr->lowest_vcn is zero.
 	 */
 	lowest_vcn = sle64_to_cpu(a->lowest_vcn);
@@ -3366,6 +3360,15 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 			fsck_err_fixed();
 		}
 	}
+
+	/*
+	 * Everything below rewrites the attribute's structure -- rebuilding an
+	 * index, shrinking the runlist or forcing the attribute resident. That is
+	 * unsafe for system files: their correct size follows from the volume
+	 * geometry (e.g.
+	 */
+	if (utils_is_metadata(ni))
+		goto out;
 
 	/*
 	 * $INDEX_ALLOCATION is never sparse and never has an uninitialized

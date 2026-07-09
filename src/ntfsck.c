@@ -275,50 +275,6 @@ static s8 ntfsck_expected_clusters_per_index_block(const ntfs_volume *vol,
 	return block_size >> NTFS_BLOCK_SIZE_BITS;
 }
 
-static BOOL ntfsck_attr_name_matches(const ATTR_RECORD *attr,
-		const ntfschar *name, u32 name_len)
-{
-	const ntfschar *attr_name;
-
-	if (!attr || attr->name_length != name_len)
-		return FALSE;
-	if (!name_len)
-		return TRUE;
-	if (!name)
-		return FALSE;
-
-	attr_name = (const ntfschar *)((const u8 *)attr +
-			le16_to_cpu(attr->name_offset));
-	return !memcmp(attr_name, name, name_len * sizeof(ntfschar));
-}
-
-static BOOL ntfsck_mrec_has_named_attr(const MFT_RECORD *mrec, ATTR_TYPES type,
-		const ntfschar *name, u32 name_len)
-{
-	const ATTR_RECORD *attr;
-	const u8 *record_end;
-
-	if (!mrec)
-		return FALSE;
-
-	record_end = (const u8 *)mrec + le32_to_cpu(mrec->bytes_in_use);
-	attr = (const ATTR_RECORD *)((const u8 *)mrec +
-			le16_to_cpu(mrec->attrs_offset));
-	while ((const u8 *)attr + sizeof(ATTR_RECORD) <= record_end &&
-			attr->type != AT_END) {
-		u32 attr_len = le32_to_cpu(attr->length);
-
-		if (!attr_len || (const u8 *)attr + attr_len > record_end)
-			break;
-		if (attr->type == type &&
-				ntfsck_attr_name_matches(attr, name, name_len))
-			return TRUE;
-		attr = (const ATTR_RECORD *)((const u8 *)attr + attr_len);
-	}
-
-	return FALSE;
-}
-
 static BOOL ntfsck_get_named_index_defaults(u64 mft_no,
 		const ntfschar *name, u32 name_len, ATTR_TYPES *type,
 		COLLATION_RULES *collation_rule)
@@ -409,7 +365,7 @@ static u32 ntfsck_index_used_length(INDEX_HEADER *ih, const u8 *index_end,
 }
 
 static BOOL ntfsck_repair_index_root_fields(ntfs_volume *vol, u64 mft_no,
-		ATTR_RECORD *attr, BOOL has_index_allocation)
+		ATTR_RECORD *attr)
 {
 	INDEX_ROOT *ir;
 	ATTR_TYPES expected_type = AT_UNUSED;
@@ -490,8 +446,21 @@ static BOOL ntfsck_repair_index_root_fields(ntfs_volume *vol, u64 mft_no,
 		ir->index.allocated_size = cpu_to_le32(payload_size);
 		changed = TRUE;
 	}
-	expected_flags = (has_index_allocation || has_subnodes) ?
-		LARGE_INDEX : SMALL_INDEX;
+	/*
+	 * LARGE_INDEX describes the entries of this very header -- whether they
+	 * carry sub-node pointers -- not the attributes of the inode holding it.
+	 * The two are not equivalent: ntfs_ir_leafify() clears the flag when the
+	 * root's last sub-node pointer goes away, yet leaves the now empty
+	 * $INDEX_ALLOCATION in place, and that is how $Extend/$Deleted ships.
+	 *
+	 * Deriving the flag from the presence of an $INDEX_ALLOCATION therefore
+	 * calls every such directory corrupt, and the rewrite is not even benign:
+	 * ntfs_ir_reparent() skips ntfs_ia_add() on a root that is not
+	 * SMALL_INDEX, so a leaf root left claiming LARGE_INDEX reaches
+	 * ntfs_ib_write() with icx->ia_na still NULL -- the lookup only opens it
+	 * when it descends through a sub-node.
+	 */
+	expected_flags = has_subnodes ? LARGE_INDEX : SMALL_INDEX;
 	if (ir->index.ih_flags != expected_flags) {
 		ir->index.ih_flags = expected_flags;
 		changed = TRUE;
@@ -516,10 +485,10 @@ static BOOL ntfsck_repair_raw_index_root_fields(ntfs_volume *vol, u64 mft_no,
 		return FALSE;
 
 	/*
-	 * An extent record only carries overflow attributes of its base inode. Any
-	 * INDEX_ROOT stored here belongs to that base, whose $IA presence (and hence
-	 * the correct LARGE/SMALL flag) cannot be judged from the extent alone;
-	 * repairing it here would fight the base's own repair and never converge.
+	 * An extent record only carries overflow attributes of its base inode, so
+	 * @mft_no names the extent rather than the inode the INDEX_ROOT belongs to.
+	 * The per-inode defaults below would then be looked up under the wrong
+	 * number.
 	 */
 	if (MREF_LE(mrec->base_mft_record) != 0)
 		return FALSE;
@@ -529,20 +498,12 @@ static BOOL ntfsck_repair_raw_index_root_fields(ntfs_volume *vol, u64 mft_no,
 	while ((u8 *)attr + sizeof(ATTR_RECORD) <= record_end &&
 			attr->type != AT_END) {
 		u32 attr_len = le32_to_cpu(attr->length);
-		BOOL has_index_allocation;
-		const ntfschar *name = NULL;
 
 		if (!attr_len || (u8 *)attr + attr_len > record_end)
 			break;
 		if (attr->type != AT_INDEX_ROOT || attr->non_resident)
 			goto next;
-		if (attr->name_length)
-			name = (const ntfschar *)((const u8 *)attr +
-					le16_to_cpu(attr->name_offset));
-		has_index_allocation = ntfsck_mrec_has_named_attr(mrec,
-				AT_INDEX_ALLOCATION, name, attr->name_length);
-		if (ntfsck_repair_index_root_fields(vol, mft_no, attr,
-				has_index_allocation)) {
+		if (ntfsck_repair_index_root_fields(vol, mft_no, attr)) {
 			ntfs_log_error("Inode(%llu): INDEX_ROOT header fields are corrupted. Fixed.\n",
 					(unsigned long long)mft_no);
 			dirty = TRUE;
@@ -555,11 +516,10 @@ next:
 }
 
 static int ntfsck_repair_named_index_root(ntfs_inode *ni,
-		ntfs_attr_search_ctx *ctx, ntfschar *name, u32 name_len)
+		ntfs_attr_search_ctx *ctx)
 {
 	ntfs_volume *vol;
 	ntfs_inode *hosting;
-	BOOL has_index_allocation;
 
 	if (!ni || !ctx || !ctx->attr)
 		return STATUS_ERROR;
@@ -568,10 +528,7 @@ static int ntfsck_repair_named_index_root(ntfs_inode *ni,
 	if (!NVolFsck(vol) || NVolFsNoRepair(vol))
 		return STATUS_OK;
 
-	has_index_allocation = ntfs_attr_exist(ni, AT_INDEX_ALLOCATION,
-			name, name_len);
-	if (!ntfsck_repair_index_root_fields(vol, ni->mft_no, ctx->attr,
-			has_index_allocation))
+	if (!ntfsck_repair_index_root_fields(vol, ni->mft_no, ctx->attr))
 		return STATUS_OK;
 
 	fsck_err_found();
@@ -5142,7 +5099,7 @@ static int ntfsck_validate_named_index(ntfs_inode *ni,
 				ni->mft_no);
 		goto out;
 	}
-	if (ntfsck_repair_named_index_root(ni, ctx, name, name_len))
+	if (ntfsck_repair_named_index_root(ni, ctx))
 		goto out;
 
 	ictx = ntfs_index_ctx_get(ni, name, name_len);
@@ -5459,7 +5416,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		 * same fix-up, otherwise a corrupt header makes the whole directory skip
 		 * repair.
 		 */
-		if (ntfsck_repair_named_index_root(dir_ni, ctx, NTFS_INDEX_I30, 4)) {
+		if (ntfsck_repair_named_index_root(dir_ni, ctx)) {
 			ntfs_attr_put_search_ctx(ctx);
 			goto err_continue;
 		}

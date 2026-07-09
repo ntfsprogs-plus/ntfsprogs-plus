@@ -465,7 +465,15 @@ static BOOL ntfsck_repair_index_root_fields(ntfs_volume *vol, u64 mft_no,
 		memset(ir->reserved, 0, sizeof(ir->reserved));
 		changed = TRUE;
 	}
-	if (le32_to_cpu(ir->index.entries_offset) != sizeof(INDEX_HEADER)) {
+	/*
+	 * An INDEX_ROOT has no update sequence array, so the entries may start right
+	 * after the header, but as in an index block a writer is allowed to leave
+	 * slack. Only rewrite an offset that cannot be walked -- relocating a valid
+	 * one would send the walk into that slack.
+	 */
+	if (le32_to_cpu(ir->index.entries_offset) < sizeof(INDEX_HEADER) ||
+			(le32_to_cpu(ir->index.entries_offset) & 7) ||
+			le32_to_cpu(ir->index.entries_offset) >= payload_size) {
 		ir->index.entries_offset = const_cpu_to_le32(sizeof(INDEX_HEADER));
 		changed = TRUE;
 	}
@@ -622,7 +630,8 @@ static int ntfsck_repair_index_block(ntfs_index_context *ictx, VCN vcn,
 		INDEX_BLOCK *ib, BOOL mst_salvaged)
 {
 	u16 expected_usa_count;
-	u32 expected_entries_offset;
+	u32 min_entries_offset;
+	u32 entries_offset;
 	u32 expected_allocated_size;
 	u32 used_length;
 	BOOL has_subnodes = FALSE;
@@ -636,7 +645,7 @@ static int ntfsck_repair_index_block(ntfs_index_context *ictx, VCN vcn,
 
 	expected_usa_count = (ictx->block_size >= NTFS_BLOCK_SIZE) ?
 		ictx->block_size / NTFS_BLOCK_SIZE + 1 : 1;
-	expected_entries_offset = (sizeof(INDEX_HEADER) +
+	min_entries_offset = (sizeof(INDEX_HEADER) +
 			expected_usa_count * 2 + 7) & ~7;
 	expected_allocated_size = ictx->block_size -
 		(sizeof(INDEX_BLOCK) - sizeof(INDEX_HEADER));
@@ -657,8 +666,18 @@ static int ntfsck_repair_index_block(ntfs_index_context *ictx, VCN vcn,
 		ib->index_block_vcn = cpu_to_sle64(vcn);
 		changed = TRUE;
 	}
-	if (le32_to_cpu(ib->index.entries_offset) != expected_entries_offset) {
-		ib->index.entries_offset = cpu_to_le32(expected_entries_offset);
+	/*
+	 * entries_offset is measured from the start of the INDEX_HEADER, and the
+	 * update sequence array sits between that header and the first entry. All
+	 * the format requires is that the entries begin past the USA, stay 8-byte
+	 * aligned and fit inside the block; a writer may leave more slack than the
+	 * minimum, and they do -- mkntfs starts the entries right after the USA
+	 * where the in-kernel driver pads further out.
+	 */
+	entries_offset = le32_to_cpu(ib->index.entries_offset);
+	if (entries_offset < min_entries_offset || (entries_offset & 7) ||
+			entries_offset >= expected_allocated_size) {
+		ib->index.entries_offset = cpu_to_le32(min_entries_offset);
 		changed = TRUE;
 	}
 	if (le32_to_cpu(ib->index.allocated_size) != expected_allocated_size) {
@@ -673,8 +692,15 @@ static int ntfsck_repair_index_block(ntfs_index_context *ictx, VCN vcn,
 
 	used_length = ntfsck_index_used_length(&ib->index,
 			(u8 *)&ib->index + expected_allocated_size, &has_subnodes);
+	/*
+	 * The entry chain does not tile the block, so nothing here can be repaired
+	 * in place. Report the failure instead of returning a header we may have
+	 * already rewritten: the caller then rebuilds the index, whereas walking
+	 * this block would just rediscover the damage on every repair round without
+	 * ever writing a correction back.
+	 */
 	if (!used_length)
-		return STATUS_OK;
+		return STATUS_ERROR;
 	if (le32_to_cpu(ib->index.index_length) != used_length) {
 		ib->index.index_length = cpu_to_le32(used_length);
 		changed = TRUE;

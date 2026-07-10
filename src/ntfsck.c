@@ -7012,6 +7012,176 @@ err_check_inode:
 	return STATUS_ERROR;
 }
 
+/*
+ * The last mft record between $MFT/$DATA's initialized_size and @max_size that
+ * was ever written: its multi sector transfer fixup verifies, it carries the
+ * FILE magic, and it names itself. Returns -1 when there is no such record.
+ *
+ * $MFT/$BITMAP would be the obvious oracle and it is the wrong one. The bits
+ * between the record count and the byte-rounded end of the bitmap are padding,
+ * and on volumes Windows wrote they are not always zero; reading them as
+ * evidence grows $MFT over records nobody ever created.
+ */
+static s64 ntfsck_last_written_mft_record(ntfs_volume *vol, s64 reach,
+		s64 max_size)
+{
+	ntfs_attr *na = vol->mft_na;
+	s64 saved_init = na->initialized_size;
+	s64 saved_data = na->data_size;
+	BOOL saved_warn = NVolNoFixupWarn(vol);
+	s64 rec, end, last = -1;
+	MFT_RECORD *m;
+
+	m = ntfs_malloc(vol->mft_record_size);
+	if (!m)
+		return -1;
+
+	rec = reach >> vol->mft_record_size_bits;
+	end = max_size >> vol->mft_record_size_bits;
+
+	/* Most of what we are about to read is not an mft record at all. */
+	NVolSetNoFixupWarn(vol);
+
+	/*
+	 * ntfs_attr_pread() stops at data_size and serves zeroes above
+	 * initialized_size rather than touching the disk, and above them is
+	 * precisely where we need to look. The bump is in memory and lasts only for
+	 * the scan.
+	 */
+	na->data_size = max_size;
+	na->initialized_size = max_size;
+
+	for (; rec < end; rec++) {
+		if (ntfs_attr_mst_pread(na, rec << vol->mft_record_size_bits, 1,
+					vol->mft_record_size, m) != 1)
+			continue;
+		if (!ntfs_is_file_record(m->magic))
+			continue;
+		if (le32_to_cpu(m->bytes_allocated) != vol->mft_record_size)
+			continue;
+		if (le32_to_cpu(m->bytes_in_use) > vol->mft_record_size)
+			continue;
+		/*
+		 * Only an ntfs 3.1 record carries its own number, and without it a stale
+		 * record cannot be told from a live one. Leave the older layouts alone
+		 * rather than guess.
+		 */
+		if (le16_to_cpu(m->usa_ofs) < 0x30 ||
+				le32_to_cpu(m->mft_record_number) != rec)
+			continue;
+		last = rec;
+	}
+
+	na->initialized_size = saved_init;
+	na->data_size = saved_data;
+	if (!saved_warn)
+		NVolClearNoFixupWarn(vol);
+	free(m);
+	return last;
+}
+
+/*
+ * Rewrite $MFT/$DATA's own size fields. $MFT is being walked by everything
+ * else, so update the attribute record, the open attribute and the inode
+ * together, and get the record on disk before pass 1 reads it back.
+ */
+static int ntfsck_set_mft_size(ntfs_volume *vol, s64 data_size, s64 init_size)
+{
+	ntfs_attr_search_ctx *ctx;
+
+	ctx = ntfs_attr_get_search_ctx(vol->mft_ni, NULL);
+	if (!ctx)
+		return -1;
+
+	if (ntfs_attr_lookup(AT_DATA, AT_UNNAMED, 0, CASE_SENSITIVE, 0, NULL, 0,
+				ctx)) {
+		ntfs_log_perror("Failed to look up $MFT/$DATA");
+		ntfs_attr_put_search_ctx(ctx);
+		return -1;
+	}
+
+	ctx->attr->data_size = cpu_to_sle64(data_size);
+	ctx->attr->initialized_size = cpu_to_sle64(init_size);
+	ntfs_inode_mark_dirty(ctx->ntfs_ino);
+	ntfs_attr_put_search_ctx(ctx);
+
+	vol->mft_na->data_size = data_size;
+	vol->mft_na->initialized_size = init_size;
+	vol->mft_ni->data_size = data_size;
+
+	if (ntfs_inode_sync(vol->mft_ni)) {
+		ntfs_log_perror("Failed to sync $MFT");
+		return -1;
+	}
+
+	return 0;
+}
+
+/*
+ * ntfsck_check_mft_size - make $MFT/$DATA describe the records it really holds.
+ *
+ * Nothing can reach a record past initialized_size, nor past data_size: reads
+ * stop at the one and are served zeroes above the other, so the inode cannot be
+ * opened, and pass 3 then reads every index entry naming it as a dangling
+ * reference and deletes it. A $DATA short by a few records costs the entire
+ * directory tree below them.
+ *
+ * Those records are intact, though. They sit inside the runlist that mount
+ * already validated against allocated_size, so find the last one that was ever
+ * written and grow $DATA back over it. Growing further would be guesswork: the
+ * space above holds nothing anyone wrote, and a $DATA that already reaches
+ * beyond it is just an $MFT with freed records at the end.
+ *
+ * In the other direction the runlist is the authority. Mount rejects an
+ * allocated_size that disagrees with it, so bytes past the allocation are not
+ * addressable at all and a size claiming them can only be wrong.
+ */
+static void ntfsck_check_mft_size(ntfs_volume *vol)
+{
+	ntfs_attr *na = vol->mft_na;
+	problem_context_t pctx = {0, };
+	s64 last, expected, max_size, reach;
+
+	max_size = (na->allocated_size >> vol->mft_record_size_bits) <<
+		vol->mft_record_size_bits;
+
+	if (na->data_size > max_size || na->initialized_size > max_size) {
+		s64 init_size = na->initialized_size > max_size ?
+			max_size : na->initialized_size;
+
+		ntfs_init_problem_ctx(&pctx, vol->mft_ni, na, NULL, NULL,
+				vol->mft_ni->mrec, NULL, NULL);
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_MFT_SIZE_EXCEEDS_ALLOCATION, &pctx) &&
+				!ntfsck_set_mft_size(vol, max_size, init_size))
+			fsck_err_fixed();
+	}
+
+	/* A record is reachable only below both sizes. */
+	reach = na->data_size < na->initialized_size ?
+		na->data_size : na->initialized_size;
+	if (reach >= max_size)
+		return;
+
+	last = ntfsck_last_written_mft_record(vol, reach, max_size);
+	if (last < 0)
+		return;
+
+	expected = (last + 1) << vol->mft_record_size_bits;
+	if (reach >= expected)
+		return;
+
+	ntfs_init_problem_ctx(&pctx, vol->mft_ni, na, NULL, NULL,
+			vol->mft_ni->mrec, NULL, NULL);
+	pctx.dsize = expected;
+	fsck_err_found();
+	if (ntfs_fix_problem(vol, PR_MFT_SIZE_HIDES_RECORDS, &pctx) &&
+			!ntfsck_set_mft_size(vol,
+				na->data_size > expected ? na->data_size : expected,
+				expected))
+		fsck_err_fixed();
+}
+
 static void ntfsck_scan_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
@@ -7058,6 +7228,9 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 static int ntfsck_run_repair_passes(ntfs_volume *vol)
 {
 	int ret = 0;
+
+	/* $MFT must be whole before pass 1 decides which records exist. */
+	ntfsck_check_mft_size(vol);
 
 	/* pass 1 */
 	ntfsck_scan_mft_records(vol);

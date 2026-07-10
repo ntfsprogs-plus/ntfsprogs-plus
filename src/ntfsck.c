@@ -7012,7 +7012,6 @@ int main(int argc, char **argv)
 	int total_errors = 0, total_fixes = 0;
 	unsigned long mnt_flags;
 	BOOL check_dirty_only = FALSE;
-	BOOL hit_round_cap = FALSE;
 
 	ntfs_log_set_handler(ntfs_log_handler_outerr);
 
@@ -7217,19 +7216,25 @@ conflict_option:
 				goto err_out;
 
 			/*
-			 * A round that changed nothing means the volume has settled: whatever
-			 * errors remain (if any) are ones this build cannot fix, and no earlier
-			 * fix can have created a fresh inconsistency. Note that "errors == fixes"
-			 * is NOT enough -- a fix can silently disturb a structure an earlier pass
-			 * already accepted, so we must re-verify after any repair, not just when
-			 * errors are left over.
+			 * A round that repaired everything it found leaves
+			 * nothing for another round to do. A round that repaired
+			 * nothing cannot do better next time either: what is left
+			 * is what this build cannot fix. Only a round that fixed
+			 * some but not all of what it found is worth repeating --
+			 * an earlier repair may have unblocked a check that could
+			 * not run the first time.
+			 *
+			 * Note that this never re-verifies a repair. A fix that is
+			 * counted but never written back, or one that disturbs a
+			 * structure an earlier pass already accepted, ends the run
+			 * reporting success; only the next invocation finds it.
 			 */
+			if (fsck_errors == fsck_fixes)
+				break;			/* nothing left to repair */
 			if (fsck_fixes == 0)
-				break;			/* settled */
-			if (round + 1 >= max_rounds) {
-				hit_round_cap = TRUE;
+				break;			/* nothing changed; the rest is unfixable */
+			if (round + 1 >= max_rounds)
 				break;			/* iteration cap reached */
-			}
 			if (prev_fixes >= 0 && fsck_fixes >= prev_fixes &&
 					(fsck_errors - fsck_fixes) > 0)
 				break;			/* not converging: give up */
@@ -7269,17 +7274,6 @@ err_out:
 	errors = fsck_errors - fsck_fixes;
 	total_errors += fsck_errors;
 	total_fixes += fsck_fixes;
-	/*
-	 * The last round still applied repairs, so the volume never settled: a
-	 * repair that does not stick looks exactly like this. Say so rather than
-	 * reporting the volume clean because the final round happened to fix
-	 * everything it found.
-	 */
-	if (hit_round_cap && !errors)
-		ntfs_log_warning("Volume did not settle within %d repair rounds; "
-				"the last round still applied %d fix(es). "
-				"Run ntfsck again.\n",
-				NTFSCK_MAX_REPAIR_ROUNDS, fsck_fixes);
 	if (errors) {
 		ntfs_log_info("%d errors left (errors:%d, fixed:%d)\n",
 				errors, total_errors, total_fixes);

@@ -4831,6 +4831,8 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	u32 vcn_per_ib;
 	VCN max_vcn;
 	int ret = STATUS_OK;
+	int ie_ret;
+	BOOL ir_repaired = FALSE;
 	problem_context_t pctx = {0, };
 
 	ictx->ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION,
@@ -4909,12 +4911,15 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		}
 
 		/* The index key must not overflow from the entry. */
-		if (ntfs_index_entry_inconsistent(vol, ie, ictx->ir->collation_rule,
-					ni->mft_no, NULL) < 0) {
+		ie_ret = ntfs_index_entry_inconsistent(vol, ie,
+				ictx->ir->collation_rule, ni->mft_no, NULL);
+		if (ie_ret < 0) {
 			ntfs_log_error("Index entry(%p) of inode(%"PRIu64
 					") is inconsistent\n", ie, ni->mft_no);
 			goto initialize_index;
 		}
+		if (ie_ret > 0)
+			ir_repaired = TRUE;
 
 		/* The last entry cannot contain a name. */
 		if (ie->ie_flags & INDEX_ENTRY_END)
@@ -4922,6 +4927,25 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 		if (!le16_to_cpu(ie->length))
 			break;
+	}
+
+	/*
+	 * The entries were walked in a scratch copy, so a repair made by
+	 * ntfs_index_entry_inconsistent() lives only in ir_buf. Put it back in the
+	 * resident INDEX_ROOT and mark the inode dirty; otherwise every repair round
+	 * rediscovers the same entry, counts it as found and fixed, and writes
+	 * nothing -- fsck never converges.
+	 */
+	if (ir_repaired) {
+		memcpy((u8 *)&ir->index + ir_entries_offset, ir_buf,
+				ir_entries_len);
+		/*
+		 * INDEX_ROOT can be relocated into an extent record, in which
+		 * case ir points into that record, not into ni->mrec.
+		 */
+		if (ictx->actx && ictx->actx->ntfs_ino)
+			ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
+		ntfs_inode_mark_dirty(ni);
 	}
 
 	ia_buf = ntfs_malloc(ictx->block_size);
@@ -4938,6 +4962,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	for (vcn = 0; vcn < max_vcn; vcn += vcn_per_ib) {
 		u32 bmp_bit;	/* bit location in $BITMAP for vcn */
 		BOOL mst_salvaged = FALSE;
+		BOOL ib_repaired = FALSE;
 
 		/* one bit of $Bitmap represents one index block,
 		 * so if vcn size is smaller than ib, one bit represent
@@ -5012,12 +5037,15 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 			}
 
 			/* The index key must not overflow from the entry. */
-			if (ntfs_index_entry_inconsistent(vol, ie,
-						ictx->ir->collation_rule, ni->mft_no, NULL)) {
+			ie_ret = ntfs_index_entry_inconsistent(vol, ie,
+					ictx->ir->collation_rule, ni->mft_no, NULL);
+			if (ie_ret < 0) {
 				ntfs_log_error("Index entry(%p) of inode(%"PRIu64
 						") is inconsistent\n", ie, ni->mft_no);
 				goto initialize_index;
 			}
+			if (ie_ret > 0)
+				ib_repaired = TRUE;
 
 			/* The last entry cannot contain a name. */
 			if (ie->ie_flags & INDEX_ENTRY_END)
@@ -5026,6 +5054,15 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 			if (!le16_to_cpu(ie->length))
 				break;
 		}
+
+		/*
+		 * As with the root, an entry repaired above only exists in ia_buf. Write
+		 * the block back rather than rebuilding the whole index: the repair is
+		 * enough to make the block walkable, and a discarded one would be
+		 * rediscovered on every repair round.
+		 */
+		if (ib_repaired && ntfs_ib_write(ictx, (INDEX_BLOCK *)ia_buf))
+			goto initialize_index;
 	}
 
 out:

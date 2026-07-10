@@ -736,8 +736,12 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 	/* Optionally back literal blocks with a disk scratch file (opt-in). */
 	ntfs_fsck_scratch_init(vol, getenv("NTFSCK_SCRATCH_DIR"));
 
-	/* Initialize fsck mft bitmap buffer array */
-	vol->max_fmb_cnt = FB_ROUND_DOWN((vol->mft_na->initialized_size >>
+	/*
+	 * Initialize fsck mft bitmap buffer array. Size it from allocated_size, not
+	 * initialized_size: ntfsck grows a truncated $MFT/$DATA back over the
+	 * records it hides, and the array must already cover them.
+	 */
+	vol->max_fmb_cnt = FB_ROUND_DOWN((vol->mft_na->allocated_size >>
 				vol->mft_record_size_bits) >> NTFSCK_BYTE_TO_BITS) + 1;
 	vol->fsck_mft_bitmap = (u8 **)ntfs_calloc(sizeof(u8 *) * vol->max_fmb_cnt);
 	if (!vol->fsck_mft_bitmap) {

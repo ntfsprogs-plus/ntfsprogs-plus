@@ -6112,14 +6112,26 @@ static void ntfsck_check_secure(ntfs_inode *ni)
 						PR_SECURE_SDS_HASH_MISMATCH, &pctx);
 			}
 
-			/* Compare against the backup copy when available. */
+			/*
+			 * Compare against the backup copy when available. The
+			 * primary just passed its hash check, so it is the good
+			 * copy; restore the backup from it.
+			 */
 			if (blen >= p + (s64)length &&
 					memcmp(pbuf + p, bbuf + p, length)) {
 				fsck_err_found();
 				ntfs_log_error("$Secure $SDS: backup copy differs "
 						"at offset %"PRId64"\n", base + p);
-				ntfs_fix_problem(vol,
-						PR_SECURE_SDS_MIRROR_MISMATCH, &pctx);
+				if (ntfs_fix_problem(vol,
+						PR_SECURE_SDS_MIRROR_MISMATCH, &pctx)) {
+					if (ntfs_attr_pwrite(na,
+							base + NTFSCK_SDS_BLOCK + p,
+							length, pbuf + p) ==
+							(s64)length) {
+						memcpy(bbuf + p, pbuf + p, length);
+						fsck_err_fixed();
+					}
+				}
 			}
 
 			/* Cross-check the descriptor's $SII and $SDH entries. */

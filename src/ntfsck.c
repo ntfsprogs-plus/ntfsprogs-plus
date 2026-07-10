@@ -7004,8 +7004,15 @@ int main(int argc, char **argv)
 	ntfs_volume *vol = NULL;
 	const char *path = NULL;
 	int c, errors = 0, ret;
+	/*
+	 * fsck_errors/fsck_fixes are reset between repair rounds, so they only
+	 * ever describe the final round. Accumulate every round into these to
+	 * report what the whole run did.
+	 */
+	int total_errors = 0, total_fixes = 0;
 	unsigned long mnt_flags;
 	BOOL check_dirty_only = FALSE;
+	BOOL hit_round_cap = FALSE;
 
 	ntfs_log_set_handler(ntfs_log_handler_outerr);
 
@@ -7219,8 +7226,10 @@ conflict_option:
 			 */
 			if (fsck_fixes == 0)
 				break;			/* settled */
-			if (round + 1 >= max_rounds)
+			if (round + 1 >= max_rounds) {
+				hit_round_cap = TRUE;
 				break;			/* iteration cap reached */
+			}
 			if (prev_fixes >= 0 && fsck_fixes >= prev_fixes &&
 					(fsck_errors - fsck_fixes) > 0)
 				break;			/* not converging: give up */
@@ -7232,6 +7241,8 @@ conflict_option:
 			/* Re-mount for a fresh, self-consistent fsck state. */
 			ntfs_fsck_umount(vol);
 			vol = NULL;
+			total_errors += fsck_errors;
+			total_fixes += fsck_fixes;
 			fsck_errors = 0;
 			fsck_fixes = 0;
 			total_cnt = 0;
@@ -7249,15 +7260,34 @@ conflict_option:
 	}
 
 err_out:
+	/*
+	 * Errors left are the ones the final round could not fix; the rounds before
+	 * it ended with their own errors already repaired. The found and fixed
+	 * totals, though, span the whole run -- reporting only the final round would
+	 * hide every repair that made the volume clean.
+	 */
 	errors = fsck_errors - fsck_fixes;
+	total_errors += fsck_errors;
+	total_fixes += fsck_fixes;
+	/*
+	 * The last round still applied repairs, so the volume never settled: a
+	 * repair that does not stick looks exactly like this. Say so rather than
+	 * reporting the volume clean because the final round happened to fix
+	 * everything it found.
+	 */
+	if (hit_round_cap && !errors)
+		ntfs_log_warning("Volume did not settle within %d repair rounds; "
+				"the last round still applied %d fix(es). "
+				"Run ntfsck again.\n",
+				NTFSCK_MAX_REPAIR_ROUNDS, fsck_fixes);
 	if (errors) {
 		ntfs_log_info("%d errors left (errors:%d, fixed:%d)\n",
-				errors, fsck_errors, fsck_fixes);
+				errors, total_errors, total_fixes);
 		ret = RETURN_FS_ERRORS_LEFT_UNCORRECTED;
 	} else {
 		ntfs_log_info("Clean, No errors found or left (errors:%d, fixed:%d)\n",
-				fsck_errors, fsck_fixes);
-		if (fsck_fixes)
+				total_errors, total_fixes);
+		if (total_fixes)
 			ret = RETURN_FS_ERRORS_CORRECTED;
 		else
 			ret = RETURN_FS_NO_ERRORS;

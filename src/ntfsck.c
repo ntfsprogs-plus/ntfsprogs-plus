@@ -6183,6 +6183,103 @@ static void ntfsck_check_upcase(ntfs_volume *vol)
 	ntfs_inode_close(ni);
 }
 
+/*
+ * The number of mft records $MFTMirr mirrors, as ntfs_boot_sector_parse()
+ * derives it from the volume geometry. vol->mftmirr_size cannot be used: when
+ * $MFTMirr is short, ntfs_device_mount() lowers it to whatever could be read,
+ * so it describes the damage rather than the expected value.
+ */
+static int ntfsck_expected_mftmirr_size(const ntfs_volume *vol)
+{
+	if (vol->cluster_size <= 4 * vol->mft_record_size)
+		return 4;
+	return vol->cluster_size >> vol->mft_record_size_bits;
+}
+
+/*
+ * ntfsck_check_mftmirr - restore $MFTMirr to its canonical size.
+ *
+ * $MFTMirr/$DATA holds a copy of the first mftmirr_size mft records, a size
+ * fixed by the volume geometry. A truncated mirror still mounts -- the mount
+ * path just compares fewer records -- but ntfs_mft_records_write() then stops
+ * mirroring the records that fell off the end (it skips anything past
+ * initialized_size), so the mirror silently drifts from $MFT and is useless
+ * for the recovery it exists to provide.
+ *
+ * Resize the attribute and rewrite its contents from $MFT. Growing it back
+ * without refilling it would leave zeroed records behind, which the next mount
+ * would report as a $MFT/$MFTMirr mismatch.
+ */
+static void ntfsck_check_mftmirr(ntfs_volume *vol)
+{
+	ntfs_attr *na = vol->mftmirr_na;
+	int mirr_size = ntfsck_expected_mftmirr_size(vol);
+	s64 expected = (s64)mirr_size << vol->mft_record_size_bits;
+	problem_context_t pctx = {0, };
+	u8 *buf;
+
+	if (!na || na->data_size == expected)
+		return;
+
+	ntfs_init_problem_ctx(&pctx, vol->mftmirr_ni, na, NULL, NULL,
+			vol->mftmirr_ni->mrec, NULL, NULL);
+	pctx.dsize = expected;
+	fsck_err_found();
+	if (!ntfs_fix_problem(vol, PR_MFTMIRR_SIZE_MISMATCH, &pctx))
+		return;
+
+	if (ntfs_attr_truncate(na, expected)) {
+		ntfs_log_error("Failed to resize $MFTMirr to %"PRId64"\n",
+				expected);
+		return;
+	}
+
+	buf = ntfs_malloc(expected);
+	if (!buf)
+		return;
+
+	/*
+	 * Copy the records raw, update sequence array included. The mirror is
+	 * validated by a plain memcmp() against $MFT, and ntfs_attr_mst_pwrite()
+	 * would run its own pre-write fixup and leave every copied record with an
+	 * update sequence number one ahead of the original.
+	 */
+	if (ntfs_attr_pread(vol->mft_na, 0, expected, buf) != expected) {
+		ntfs_log_error("Failed to read the first %d records of $MFT\n",
+				mirr_size);
+		free(buf);
+		return;
+	}
+
+	if (ntfs_attr_pwrite(na, 0, expected, buf) != expected) {
+		ntfs_log_error("Failed to write %d records to $MFTMirr\n",
+				mirr_size);
+		free(buf);
+		return;
+	}
+	free(buf);
+
+	vol->mftmirr_size = mirr_size;
+
+	/*
+	 * Record 1 was copied from $MFT before the new size reached the disk,
+	 * so the mirror now holds a stale copy of the very inode being resized.
+	 * Sync it: the write goes through ntfs_mft_records_write(), which - now
+	 * that mftmirr_size and the mirror's initialized_size cover record 1 -
+	 * refreshes both $MFT and the mirror.
+	 *
+	 * It also cannot wait until unmount. __ntfs_volume_release() releases
+	 * vol->mft_na before syncing vol->mftmirr_ni, and ntfs_mft_records_write()
+	 * fails with EINVAL once mft_na is gone, so a dirty inode 1 is dropped.
+	 */
+	if (ntfs_inode_sync(vol->mftmirr_ni)) {
+		ntfs_log_perror("Failed to sync $MFTMirr");
+		return;
+	}
+
+	fsck_err_fixed();
+}
+
 static int ntfsck_validate_system_file(ntfs_inode *ni)
 {
 	ntfs_volume *vol = ni->vol;
@@ -6210,6 +6307,10 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 		/* Deep cross-validation of the security database. */
 		if (ni->mft_no == FILE_Secure)
 			ntfsck_check_secure(ni);
+
+		/* The mirror's size follows from the volume geometry. */
+		if (ni->mft_no == FILE_MFTMirr)
+			ntfsck_check_mftmirr(vol);
 		break;
 	case FILE_Bitmap:
 		s64 max_lcnbmp_size;

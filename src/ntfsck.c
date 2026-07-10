@@ -474,15 +474,45 @@ static BOOL ntfsck_repair_index_root_fields(ntfs_volume *vol, u64 mft_no,
 	return changed;
 }
 
+/*
+ * Whether ntfsck_repair_index_root_fields() would change @attr. When @apply
+ * is false it must not: -n has to report the corruption without touching the
+ * record, and mutating the in-memory copy would also hide the fields from
+ * every later check that reads the same record.
+ */
+static BOOL ntfsck_index_root_fields_changed(ntfs_volume *vol, u64 mft_no,
+		ATTR_RECORD *attr, BOOL apply)
+{
+	ATTR_RECORD *copy;
+	u32 len;
+	BOOL changed;
+
+	if (apply)
+		return ntfsck_repair_index_root_fields(vol, mft_no, attr);
+
+	if (!attr || attr->type != AT_INDEX_ROOT || attr->non_resident)
+		return FALSE;
+	len = le32_to_cpu(attr->length);
+	copy = ntfs_malloc(len);
+	if (!copy)
+		return FALSE;
+	memcpy(copy, attr, len);
+	changed = ntfsck_repair_index_root_fields(vol, mft_no, copy);
+	free(copy);
+	return changed;
+}
+
 static BOOL ntfsck_repair_raw_index_root_fields(ntfs_volume *vol, u64 mft_no,
 		MFT_RECORD *mrec)
 {
 	ATTR_RECORD *attr;
 	u8 *record_end;
+	BOOL apply;
 	BOOL dirty = FALSE;
 
-	if (!vol || !mrec || !NVolFsck(vol) || NVolFsNoRepair(vol))
+	if (!vol || !mrec || !NVolFsck(vol))
 		return FALSE;
+	apply = !NVolFsNoRepair(vol);
 
 	/*
 	 * An extent record only carries overflow attributes of its base inode, so
@@ -503,10 +533,14 @@ static BOOL ntfsck_repair_raw_index_root_fields(ntfs_volume *vol, u64 mft_no,
 			break;
 		if (attr->type != AT_INDEX_ROOT || attr->non_resident)
 			goto next;
-		if (ntfsck_repair_index_root_fields(vol, mft_no, attr)) {
-			ntfs_log_error("Inode(%llu): INDEX_ROOT header fields are corrupted. Fixed.\n",
-					(unsigned long long)mft_no);
-			dirty = TRUE;
+		if (ntfsck_index_root_fields_changed(vol, mft_no, attr, apply)) {
+			ntfs_log_error("Inode(%llu): INDEX_ROOT header fields are corrupted.%s\n",
+					(unsigned long long)mft_no,
+					apply ? " Fixed." : "");
+			if (apply)
+				dirty = TRUE;
+			else
+				fsck_err_found();
 		}
 next:
 		attr = (ATTR_RECORD *)((u8 *)attr + attr_len);
@@ -520,18 +554,25 @@ static int ntfsck_repair_named_index_root(ntfs_inode *ni,
 {
 	ntfs_volume *vol;
 	ntfs_inode *hosting;
+	BOOL apply;
 
 	if (!ni || !ctx || !ctx->attr)
 		return STATUS_ERROR;
 
 	vol = ni->vol;
-	if (!NVolFsck(vol) || NVolFsNoRepair(vol))
+	if (!NVolFsck(vol))
 		return STATUS_OK;
+	apply = !NVolFsNoRepair(vol);
 
-	if (!ntfsck_repair_index_root_fields(vol, ni->mft_no, ctx->attr))
+	if (!ntfsck_index_root_fields_changed(vol, ni->mft_no, ctx->attr, apply))
 		return STATUS_OK;
 
 	fsck_err_found();
+	if (!apply) {
+		ntfs_log_error("Inode(%llu): INDEX_ROOT header fields are corrupted.\n",
+				(unsigned long long)ni->mft_no);
+		return STATUS_OK;
+	}
 	ntfs_log_error("Inode(%llu): INDEX_ROOT header fields are corrupted. Fixed.\n",
 			(unsigned long long)ni->mft_no);
 	/*

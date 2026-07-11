@@ -363,6 +363,14 @@ struct _ntfs_volume {
 	s64 fsck_lcn_arena_size;	/* byte size of the mmap arena */
 	int fsck_lcn_arena_fd;	/* fd of the unlinked scratch file, or -1 */
 	u64 max_flb_cnt;
+	/*
+	 * Full-occupancy oracle for the fsck allocator barrier. The pass-1 MFT scan
+	 * sets every cluster referenced by a valid inode here, and
+	 * ntfs_cluster_alloc() folds it into its on-disk $Bitmap read (fsck mode
+	 * only) so a repair never hands out a cluster some inode already owns.
+	 */
+	u8 **fsck_alloc_bitmap;	/* occupancy oracle blocks (NULL/FB_ONES/literal) */
+	u32 *fsck_alloc_setcnt;	/* per-block set-bit counts, for all-ones collapse */
 	u8 **fsck_mft_bitmap;	/* mft bitmap of fsck */
 	u64 max_fmb_cnt;
 	ntfs_mount_flags option_flags;	/* fsck option flags */

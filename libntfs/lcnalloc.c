@@ -329,6 +329,16 @@ runlist *ntfs_cluster_alloc(ntfs_volume *vol, VCN start_vcn, s64 count,
 			goto err_ret;
 		}
 		/*
+		 * The on-disk $Bitmap is untrustworthy during fsck: a cluster can be in use
+		 * yet unmarked, and handing it out would create a duplication. Fold in the
+		 * fsck occupancy oracle (built by the pass-1 MFT scan) so the search sees
+		 * the union of on-disk and known occupancy and never allocates a cluster an
+		 * inode owns.
+		 */
+		if (NVolFsck(vol))
+			ntfs_fsck_or_alloc_lcnbmp(vol, last_read_pos, br, buf);
+
+		/*
 		 * We might have read less than LCNBMP_ALLOC_SIZE bytes
 		 * if we are close to the end of the attribute.
 		 */

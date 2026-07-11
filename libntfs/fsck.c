@@ -326,6 +326,158 @@ u8 *ntfs_fsck_find_lcnbmp_block(ntfs_volume *vol, s64 pos)
 }
 
 /*
+ * The occupancy oracle (vol->fsck_alloc_bitmap) is a set-only twin of the
+ * cluster shadow bitmap. The pass-1 MFT scan marks every cluster a valid
+ * inode references so ntfs_cluster_alloc() can avoid them (see
+ * ntfs_fsck_or_alloc_lcnbmp()).
+ */
+static u8 *ntfs_fsck_alloc_materialize(ntfs_volume *vol, s64 idx)
+{
+	u8 *buf = vol->fsck_alloc_bitmap[idx];
+
+	if (buf && buf != FB_ONES)
+		return buf;
+
+	if (buf == FB_ONES) {
+		buf = (u8 *)ntfs_malloc(NTFS_BUF_SIZE);
+		if (!buf)
+			return NULL;
+		memset(buf, 0xff, NTFS_BUF_SIZE);
+		vol->fsck_alloc_setcnt[idx] = FB_BLOCK_BITS;
+	} else {
+		buf = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
+		if (!buf)
+			return NULL;
+		vol->fsck_alloc_setcnt[idx] = 0;
+	}
+	vol->fsck_alloc_bitmap[idx] = buf;
+	return buf;
+}
+
+/* Collapse a fully-set literal oracle block back into the FB_ONES sentinel. */
+static void ntfs_fsck_alloc_try_collapse(ntfs_volume *vol, s64 idx)
+{
+	u8 *buf = vol->fsck_alloc_bitmap[idx];
+
+	if (!buf || buf == FB_ONES || vol->fsck_alloc_setcnt[idx] != FB_BLOCK_BITS)
+		return;
+	free(buf);
+	vol->fsck_alloc_bitmap[idx] = FB_ONES;
+}
+
+/*
+ * Mark [lcn, lcn+length) occupied in the oracle. Set-only: a bit that is
+ * already set is simply left set (two inodes overlapping is a real
+ * duplication, but it is detected against the shadow bitmap elsewhere; here
+ * over-marking is exactly the safe direction for an allocator barrier).
+ */
+int ntfs_fsck_set_alloc_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length)
+{
+	s64 last_lcn = lcn + length - 1;
+	s64 s_idx = FB_ROUND_DOWN(lcn >> NTFSCK_BYTE_TO_BITS);
+	s64 e_idx = FB_ROUND_DOWN(last_lcn >> NTFSCK_BYTE_TO_BITS);
+	s64 idx_slcn;
+	s64 rel_slcn = lcn;
+	s64 remain_length;
+	s64 rel_length;
+	s64 idx;
+	u8 *buf;
+	u8 *cur;
+	BOOL full_cover;
+	int i;
+
+	if (length <= 0)
+		return -EINVAL;
+
+	remain_length = length;
+	for (idx = s_idx; idx <= e_idx; idx++) {
+		cur = vol->fsck_alloc_bitmap[idx];
+
+		idx_slcn = idx << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
+		if (rel_slcn)
+			rel_slcn -= idx_slcn;
+
+		rel_length = (1 << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS)) - rel_slcn;
+		if (remain_length < rel_length)
+			rel_length = remain_length;
+
+		full_cover = (rel_slcn == 0 && rel_length == FB_BLOCK_BITS);
+
+		if (cur == FB_ONES)
+			goto next_block;		/* already all-ones */
+
+		if (!cur && full_cover) {
+			vol->fsck_alloc_bitmap[idx] = FB_ONES;
+			goto next_block;
+		}
+
+		buf = ntfs_fsck_alloc_materialize(vol, idx);
+		if (!buf)
+			return -ENOMEM;
+
+		for (i = 0; i < rel_length; i++) {
+			if (!ntfs_bit_get_and_set(buf, rel_slcn + i, 1))
+				vol->fsck_alloc_setcnt[idx]++;
+		}
+		ntfs_fsck_alloc_try_collapse(vol, idx);
+
+next_block:
+		remain_length -= rel_length;
+		if (remain_length <= 0)
+			break;
+		rel_slcn = 0;
+	}
+	return 0;
+}
+
+/*
+ * Return the NTFS_BUF_SIZE oracle block covering byte offset @byte_pos of the
+ * cluster bitmap. Unlike ntfs_fsck_find_lcnbmp_block() there is no trailing
+ * fill_unused: the allocator already bounds its search by nr_clusters.
+ */
+static u8 *ntfs_fsck_find_alloc_lcnbmp_block(ntfs_volume *vol, s64 byte_pos)
+{
+	u32 bm_i = FB_ROUND_DOWN(byte_pos);
+
+	if (bm_i >= vol->max_flb_cnt || !vol->fsck_alloc_bitmap[bm_i]) {
+		memset(zero_bm, 0, NTFS_BUF_SIZE);
+		return zero_bm;
+	}
+	if (vol->fsck_alloc_bitmap[bm_i] == FB_ONES)
+		return ones_bm;
+
+	return vol->fsck_alloc_bitmap[bm_i];
+}
+
+/*
+ * OR the oracle's occupancy bits for byte range [byte_pos, byte_pos+nbytes)
+ * of the cluster bitmap into @dst. The range can straddle two oracle blocks,
+ * so walk it a block at a time.
+ */
+void ntfs_fsck_or_alloc_lcnbmp(ntfs_volume *vol, s64 byte_pos, s64 nbytes, u8 *dst)
+{
+	s64 done = 0;
+
+	while (done < nbytes) {
+		s64 cur = byte_pos + done;
+		s64 blk_start = (cur >> NTFS_BUF_SIZE_BITS) << NTFS_BUF_SIZE_BITS;
+		s64 off = cur - blk_start;
+		s64 chunk = NTFS_BUF_SIZE - off;
+		u8 *src;
+		s64 i;
+
+		if (chunk > nbytes - done)
+			chunk = nbytes - done;
+
+		src = ntfs_fsck_find_alloc_lcnbmp_block(vol, cur);
+		for (i = 0; i < chunk; i++)
+			dst[done + i] |= src[off + i];
+
+		done += chunk;
+	}
+}
+
+/*
  * condition: orig_lcn <= dup_lcn < orig_lcn + orig_len, orig_len > 0
  */
 int ntfs_fsck_repair_cluster_dup(ntfs_attr *na, runlist *dup_rl)
@@ -733,6 +885,26 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 		return NULL;
 	}
 
+	/*
+	 * Set-only occupancy oracle, same geometry as the cluster shadow bitmap.
+	 * Fed by the pass-1 MFT scan, read by the allocator barrier.
+	 */
+	vol->fsck_alloc_bitmap = (u8 **)ntfs_calloc(sizeof(u8 *) * vol->max_flb_cnt);
+	if (!vol->fsck_alloc_bitmap) {
+		free(vol->fsck_lcn_setcnt);
+		free(vol->fsck_lcn_bitmap);
+		ntfs_umount(vol, FALSE);
+		return NULL;
+	}
+	vol->fsck_alloc_setcnt = (u32 *)ntfs_calloc(sizeof(u32) * vol->max_flb_cnt);
+	if (!vol->fsck_alloc_setcnt) {
+		free(vol->fsck_alloc_bitmap);
+		free(vol->fsck_lcn_setcnt);
+		free(vol->fsck_lcn_bitmap);
+		ntfs_umount(vol, FALSE);
+		return NULL;
+	}
+
 	/* Optionally back literal blocks with a disk scratch file (opt-in). */
 	ntfs_fsck_scratch_init(vol, getenv("NTFSCK_SCRATCH_DIR"));
 
@@ -746,6 +918,8 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 	vol->fsck_mft_bitmap = (u8 **)ntfs_calloc(sizeof(u8 *) * vol->max_fmb_cnt);
 	if (!vol->fsck_mft_bitmap) {
 		ntfs_fsck_scratch_free(vol);
+		free(vol->fsck_alloc_setcnt);
+		free(vol->fsck_alloc_bitmap);
 		free(vol->fsck_lcn_setcnt);
 		free(vol->fsck_lcn_bitmap);
 		ntfs_umount(vol, FALSE);
@@ -774,6 +948,14 @@ void ntfs_fsck_umount(ntfs_volume *vol)
 	ntfs_fsck_scratch_free(vol);
 	free(vol->fsck_lcn_bitmap);
 	free(vol->fsck_lcn_setcnt);
+
+	/* Oracle blocks are always heap-backed (no arena). */
+	for (bm_i = 0; bm_i < vol->max_flb_cnt; bm_i++)
+		if (vol->fsck_alloc_bitmap[bm_i] &&
+				vol->fsck_alloc_bitmap[bm_i] != FB_ONES)
+			free(vol->fsck_alloc_bitmap[bm_i]);
+	free(vol->fsck_alloc_bitmap);
+	free(vol->fsck_alloc_setcnt);
 
 	for (bm_i = 0; bm_i < vol->max_fmb_cnt; bm_i++)
 		if (vol->fsck_mft_bitmap[bm_i])

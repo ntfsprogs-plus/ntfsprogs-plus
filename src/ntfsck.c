@@ -1051,7 +1051,12 @@ out:
 	return ret;
 }
 
-/* update lcn bitmap to disk, not set in fsck lcn bitmap */
+/*
+ * Seed the fsck occupancy oracle from every non-resident runlist of @ni. Run
+ * by the pass-1 MFT scan before any repair can allocate, so the allocator
+ * barrier (ntfs_cluster_alloc -> ntfs_fsck_or_alloc_lcnbmp) sees full
+ * occupancy and never hands out an in-use cluster.
+ */
 static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 {
 	ntfs_volume *vol;
@@ -1085,9 +1090,9 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 
 		while (rl[i].length) {
 			/*
-			 * it's need to set bitmap temporarily,
-			 * before check and alloc cluster to avoid
-			 * cluster duplication in ntfsck
+			 * Record occupancy in the oracle before any repair can
+			 * allocate, so the allocator barrier never reuses these
+			 * clusters (cluster duplication avoidance in ntfsck).
 			 */
 			/* lcn corrupted */
 			if (rl[i].lcn >= vol->nr_clusters) {
@@ -1104,7 +1109,8 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 			}
 
 			if (rl[i].lcn > (LCN)LCN_HOLE)
-				ntfs_bitmap_set_run(ni->vol->lcnbmp_na, rl[i].lcn, rl[i].length);
+				ntfs_fsck_set_alloc_lcnbmp_range(ni->vol,
+						rl[i].lcn, rl[i].length);
 			++i;
 		}
 

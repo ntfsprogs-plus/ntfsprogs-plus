@@ -5975,6 +5975,161 @@ static int ntfsck_secure_is_live(ntfs_index_context *sii, le32 sid, le64 offset)
 }
 
 /*
+ * Does @ictx already hold an entry for @key whose cached header matches @ref?
+ * The read-only counterpart of ntfsck_check_secure_index(), used to decide
+ * whether $SDH needs rebuilding without reporting each descriptor.
+ */
+static BOOL ntfsck_secure_index_present(ntfs_index_context *ictx,
+		const void *key, int key_len,
+		const SECURITY_DESCRIPTOR_HEADER *ref)
+{
+	const INDEX_ENTRY *ie;
+	const SECURITY_DESCRIPTOR_HEADER *h;
+	u16 doff;
+
+	if (!ictx)
+		return FALSE;
+
+	ntfs_index_ctx_reinit(ictx);
+	if (ntfs_index_lookup(key, key_len, ictx))
+		return FALSE;
+
+	ie = ictx->entry;
+	doff = le16_to_cpu(ie->data_offset);
+	if (doff + sizeof(*h) > le16_to_cpu(ie->length))
+		return FALSE;
+
+	h = (const SECURITY_DESCRIPTOR_HEADER *)((const u8 *)ie + doff);
+	return h->hash == ref->hash && h->security_id == ref->security_id &&
+			h->offset == ref->offset && h->length == ref->length;
+}
+
+/*
+ * ntfsck_rebuild_secure_sdh - regenerate $Secure's $SDH index from $SDS/$SII.
+ *
+ * $SDH is a pure accelerator: it maps a descriptor's hash to the same
+ * {hash, security_id, offset, length} header $SII already holds, so it can be
+ * rebuilt losslessly from the two authoritative sources without touching a
+ * single access control entry. That is the only safe way to repair it -- the
+ * index block itself may be gone -- and it is exactly what an interrupted
+ * "add security descriptor" transaction leaves behind: $SDS and $SII updated,
+ * $SDH not.
+ *
+ * Empty $SDH (dropping its now corrupt index allocation and bitmap, resetting
+ * the root to a bare end entry), then walk $SDS and re-insert one entry for
+ * every descriptor $SII still lists as live. @sii must be present and sound;
+ * without it the live set is unknowable and the index must be left alone.
+ */
+static int ntfsck_rebuild_secure_sdh(ntfs_inode *ni, ntfs_index_context *sii)
+{
+	ntfs_attr *na = NULL;
+	u8 *pbuf = NULL;
+	u8 iebuf[sizeof(INDEX_ENTRY)];
+	INDEX_ENTRY *ie = (INDEX_ENTRY *)iebuf;
+	SDH_INDEX_DATA *sdh_data;
+	s64 data_size, base;
+	int ret = -1;
+
+	if (!sii)
+		return -1;
+
+	/* Empty $SDH so it can be repopulated from scratch. */
+	if (ntfsck_initialize_named_index_attr(ni, NTFS_INDEX_SDH, 4))
+		return -1;
+
+	na = ntfs_attr_open(ni, AT_DATA, STREAM_SDS, 4);
+	if (!na)
+		goto out;
+	data_size = na->data_size;
+
+	pbuf = ntfs_malloc(NTFSCK_SDS_BLOCK);
+	if (!pbuf)
+		goto out;
+
+	for (base = 0; base < data_size; base += 2 * NTFSCK_SDS_BLOCK) {
+		s64 plen = data_size - base;
+		s64 p;
+
+		if (plen > NTFSCK_SDS_BLOCK)
+			plen = NTFSCK_SDS_BLOCK;
+		if (ntfs_attr_pread(na, base, plen, pbuf) != plen)
+			goto out;
+
+		p = 0;
+		while (p + (s64)NTFSCK_SDS_HDR <= plen) {
+			SDS_ENTRY *e = (SDS_ENTRY *)(pbuf + p);
+			u32 length = le32_to_cpu(e->length);
+			ntfs_index_context *sdh;
+			int add_err;
+
+			if (!length && !le32_to_cpu(e->security_id))
+				break;
+			if (le64_to_cpu(e->offset) != (u64)(base + p) ||
+					length < NTFSCK_SDS_HDR ||
+					p + length > plen) {
+				p += NTFSCK_SDS_ALIGN;
+				continue;
+			}
+			if (!ntfsck_secure_is_live(sii, e->security_id, e->offset))
+				goto next;
+
+			/* One $SDH entry, laid out exactly as mkntfs builds it. */
+			memset(iebuf, 0, sizeof(iebuf));
+			ie->data_offset = const_cpu_to_le16(0x18);
+			ie->data_length = const_cpu_to_le16(0x14);
+			ie->reservedV = const_cpu_to_le32(0);
+			ie->length = const_cpu_to_le16(0x30);
+			ie->key_length = const_cpu_to_le16(0x08);
+			ie->ie_flags = const_cpu_to_le16(0);
+			ie->key.sdh.hash = e->hash;
+			ie->key.sdh.security_id = e->security_id;
+			sdh_data = (SDH_INDEX_DATA *)((u8 *)ie + 0x18);
+			sdh_data->hash = e->hash;
+			sdh_data->security_id = e->security_id;
+			sdh_data->offset = e->offset;
+			sdh_data->length = e->length;
+			sdh_data->reserved_II = const_cpu_to_le32(0x00490049);
+
+			/*
+			 * Use a fresh context per insert: ntfs_ie_add() leaves a
+			 * modified index block only marked dirty in icx->ib, and
+			 * a subsequent ntfs_index_lookup() on the same context
+			 * reads a fresh block from disk, discarding the pending
+			 * write. ntfs_index_ctx_put() flushes it, so scope each
+			 * add to its own get/put pair as ntfs_index_add_filename
+			 * does.
+			 */
+			sdh = ntfs_index_ctx_get(ni, NTFS_INDEX_SDH, 4);
+			if (!sdh)
+				goto out;
+			add_err = ntfs_ie_add(sdh, ie);
+			ntfs_index_ctx_put(sdh);
+			if (add_err)
+				goto out;
+next:
+			p = (p + length + NTFSCK_SDS_ALIGN - 1) &
+					~(s64)(NTFSCK_SDS_ALIGN - 1);
+		}
+	}
+
+	/*
+	 * Any index allocation the inserts promoted the root into was allocated
+	 * through ntfs_cluster_alloc(), which already recorded those clusters in
+	 * fsck's own lcn bitmap; re-marking them here would trip a false cluster
+	 * duplication and corrupt the freshly built runlist.
+	 */
+	if (ntfs_inode_sync(ni))
+		goto out;
+
+	ret = 0;
+out:
+	if (na)
+		ntfs_attr_close(na);
+	free(pbuf);
+	return ret;
+}
+
+/*
  * ntfsck_check_secure - deep cross-validation of $Secure ($SDS).
  *
  * Walks the $SDS stream one primary/backup block pair at a time. Because $SDS
@@ -6002,6 +6157,7 @@ static void ntfsck_check_secure(ntfs_inode *ni)
 	ntfs_index_context *sii = NULL, *sdh = NULL;
 	u8 *pbuf = NULL, *bbuf = NULL;
 	s64 data_size, base;
+	int sdh_bad = 0;
 	problem_context_t pctx = {0, };
 
 	na = ntfs_attr_open(ni, AT_DATA, STREAM_SDS, 4);
@@ -6145,15 +6301,37 @@ static void ntfsck_check_secure(ntfs_inode *ni)
 					sizeof(siikey), &ref,
 					PR_SECURE_SII_MISMATCH, "$SII", &pctx);
 
+			/*
+			 * $SDH is derived, so a single wrong entry condemns the
+			 * whole index: aggregate here and rebuild once below
+			 * rather than report each descriptor.
+			 */
 			sdhkey.hash = e->hash;
 			sdhkey.security_id = e->security_id;
-			ntfsck_check_secure_index(vol, sdh, &sdhkey,
-					sizeof(sdhkey), &ref,
-					PR_SECURE_SDH_MISMATCH, "$SDH", &pctx);
+			if (sdh && !ntfsck_secure_index_present(sdh, &sdhkey,
+						sizeof(sdhkey), &ref))
+				sdh_bad++;
 
 next_entry:
 			p = (p + length + NTFSCK_SDS_ALIGN - 1) &
 					~(s64)(NTFSCK_SDS_ALIGN - 1);
+		}
+	}
+
+	/*
+	 * Rebuild $SDH as a whole when it disagrees with $SDS, but only when
+	 * $SII is there to name the live set it must be rebuilt from.
+	 */
+	if (sdh_bad && sii) {
+		fsck_err_found();
+		ntfs_log_error("Inode(%"PRIu64"): $Secure $SDH index does not "
+				"match $SDS (%d descriptor%s)\n", ni->mft_no,
+				sdh_bad, sdh_bad > 1 ? "s" : "");
+		if (ntfs_fix_problem(vol, PR_SECURE_SDH_MISMATCH, &pctx)) {
+			ntfs_index_ctx_put(sdh);
+			sdh = NULL;
+			if (!ntfsck_rebuild_secure_sdh(ni, sii))
+				fsck_err_fixed();
 		}
 	}
 

@@ -7587,10 +7587,20 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
  * Returns 0 when every pass ran to completion, -1 on a critical error that
  * makes continuing pointless. Accumulates into the global fsck_errors /
  * fsck_fixes counters; the caller resets those (and re-mounts) between rounds.
+ *
+ * @orphan_changed, when non-NULL, is set TRUE if orphan recovery (pass 5)
+ * applied any fix this round. That pass relinks inodes and can leave new,
+ * uncounted on-disk corruption behind -- a relinked inode's INDEX_ROOT header
+ * -- which only the next round's checks would find, so the caller must
+ * re-verify rather than stop on errors==fixes when it happened.
  */
-static int ntfsck_run_repair_passes(ntfs_volume *vol)
+static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 {
 	int ret = 0;
+	int orphan_fixes_before;
+
+	if (orphan_changed)
+		*orphan_changed = FALSE;
 
 	/* $MFT must be whole before pass 1 decides which records exist. */
 	ntfsck_check_mft_size(vol);
@@ -7623,7 +7633,10 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol)
 	ntfsck_check_mft_records(vol);
 
 	/* pass 5 */
+	orphan_fixes_before = fsck_fixes;
 	ntfsck_check_orphaned_mft(vol);
+	if (orphan_changed)
+		*orphan_changed = (fsck_fixes != orphan_fixes_before);
 
 out:
 	free(mrec_temp_buf);
@@ -7844,12 +7857,14 @@ conflict_option:
 		int round;
 
 		for (round = 0; ; round++) {
+			BOOL orphan_changed = FALSE;
+
 			ntfsck_check_backup_boot(vol);
 
 			/* Open a crash-safe repair transaction before any write. */
 			ntfsck_begin_repair(vol);
 
-			if (ntfsck_run_repair_passes(vol))
+			if (ntfsck_run_repair_passes(vol, &orphan_changed))
 				goto err_out;
 
 			/*
@@ -7861,12 +7876,17 @@ conflict_option:
 			 * an earlier repair may have unblocked a check that could
 			 * not run the first time.
 			 *
-			 * Note that this never re-verifies a repair. A fix that is
-			 * counted but never written back, or one that disturbs a
-			 * structure an earlier pass already accepted, ends the run
-			 * reporting success; only the next invocation finds it.
+			 * The one exception is orphan recovery: it relinks inodes
+			 * and can leave a fresh, uncounted inconsistency behind (a
+			 * relinked inode's INDEX_ROOT header), so a round that
+			 * fixed everything it found but did rebuild an orphan must
+			 * still be re-verified. Otherwise this never re-verifies a
+			 * repair: a fix that is counted but never written back, or
+			 * one that disturbs a structure an earlier pass already
+			 * accepted, ends the run reporting success and only the
+			 * next invocation finds it.
 			 */
-			if (fsck_errors == fsck_fixes)
+			if (fsck_errors == fsck_fixes && !orphan_changed)
 				break;			/* nothing left to repair */
 			if (fsck_fixes == 0)
 				break;			/* nothing changed; the rest is unfixable */

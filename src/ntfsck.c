@@ -7406,6 +7406,13 @@ static s64 ntfsck_last_written_mft_record(ntfs_volume *vol, s64 reach,
 			continue;
 		if (!ntfs_is_file_record(m->magic))
 			continue;
+		/*
+		 * Only records still in use can be hidden to any effect: a freed
+		 * record left unzeroed keeps its FILE magic but nothing references
+		 * it, so growing $DATA back over it would be a spurious repair.
+		 */
+		if (!(m->flags & MFT_RECORD_IN_USE))
+			continue;
 		if (le32_to_cpu(m->bytes_allocated) != vol->mft_record_size)
 			continue;
 		if (le32_to_cpu(m->bytes_in_use) > vol->mft_record_size)

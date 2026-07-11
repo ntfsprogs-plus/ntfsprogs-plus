@@ -4018,12 +4018,42 @@ verdict:
  * Doing it hastily risks deleting valid links, so it is deliberately left out.
  */
 #define NTFSCK_REPARSE_MAX_DATA		(16 * 1024)
+/*
+ * ntfsck_reparse_recall_flag_recoverable - is this only a missing recall flag?
+ *
+ * WSL special files (socket, fifo, character or block device) are stored as
+ * data-less reparse points and are valid only when $STANDARD_INFORMATION carries
+ * FILE_ATTRIBUTE_RECALL_ON_OPEN. A creator that fails to persist that flag
+ * leaves an otherwise well-formed stub that ntfs_reparse_data_is_valid() then
+ * rejects. Recognise exactly that case so it can be repaired by restoring the
+ * flag instead of destroying the special file.
+ */
+static BOOL ntfsck_reparse_recall_flag_recoverable(ntfs_inode *ni,
+		const REPARSE_POINT *rp, s64 attr_size)
+{
+	if (attr_size != (s64)sizeof(REPARSE_POINT) ||
+			le16_to_cpu(rp->reparse_data_length) != 0 ||
+			(ni->flags & FILE_ATTRIBUTE_RECALL_ON_OPEN))
+		return FALSE;
+
+	switch (rp->reparse_tag) {
+	case IO_REPARSE_TAG_AF_UNIX:
+	case IO_REPARSE_TAG_LX_FIFO:
+	case IO_REPARSE_TAG_LX_CHR:
+	case IO_REPARSE_TAG_LX_BLK:
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
 static int ntfsck_check_reparse(ntfs_inode *ni)
 {
 	REPARSE_POINT *rp = NULL;
 	s64 attr_size = 0;
 	BOOL has_attr, has_flag;
 	BOOL corrupt = FALSE;
+	BOOL recall_missing = FALSE;
 	problem_context_t pctx = {0, };
 
 	has_flag = (ni->flags & FILE_ATTR_REPARSE_POINT) ? TRUE : FALSE;
@@ -4052,12 +4082,38 @@ static int ntfsck_check_reparse(ntfs_inode *ni)
 				le16_to_cpu(rp->reparse_data_length) >
 					NTFSCK_REPARSE_MAX_DATA ||
 				!ntfs_reparse_data_is_valid(ni, rp,
-					(size_t)attr_size))
+					(size_t)attr_size)) {
 			corrupt = TRUE;
+			if (rp && ntfsck_reparse_recall_flag_recoverable(ni, rp,
+						attr_size))
+				recall_missing = TRUE;
+		}
 		free(rp);
 	}
 
 	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec, NULL, NULL);
+
+	/*
+	 * A WSL special file that only lost FILE_ATTRIBUTE_RECALL_ON_OPEN is
+	 * repaired by restoring the flag, keeping the device node / fifo /
+	 * socket intact instead of deleting its reparse data.
+	 */
+	if (recall_missing) {
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_REPARSE_RECALL_FLAG_MISSING,
+					&pctx)) {
+			/*
+			 * The flag belongs in $STANDARD_INFORMATION only; $FILE_NAME
+			 * intentionally does not carry it, so update ni->flags (which
+			 * is written back to $STANDARD_INFORMATION) without marking
+			 * the file name dirty.
+			 */
+			ni->flags |= FILE_ATTRIBUTE_RECALL_ON_OPEN;
+			ntfs_inode_mark_dirty(ni);
+			fsck_err_fixed();
+		}
+		return STATUS_OK;
+	}
 
 	if (corrupt) {
 		fsck_err_found();

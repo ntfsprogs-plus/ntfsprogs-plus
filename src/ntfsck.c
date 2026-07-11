@@ -40,6 +40,7 @@
 #include "list.h"
 #include "dir.h"
 #include "lcnalloc.h"
+#include "logfile.h"
 #include "reparse.h"
 #include "fsck.h"
 
@@ -5788,14 +5789,75 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 	return 0;
 }
 
-static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
+/*
+ * ntfsck_logfile_is_dirty - does $LogFile hold journal data that needs a reset?
+ *
+ * ntfsck cannot replay the journal, so its only recovery is to empty $LogFile.
+ * But an already empty journal, or one the last OS left cleanly closed, carries
+ * nothing to replay, and rewriting it every run just churns the disk and nags
+ * the operator. Return TRUE only when the journal is genuinely dirty:
+ *   - ntfs_check_logfile() found it inconsistent (unreadable restart pages);
+ *   - or it holds a restart area whose client list is still in use and which is
+ *     not flagged RESTART_VOLUME_IS_CLEAN (i.e. an unclean shutdown).
+ * An empty journal (NVolLogFileEmpty) or a clean restart area returns FALSE.
+ */
+static BOOL ntfsck_logfile_is_dirty(ntfs_volume *vol)
 {
-	fsck_start_step("Reset logfile...");
+	ntfs_inode *ni;
+	ntfs_attr *na;
+	RESTART_PAGE_HEADER *rp = NULL;
+	const RESTART_AREA *ra;
+	BOOL dirty = TRUE;
+
+	ni = ntfs_inode_open(vol, FILE_LogFile);
+	if (!ni)
+		return TRUE;
+	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
+	if (!na) {
+		ntfs_inode_close(ni);
+		return TRUE;
+	}
+
+	if (!ntfs_check_logfile(na, &rp)) {
+		/* Inconsistent journal: reset is the only way out. */
+		dirty = TRUE;
+	} else if (NVolLogFileEmpty(vol)) {
+		/* Already empty, nothing to replay. */
+		dirty = FALSE;
+	} else if (rp) {
+		ra = (const RESTART_AREA *)((const u8 *)rp +
+				le16_to_cpu(rp->restart_area_offset));
+		/* Clean iff no client is in use or the volume-clean bit is set. */
+		if (ra->client_in_use_list == LOGFILE_NO_CLIENT ||
+				(ra->flags & RESTART_VOLUME_IS_CLEAN))
+			dirty = FALSE;
+	} else {
+		/* Consistent journal with no restart area: treat as clean. */
+		dirty = FALSE;
+	}
+
+	free(rp);
+	ntfs_attr_close(na);
+	ntfs_inode_close(ni);
+	return dirty;
+}
+
+static int ntfsck_replay_log(ntfs_volume *vol)
+{
 	problem_context_t pctx = {0, };
 
+	fsck_start_step("Reset logfile...");
+
 	/*
-	 * For now, Just reset logfile.
+	 * ntfsck cannot replay the journal, so a dirty $LogFile is emptied. A
+	 * journal that is already empty or was cleanly closed needs nothing, so
+	 * leave it untouched rather than resetting it on every run.
 	 */
+	if (!ntfsck_logfile_is_dirty(vol)) {
+		ntfs_log_verbose("$LogFile is empty or clean, no reset needed\n");
+		fsck_end_step();
+		return STATUS_OK;
+	}
 
 	ntfs_log_info("ntfsck does not support log replay, just reset it\n");
 

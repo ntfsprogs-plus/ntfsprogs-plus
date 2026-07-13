@@ -7602,6 +7602,17 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	if (orphan_changed)
 		*orphan_changed = FALSE;
 
+	/*
+	 * Journal handling comes first, before any MFT record is trusted or
+	 * modified. ntfsck cannot replay $LogFile, so it resets a genuinely dirty
+	 * journal here rather than leaving a stale one for the later passes to work
+	 * around. $LogFile (inode 2) always lives in the head of $MFT, so it stays
+	 * reachable regardless of a truncated $MFT/$DATA that
+	 * ntfsck_check_mft_size() repairs next.
+	 */
+	if (ntfsck_replay_log(vol))
+		return -1;
+
 	/* $MFT must be whole before pass 1 decides which records exist. */
 	ntfsck_check_mft_size(vol);
 
@@ -7610,9 +7621,6 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 
 	/* pass 2 */
 	if (ntfsck_check_system_files(vol))
-		return -1;
-
-	if (ntfsck_replay_log(vol))
 		return -1;
 
 	mrec_temp_buf = ntfs_malloc(vol->sector_size);

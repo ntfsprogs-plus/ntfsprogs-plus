@@ -615,9 +615,15 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 	}
 
 	if (ie->ie_flags & INDEX_ENTRY_NODE) {
-		if (((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) !=
+		/*
+		 * A node entry stores its 8-byte sub-node VCN in the last eight bytes of
+		 * the entry. In a $I30 filename index the VCN follows the aligned key
+		 * directly, but view indexes ($SDH/$SII in $Secure, $O/$Q in $Quota, $O in
+		 * $ObjId, $R in $Reparse) carry a data part between the key and the VCN, so
+		 * the entry is longer than aligned_key_end + 8.
+		 */
+		if (((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) >
 				(le16_to_cpu(ie->length) - 8)) {
-			/* TODO: need to fix it */
 			ntfs_log_error("there is no vcn space in index node\n");
 			return -1;
 		}

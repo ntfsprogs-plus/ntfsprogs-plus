@@ -2024,7 +2024,16 @@ upcase_ok:
 			else
 				goto error_exit;
 		}
-		if (ntfs_volume_check_logfile(vol) < 0) {
+		/*
+		 * A dirty or Windows-cached $LogFile (a version 2.0 restart page, left by
+		 * fast startup or an abrupt power cut) makes a filesystem driver refuse the
+		 * volume, but fsck exists to repair exactly that state: it resets the
+		 * journal itself, gated by its own repair policy. Rejecting the mount here
+		 * would make every repair mode fail on the volumes that need repair most,
+		 * so leave the decision to fsck.
+		 */
+		if (!(flags & NTFS_MNT_FSCK) &&
+				ntfs_volume_check_logfile(vol) < 0) {
 			/* Always reject cached metadata for now */
 			if (!(flags & NTFS_MNT_RECOVER) || (errno == EPERM)) {
 				if (flags & NTFS_MNT_MAY_RDONLY)

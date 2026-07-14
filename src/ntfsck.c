@@ -5921,9 +5921,15 @@ static int ntfsck_replay_log(ntfs_volume *vol)
 		return STATUS_OK;
 	}
 
-	ntfs_log_info("ntfsck does not support log replay, just reset it\n");
+	ntfs_log_info("ntfsck does not support log replay, $LogFile needs reset\n");
 
+	/*
+	 * The actual reset is gated on ntfs_fix_problem(): with -n it returns FALSE
+	 * (and the volume is read-only anyway), so $LogFile is left untouched. Only
+	 * announce the reset when it is really performed.
+	 */
 	if (ntfs_fix_problem(vol, PR_RESET_LOG_FILE, &pctx)) {
+		ntfs_log_info("Resetting $LogFile\n");
 		if (ntfs_logfile_reset(vol)) {
 			check_failed("ntfs logfile reset failed, errno : %d\n", errno);
 			return STATUS_ERROR;

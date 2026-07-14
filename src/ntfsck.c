@@ -2777,7 +2777,6 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 	int not_mapped;
 	int err;
 	problem_context_t pctx = {0, };
-	BOOL shrink = FALSE;
 
 	if (!na || !na->ni)
 		return NULL;
@@ -2818,11 +2817,11 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 		}
 
 		/*
-		 * Non-resident attribute, but it's size is zero,
-		 * then shrink attribute for AT_DATA. (Windows behavior)
-		 *
-		 * Check if changing condition to "na->type != AT_INDEX_ALLOCATION"
-		 * instead of "na->type == AT_DATA".
+		 * A non-resident $DATA with allocated_size zero owns no clusters, so map it
+		 * as an empty runlist without decoding the mapping pairs. Converting such
+		 * an attribute back to resident (Windows behavior) is a repair, not a
+		 * mapping concern, and is done by ntfsck_check_non_resident_attr() with the
+		 * sizes from the attribute record.
 		 */
 		if (!utils_is_metadata(ni) &&
 				na->type == AT_DATA &&
@@ -2839,7 +2838,6 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 			rl[0].length = 0;
 			na->rl = rl;
 
-			shrink = TRUE;
 			goto out;
 		}
 
@@ -2942,15 +2940,6 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 	na->rl = rl;
 
 out:
-	if (shrink == TRUE) {
-		fsck_err_found();
-
-		if (ntfs_fix_problem(vol, PR_ATTR_NON_RESIDENT_SIZES_MISMATCH, &pctx)) {
-			ntfs_non_resident_attr_shrink(na, 0);
-			fsck_err_fixed();
-		}
-	}
-
 	ntfs_attr_put_search_ctx(actx);
 	return rl;
 }
@@ -3418,8 +3407,28 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 		fsck_err_found();
 		if (ntfs_fix_problem(vol, PR_ATTR_NON_RESIDENT_SIZES_MISMATCH,
 					&pctx)) {
-			ntfsck_initialize_index_attr(ni);
-			fsck_err_fixed();
+			if (!ntfsck_initialize_index_attr(ni))
+				fsck_err_fixed();
+		}
+		goto out;
+	}
+
+	/*
+	 * An empty non-resident $DATA (no clusters, every size field zero) is not
+	 * corruption -- truncation to zero can legitimately leave the attribute
+	 * non-resident -- but Windows normalizes such an attribute back to resident,
+	 * so convert it the same way. Encrypted attributes cannot be made resident
+	 * and the layout is harmless, so leave them alone.
+	 */
+	if (na->type == AT_DATA && alloc_size == 0 && data_size == 0 &&
+			init_size == 0 && rls.alloc_size == 0 &&
+			!(na->data_flags & ATTR_IS_ENCRYPTED)) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_ATTR_EMPTY_NON_RESIDENT_DATA,
+					&pctx)) {
+			if (!ntfs_non_resident_attr_shrink(na, 0) &&
+					!NAttrNonResident(na))
+				fsck_err_fixed();
 		}
 		goto out;
 	}
@@ -3449,12 +3458,11 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 	if (!ntfs_fix_problem(vol, PR_ATTR_NON_RESIDENT_SIZES_MISMATCH, &pctx))
 		goto out;
 
-	if (na->type == AT_INDEX_ALLOCATION)
-		ntfsck_initialize_index_attr(ni);
-	else
-		ntfs_non_resident_attr_shrink(na, new_size);
-
-	fsck_err_fixed();
+	if (na->type == AT_INDEX_ALLOCATION) {
+		if (!ntfsck_initialize_index_attr(ni))
+			fsck_err_fixed();
+	} else if (!ntfs_non_resident_attr_shrink(na, new_size))
+		fsck_err_fixed();
 
 out:
 	if (out_rls)

@@ -222,6 +222,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_ATTR_INITIALIZED_SIZE_MISMATCH,
 		"Inode(@In:@At): Initialized size of non resident attribute is out of range.",
 	},
+	{ PR_ATTR_EMPTY_NON_RESIDENT_DATA,
+		"Inode(@In:@At): Empty $DATA is non-resident, make it resident.",
+	},
 	{ 0, },
 };
 

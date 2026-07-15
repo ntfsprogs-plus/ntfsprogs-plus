@@ -8533,6 +8533,26 @@ conflict_option:
 	}
 
 	/*
+	 * A hibernated Windows (including one shut down with fast startup) keeps a
+	 * memory image in hiberfil.sys and expects the volume to be exactly as it
+	 * left it: any repair corrupts the volume the moment Windows resumes. Refuse
+	 * the repair modes and let only the read-only check proceed.
+	 */
+	errno = 0;
+	if (ntfs_volume_check_hiberfile(vol, 0) < 0 && errno == EPERM) {
+		if (ntfsck_repair_enabled()) {
+			ntfs_log_error("Windows is hibernated on %s. Resume and "
+					"shut down Windows fully (no hibernation "
+					"or fast restarting), then run ntfsck "
+					"again.\n", path);
+			ntfs_fsck_umount(vol);
+			return RETURN_OPERATIONAL_ERROR;
+		}
+		ntfs_log_warning("Windows is hibernated; the volume reflects "
+				"the state of a suspended system.\n");
+	}
+
+	/*
 	 * Run the check/repair sequence until the volume stops changing. A single
 	 * sweep is not always enough: a later pass can legitimately disturb
 	 * something an earlier pass already validated -- most notably orphan

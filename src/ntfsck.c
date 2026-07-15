@@ -4935,9 +4935,13 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			return STATUS_OK;
 		}
 
-		/* checking for system files or not */
-		if ((utils_is_metadata(ni) == 1) ||
-				((utils_is_metadata(ictx->ni) == 1) &&
+		/*
+		 * Checking for system files or not. Deliberately do not use
+		 * utils_is_metadata() here: it also matches ordinary user files carrying
+		 * SYSTEM|HIDDEN attributes (e.g. bootmgr, "System Volume Information").
+		 */
+		if ((utils_is_system_metadata(ni) == 1) ||
+				((utils_is_system_metadata(ictx->ni) == 1) &&
 				 (ictx->ni->mft_no != FILE_root))) {
 			/*
 			 * Do not check return value because system files can be deleted.
@@ -4964,9 +4968,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 						"index entry.\n",
 						ni->mft_no, ictx->ni->mft_no);
 				ntfsck_close_inode(ni);
-				if (!NVolFsNoRepair(vol))
-					goto remove_index;
-				goto err_out;
+				goto remove_index;
 			}
 		}
 
@@ -5013,6 +5015,13 @@ remove_index:
 				if (ictx->actx)
 					ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
 			}
+		} else {
+			/*
+			 * Removal declined (no-repair mode): the error is
+			 * counted, keep walking the remaining entries instead
+			 * of aborting the whole directory scan.
+			 */
+			ret = STATUS_OK;
 		}
 		free(crtname);
 	}

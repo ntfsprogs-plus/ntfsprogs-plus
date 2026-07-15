@@ -15,6 +15,7 @@
 #endif
 
 int utils_is_metadata(ntfs_inode *inode);
+int utils_is_system_metadata(ntfs_inode *inode);
 ATTR_RECORD * find_attribute(const ATTR_TYPES type, ntfs_attr_search_ctx *ctx);
 ATTR_RECORD * find_first_attribute(const ATTR_TYPES type, MFT_RECORD *mft);
 

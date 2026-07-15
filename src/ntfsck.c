@@ -158,6 +158,8 @@ s64 clear_mft_cnt;
 s64 total_valid_mft;
 s64 total_inuse_mft;	/* MFT records the bitmap marks in-use */
 s64 fsck_scan_eio;	/* MFT records that failed to read/open with EIO */
+/* $LogFile was reset this run: stale LSNs must be zeroed (see parse #1) */
+static BOOL logfile_was_reset;
 
 struct progress_bar prog;
 int pb_flags;
@@ -5045,6 +5047,28 @@ out:
 	return ret;
 }
 
+/*
+ * Zero the stale LSN of the index block at byte position @pos after a
+ * $LogFile reset. As with MFT records (see ntfsck_reset_mft_lsn()) the LSN is
+ * not multi sector protected, so it is poked in place: no fixup round trip,
+ * and blocks whose fixup or content is broken get scrubbed all the same.
+ */
+static void ntfsck_reset_ib_lsn(ntfs_attr *ia_na, s64 pos)
+{
+	INDEX_BLOCK ib;
+
+	/* magic through lsn: the first 16 bytes are enough */
+	if (ntfs_attr_pread(ia_na, pos,
+				offsetof(INDEX_BLOCK, index_block_vcn), &ib) !=
+			offsetof(INDEX_BLOCK, index_block_vcn))
+		return;
+	if (!ntfs_is_indx_record(ib.magic) || !ib.lsn)
+		return;
+	ib.lsn = const_cpu_to_sle64(0);
+	ntfs_attr_pwrite(ia_na, pos + offsetof(INDEX_BLOCK, lsn),
+			sizeof(ib.lsn), &ib.lsn);
+}
+
 static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		ntfs_index_context *ictx)
 {
@@ -5203,6 +5227,17 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		bmp_bit = (vcn << ictx->vcn_size_bits) / ictx->block_size;
 		if (max_ib_bits <= bmp_bit)
 			break;
+
+		/*
+		 * The journal any LSN refers to was reset in parse #1 and a stale value
+		 * would make a future log replay skip its redo of this block (see
+		 * ntfsck_reset_mft_lsn()). Poked before the bitmap test because allocated
+		 * blocks the index bitmap marks free never reach the checks below, yet they
+		 * too are re-initialized through the log once the index grows.
+		 */
+		if (logfile_was_reset)
+			ntfsck_reset_ib_lsn(ictx->ia_na,
+					vcn << ictx->vcn_size_bits);
 
 		if (!ntfs_bit_get(bmp_buf, bmp_bit))
 			continue;
@@ -6033,6 +6068,139 @@ static BOOL ntfsck_logfile_is_dirty(ntfs_volume *vol)
 	return dirty;
 }
 
+/*
+ * Zero the LSN a cached MFT record buffer carries, so that a later sync
+ * of the inode cannot write a stale value over what
+ * ntfsck_reset_mft_lsn() put on disk.
+ */
+static void ntfsck_zero_cached_lsn(ntfs_inode *ni)
+{
+	s32 i;
+
+	if (!ni)
+		return;
+
+	ni->mrec->lsn = const_cpu_to_sle64(0);
+	for (i = 0; i < ni->nr_extents; i++)
+		ni->extent_nis[i]->mrec->lsn = const_cpu_to_sle64(0);
+}
+
+/*
+ * Every LSN on the volume refers to the journal that was just thrown
+ * away. The next driver to mount initializes a fresh log whose LSNs
+ * restart low, and recovery decides "this update is already on disk" by
+ * comparing a record's LSN against a log record's LSN, so a stale large
+ * LSN makes a future replay silently skip its redo and corrupt the
+ * volume long after fsck ran. Zero the field in every MFT record, the
+ * state mkntfs creates alongside an empty journal.
+ *
+ * The LSN sits in the first sector and is no sector tail, so it is not
+ * multi sector protected: write it in place, with no fixup round trip.
+ * That also scrubs free records whose own fixup header is corrupted,
+ * which a protected write could never reach. Index blocks carry an LSN
+ * too; ntfsck_validate_index_blocks() pokes those the same way, as it
+ * is the one place every allocated index block already passes through.
+ *
+ * The long-lived inodes the mount opened still cache their records with
+ * the old LSN, so those buffers are scrubbed as well lest a later sync
+ * write the stale value back.
+ */
+static void ntfsck_reset_mft_lsn(ntfs_volume *vol)
+{
+	MFT_RECORD *mrec;
+	s64 nr_mft_records, mft_num, pos;
+	s64 reset_cnt = 0;
+
+	mrec = ntfs_malloc(vol->mft_record_size);
+	if (!mrec)
+		return;
+
+	nr_mft_records = vol->mft_na->initialized_size >>
+			vol->mft_record_size_bits;
+	for (mft_num = 0; mft_num < nr_mft_records; mft_num++) {
+		pos = mft_num << vol->mft_record_size_bits;
+		/* magic through lsn: the first 16 bytes are enough */
+		if (ntfs_attr_pread(vol->mft_na, pos,
+					offsetof(MFT_RECORD, sequence_number),
+					mrec) !=
+				offsetof(MFT_RECORD, sequence_number))
+			continue;
+		if (!ntfs_is_file_record(mrec->magic) || !mrec->lsn)
+			continue;
+		mrec->lsn = const_cpu_to_sle64(0);
+		if (ntfs_attr_pwrite(vol->mft_na,
+					pos + offsetof(MFT_RECORD, lsn),
+					sizeof(mrec->lsn), &mrec->lsn) !=
+				sizeof(mrec->lsn)) {
+			ntfs_log_error("Failed to reset LSN of mft record(%"
+					PRId64")\n", mft_num);
+			continue;
+		}
+		if (mft_num < vol->mftmirr_size)
+			ntfs_attr_pwrite(vol->mftmirr_na,
+					pos + offsetof(MFT_RECORD, lsn),
+					sizeof(mrec->lsn), &mrec->lsn);
+		reset_cnt++;
+	}
+	ntfs_free(mrec);
+
+	ntfsck_zero_cached_lsn(vol->mft_ni);
+	ntfsck_zero_cached_lsn(vol->mftmirr_ni);
+	ntfsck_zero_cached_lsn(vol->vol_ni);
+	ntfsck_zero_cached_lsn(vol->lcnbmp_ni);
+	ntfsck_zero_cached_lsn(vol->secure_ni);
+
+	ntfs_log_info("Reset LSN of %"PRId64" mft records\n", reset_cnt);
+}
+
+/*
+ * Zero the stale LSN of every block of one named index allocation.
+ * ntfsck_validate_index_blocks() covers the indexes the directory walk
+ * reaches, but $Secure never enters that walk (ntfsck_check_index()
+ * skips the inodes the mount holds open), so its $SDH/$SII blocks are
+ * swept here right after the $LogFile reset.
+ */
+static void ntfsck_reset_named_ia_lsn(ntfs_inode *ni, ntfschar *name,
+		u32 name_len)
+{
+	ntfs_attr_search_ctx *ctx;
+	INDEX_ROOT *ir;
+	ntfs_attr *ia_na;
+	u32 block_size;
+	s64 pos;
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return;
+	if (ntfs_attr_lookup(AT_INDEX_ROOT, name, name_len, CASE_SENSITIVE,
+				0, NULL, 0, ctx)) {
+		ntfs_attr_put_search_ctx(ctx);
+		return;
+	}
+	ir = (INDEX_ROOT *)((u8 *)ctx->attr +
+			le16_to_cpu(ctx->attr->value_offset));
+	block_size = le32_to_cpu(ir->index_block_size);
+	ntfs_attr_put_search_ctx(ctx);
+	if (block_size < NTFS_BLOCK_SIZE)
+		return;
+
+	ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, name, name_len);
+	if (!ia_na)
+		return;
+	for (pos = 0; pos + block_size <= ia_na->data_size; pos += block_size)
+		ntfsck_reset_ib_lsn(ia_na, pos);
+	ntfs_attr_close(ia_na);
+}
+
+static void ntfsck_reset_secure_lsn(ntfs_volume *vol)
+{
+	if (!vol->secure_ni)
+		return;
+
+	ntfsck_reset_named_ia_lsn(vol->secure_ni, NTFS_INDEX_SDH, 4);
+	ntfsck_reset_named_ia_lsn(vol->secure_ni, NTFS_INDEX_SII, 4);
+}
+
 static int ntfsck_replay_log(ntfs_volume *vol)
 {
 	problem_context_t pctx = {0, };
@@ -6063,6 +6231,9 @@ static int ntfsck_replay_log(ntfs_volume *vol)
 			check_failed("ntfs logfile reset failed, errno : %d\n", errno);
 			return STATUS_ERROR;
 		}
+		logfile_was_reset = TRUE;
+		ntfsck_reset_mft_lsn(vol);
+		ntfsck_reset_secure_lsn(vol);
 	}
 
 	fsck_end_step();

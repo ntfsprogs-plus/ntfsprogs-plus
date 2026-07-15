@@ -83,6 +83,7 @@ typedef enum {
 	PR_ATTRDEF_CORRUPTED,
 	PR_ATTR_INITIALIZED_SIZE_MISMATCH,
 	PR_ATTR_EMPTY_NON_RESIDENT_DATA,
+	PR_MFT_USA_CORRUPTED,
 } problem_code_t;
 
 typedef struct problem_context {

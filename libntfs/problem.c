@@ -225,6 +225,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_ATTR_EMPTY_NON_RESIDENT_DATA,
 		"Inode(@In:@At): Empty $DATA is non-resident, make it resident.",
 	},
+	{ PR_MFT_USA_CORRUPTED,
+		"Inode(@In): MFT record fixup header is corrupted, salvage the record.",
+	},
 	{ 0, },
 };
 

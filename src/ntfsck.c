@@ -723,19 +723,87 @@ static int ntfsck_repair_index_block(ntfs_index_context *ictx, VCN vcn,
 	return STATUS_OK;
 }
 
+/*
+ * Last-chance read of an MFT record whose multi sector transfer fixup failed
+ * (the reader stamps such a record with the BAAD magic). A record becomes
+ * unreadable when the fixup header itself (usa_ofs/usa_count) is corrupted
+ * even though every protected sector survived; ntfsck_read_index_block()
+ * already salvages index blocks the same way.
+ */
+static int ntfsck_salvage_mft_record(ntfs_volume *vol, u64 mft_no,
+		MFT_RECORD *mrec)
+{
+	u16 expected_usa_ofs;
+	u16 expected_usa_count;
+	problem_context_t pctx = {0, };
+
+	if (!NVolFsck(vol) || !vol->mft_na)
+		return STATUS_ERROR;
+
+	/* Refuse non-allocated records, as ntfs_mft_records_read() does. */
+	if ((s64)mft_no + 1 > vol->mft_na->initialized_size >>
+			vol->mft_record_size_bits)
+		return STATUS_ERROR;
+
+	if (ntfs_attr_pread(vol->mft_na,
+				(s64)mft_no << vol->mft_record_size_bits,
+				vol->mft_record_size, mrec) !=
+			vol->mft_record_size)
+		return STATUS_ERROR;
+
+	/* Salvage only what still declares itself a FILE record. */
+	if (!ntfs_is_file_record(mrec->magic))
+		return STATUS_ERROR;
+
+	if (vol->major_ver < 3 || (vol->major_ver == 3 && !vol->minor_ver))
+		expected_usa_ofs = (sizeof(MFT_RECORD_OLD) + 1) & ~1;
+	else
+		expected_usa_ofs = (sizeof(MFT_RECORD) + 1) & ~1;
+	expected_usa_count = (vol->mft_record_size >= NTFS_BLOCK_SIZE) ?
+		vol->mft_record_size / NTFS_BLOCK_SIZE + 1 : 1;
+
+	/* A canonical header means the sectors themselves are torn. */
+	if (le16_to_cpu(mrec->usa_ofs) == expected_usa_ofs &&
+			le16_to_cpu(mrec->usa_count) == expected_usa_count)
+		return STATUS_ERROR;
+
+	mrec->usa_ofs = cpu_to_le16(expected_usa_ofs);
+	mrec->usa_count = cpu_to_le16(expected_usa_count);
+
+	if (ntfs_mst_post_read_fixup_warn((NTFS_RECORD *)mrec,
+				vol->mft_record_size, FALSE))
+		return STATUS_ERROR;
+
+	pctx.inum = mft_no;
+	fsck_err_found();
+	if (!ntfs_fix_problem(vol, PR_MFT_USA_CORRUPTED, &pctx))
+		return STATUS_ERROR;
+
+	if (ntfs_mft_record_write(vol, mft_no, mrec))
+		return STATUS_ERROR;
+
+	fsck_err_fixed();
+	return STATUS_OK;
+}
+
 static ntfs_inode *ntfsck_open_inode_after_raw_mft_check(ntfs_volume *vol,
 		u64 mft_no, BOOL expect_in_use)
 {
 	MFT_RECORD *mrec;
 	ntfs_inode *ni = NULL;
 	BOOL dirty = FALSE;
+	BOOL readable;
 
 	mrec = ntfs_malloc(vol->mft_record_size);
 	if (!mrec)
 		return NULL;
 
-	if (!ntfs_mft_record_read(vol, mft_no, mrec) &&
-			!ntfs_mft_record_check(vol, mft_no, mrec)) {
+	/* A failed fixup does not fail the read: it leaves BAAD magic. */
+	readable = !ntfs_mft_record_read(vol, mft_no, mrec);
+	if (!readable || mrec->magic == magic_BAAD)
+		readable = !ntfsck_salvage_mft_record(vol, mft_no, mrec);
+
+	if (readable && !ntfs_mft_record_check(vol, mft_no, mrec)) {
 		dirty = ntfsck_repair_raw_index_root_fields(vol, mft_no, mrec);
 		if (expect_in_use && NVolFsck(vol) && !NVolFsNoRepair(vol) &&
 				!(mrec->flags & MFT_RECORD_IN_USE)) {

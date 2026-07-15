@@ -2646,10 +2646,15 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 			if (ntfs_fix_problem(vol, PR_MFT_FLAG_MISMATCH, &pctx)) {
 				ie_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
 				fn->file_attributes = ie_fn->file_attributes;
-				ntfs_index_entry_mark_dirty(ictx);
 				ntfs_inode_mark_dirty(ni);
 				NInoFileNameSetDirty(ni);
-				fsck_err_fixed();
+				/*
+				 * The index walk reloads ictx->ib without
+				 * flushing a dirty block, so write the entry
+				 * out right away.
+				 */
+				if (!ntfsck_update_index_entry(ictx))
+					fsck_err_fixed();
 			}
 		}
 
@@ -2667,10 +2672,10 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 				fn->allocated_size = ie_fn->allocated_size;
 				ie_fn->data_size = cpu_to_sle64(0);
 				fn->data_size = ie_fn->data_size;
-				ntfs_index_entry_mark_dirty(ictx);
 				ntfs_inode_mark_dirty(ni);
 				NInoFileNameSetDirty(ni);
-				fsck_err_fixed();
+				if (!ntfsck_update_index_entry(ictx))
+					fsck_err_fixed();
 			}
 		}
 
@@ -2723,8 +2728,8 @@ fix_index:
 			ie_fn->allocated_size = cpu_to_sle64(ni->allocated_size);
 			ie_fn->data_size = cpu_to_sle64(ni->data_size);
 
-			ntfs_index_entry_mark_dirty(ictx);
-			fsck_err_fixed();
+			if (!ntfsck_update_index_entry(ictx))
+				fsck_err_fixed();
 		}
 	}
 
@@ -2838,8 +2843,13 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 
 				fsck_err_found();
 				if (ntfs_fix_problem(vol, PR_DIR_FLAG_MISMATCH_IDX_FN, &pctx)) {
-					ntfs_index_entry_mark_dirty(ictx);
-					fsck_err_fixed();
+					/*
+					 * The index walk reloads ictx->ib
+					 * without flushing a dirty block, so
+					 * write the entry out right away.
+					 */
+					if (!ntfsck_update_index_entry(ictx))
+						fsck_err_fixed();
 				}
 			}
 		} else {
@@ -2866,8 +2876,8 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 
 				fsck_err_found();
 				if (ntfs_fix_problem(vol, PR_DIR_IR_NOT_EXIST, &pctx)) {
-					ntfs_index_entry_mark_dirty(ictx);
-					fsck_err_fixed();
+					if (!ntfsck_update_index_entry(ictx))
+						fsck_err_fixed();
 				}
 			}
 #endif
@@ -2884,8 +2894,8 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 
 				fsck_err_found();
 				if (ntfs_fix_problem(vol, PR_MFT_FLAG_MISMATCH_IDX_FN, &pctx)) {
-					ntfs_index_entry_mark_dirty(ictx);
-					fsck_err_fixed();
+					if (!ntfsck_update_index_entry(ictx))
+						fsck_err_fixed();
 				}
 			}
 		} else {
@@ -2908,8 +2918,8 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 
 			fsck_err_found();
 			if (ntfs_fix_problem(vol, PR_FILE_HAVE_IR, &pctx)) {
-				ntfs_index_entry_mark_dirty(ictx);
-				fsck_err_fixed();
+				if (!ntfsck_update_index_entry(ictx))
+					fsck_err_fixed();
 			}
 		}
 	}

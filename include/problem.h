@@ -85,6 +85,7 @@ typedef enum {
 	PR_ATTR_EMPTY_NON_RESIDENT_DATA,
 	PR_MFT_USA_CORRUPTED,
 	PR_MFT_LINK_COUNT_MISMATCH,
+	PR_MFT_BAAD_RECORD,
 } problem_code_t;
 
 typedef struct problem_context {

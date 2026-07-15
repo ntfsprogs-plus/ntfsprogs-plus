@@ -726,17 +726,41 @@ static int ntfsck_repair_index_block(ntfs_index_context *ictx, VCN vcn,
 }
 
 /*
- * Last-chance read of an MFT record whose multi sector transfer fixup failed
- * (the reader stamps such a record with the BAAD magic). A record becomes
- * unreadable when the fixup header itself (usa_ofs/usa_count) is corrupted
- * even though every protected sector survived; ntfsck_read_index_block()
- * already salvages index blocks the same way.
+ * Last-chance read of an MFT record whose multi sector transfer fixup
+ * failed (the reader stamps such a record with the BAAD magic). Two
+ * on-disk states are recoverable:
+ *
+ * A FILE record whose fixup header (usa_ofs/usa_count) is corrupted even
+ * though every protected sector survived; ntfsck_read_index_block()
+ * already salvages index blocks the same way. Reread the record without
+ * deprotection, restore the canonical fixup header from the volume
+ * geometry (the values ntfs_mft_record_layout() writes) and retry the
+ * fixup: it still verifies every sector tail against the update sequence
+ * number, so a genuinely torn write keeps failing, silently, and the
+ * record is left to the discard path.
+ *
+ * A record carrying the BAAD magic on disk, which a Windows driver
+ * stamps once it detects a torn multi sector write. The update sequence
+ * array in the first sector still holds the bytes every sector tail is
+ * supposed to carry, so the intended content can be reassembled by
+ * deprotecting without tail verification; sectors the torn write never
+ * reached simply keep their older content. Whether the reassembled
+ * record is coherent cannot be decided here: it is handed to
+ * ntfs_mft_record_check() and the regular inode checks like any other
+ * record, and what they cannot repair still ends up discarded. chkdsk
+ * deletes such a record outright, so this can only recover more.
+ *
+ * The problem is only reported once the record is known to be
+ * salvageable, which keeps the -n error count equal to what a repair run
+ * fixes. A salvaged record is written straight back, which re-protects
+ * it with the restored header.
  */
 static int ntfsck_salvage_mft_record(ntfs_volume *vol, u64 mft_no,
 		MFT_RECORD *mrec)
 {
 	u16 expected_usa_ofs;
 	u16 expected_usa_count;
+	problem_code_t code;
 	problem_context_t pctx = {0, };
 
 	if (!NVolFsck(vol) || !vol->mft_na)
@@ -753,10 +777,6 @@ static int ntfsck_salvage_mft_record(ntfs_volume *vol, u64 mft_no,
 			vol->mft_record_size)
 		return STATUS_ERROR;
 
-	/* Salvage only what still declares itself a FILE record. */
-	if (!ntfs_is_file_record(mrec->magic))
-		return STATUS_ERROR;
-
 	if (vol->major_ver < 3 || (vol->major_ver == 3 && !vol->minor_ver))
 		expected_usa_ofs = (sizeof(MFT_RECORD_OLD) + 1) & ~1;
 	else
@@ -764,21 +784,47 @@ static int ntfsck_salvage_mft_record(ntfs_volume *vol, u64 mft_no,
 	expected_usa_count = (vol->mft_record_size >= NTFS_BLOCK_SIZE) ?
 		vol->mft_record_size / NTFS_BLOCK_SIZE + 1 : 1;
 
-	/* A canonical header means the sectors themselves are torn. */
-	if (le16_to_cpu(mrec->usa_ofs) == expected_usa_ofs &&
-			le16_to_cpu(mrec->usa_count) == expected_usa_count)
-		return STATUS_ERROR;
+	if (ntfs_is_file_record(mrec->magic)) {
+		/* A canonical header means the sectors themselves are torn. */
+		if (le16_to_cpu(mrec->usa_ofs) == expected_usa_ofs &&
+				le16_to_cpu(mrec->usa_count) ==
+				expected_usa_count)
+			return STATUS_ERROR;
 
-	mrec->usa_ofs = cpu_to_le16(expected_usa_ofs);
-	mrec->usa_count = cpu_to_le16(expected_usa_count);
+		mrec->usa_ofs = cpu_to_le16(expected_usa_ofs);
+		mrec->usa_count = cpu_to_le16(expected_usa_count);
 
-	if (ntfs_mst_post_read_fixup_warn((NTFS_RECORD *)mrec,
-				vol->mft_record_size, FALSE))
+		if (ntfs_mst_post_read_fixup_warn((NTFS_RECORD *)mrec,
+					vol->mft_record_size, FALSE))
+			return STATUS_ERROR;
+
+		code = PR_MFT_USA_CORRUPTED;
+	} else if (mrec->magic == magic_BAAD) {
+		u16 *usa, *tail;
+		int i;
+
+		/* With the fixup header gone too there is nothing to trust. */
+		if (le16_to_cpu(mrec->usa_ofs) != expected_usa_ofs ||
+				le16_to_cpu(mrec->usa_count) !=
+				expected_usa_count)
+			return STATUS_ERROR;
+
+		/* Deprotect without tail verification. */
+		usa = (u16 *)((u8 *)mrec + expected_usa_ofs);
+		tail = (u16 *)((u8 *)mrec + NTFS_BLOCK_SIZE) - 1;
+		for (i = 1; i < expected_usa_count; i++) {
+			*tail = usa[i];
+			tail += NTFS_BLOCK_SIZE / sizeof(u16);
+		}
+		mrec->magic = magic_FILE;
+
+		code = PR_MFT_BAAD_RECORD;
+	} else
 		return STATUS_ERROR;
 
 	pctx.inum = mft_no;
 	fsck_err_found();
-	if (!ntfs_fix_problem(vol, PR_MFT_USA_CORRUPTED, &pctx))
+	if (!ntfs_fix_problem(vol, code, &pctx))
 		return STATUS_ERROR;
 
 	if (ntfs_mft_record_write(vol, mft_no, mrec))

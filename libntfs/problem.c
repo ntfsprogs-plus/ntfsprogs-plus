@@ -231,6 +231,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_MFT_LINK_COUNT_MISMATCH,
 		"Inode(@In): Hard link count of MFT record differs from the number of $FILE_NAME(@Sd), fix it.",
 	},
+	{ PR_MFT_BAAD_RECORD,
+		"Inode(@In): MFT record is marked BAAD by a torn multi sector write, salvage what it holds.",
+	},
 	{ 0, },
 };
 

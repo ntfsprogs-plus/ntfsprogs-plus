@@ -151,18 +151,20 @@ static int __metadata(ntfs_volume *vol, u64 num)
 }
 
 /**
- * utils_is_metadata - Determine if an inode represents a metadata file
+ * utils_is_system_metadata - Determine if an inode is a filesystem record
  * @inode:  An ntfs inode to be tested
  *
- * A handful of files in the volume contain filesystem data - metadata.
- * They can be identified by their inode number (offset in MFT/$DATA) or by
- * their parent.
+ * Match only records that belong to the filesystem itself: the reserved
+ * inode numbers, their extents, and the files that live in a system
+ * directory other than the root. Unlike utils_is_metadata(), an ordinary
+ * user file carrying SYSTEM|HIDDEN attributes (e.g. bootmgr) is not
+ * matched.
  *
- * Return:  1  inode is a metadata file
- *	    0  inode is not a metadata file
+ * Return:  1  inode is a system metadata record
+ *	    0  inode is not a system metadata record
  *	   -1  Error occurred
  */
-int utils_is_metadata(ntfs_inode *inode)
+int utils_is_system_metadata(ntfs_inode *inode)
 {
 	ntfs_volume *vol;
 	ATTR_RECORD *rec;
@@ -200,6 +202,29 @@ int utils_is_metadata(ntfs_inode *inode)
 	num = MREF_LE(attr->parent_directory);
 	if ((num != FILE_root) && (__metadata(vol, num) == 1))
 		return 1;
+
+	return 0;
+}
+
+/**
+ * utils_is_metadata - Determine if an inode represents a metadata file
+ * @inode:  An ntfs inode to be tested
+ *
+ * A handful of files in the volume contain filesystem data - metadata.
+ * They can be identified by their inode number (offset in MFT/$DATA) or by
+ * their parent. Files flagged SYSTEM|HIDDEN are matched as well.
+ *
+ * Return:  1  inode is a metadata file
+ *	    0  inode is not a metadata file
+ *	   -1  Error occurred
+ */
+int utils_is_metadata(ntfs_inode *inode)
+{
+	int ret;
+
+	ret = utils_is_system_metadata(inode);
+	if (ret)
+		return ret;
 
 	if ((inode->flags & (FILE_ATTR_SYSTEM | FILE_ATTR_HIDDEN)) ==
 			(FILE_ATTR_SYSTEM | FILE_ATTR_HIDDEN))

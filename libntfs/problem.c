@@ -234,6 +234,15 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_MFT_BAAD_RECORD,
 		"Inode(@In): MFT record is marked BAAD by a torn multi sector write, salvage what it holds.",
 	},
+	{ PR_MFT_SEQNO_ZERO,
+		"Inode(@In): MFT record has sequence number zero, restore a valid one.",
+	},
+	{ PR_IDX_SEQNO_ZERO,
+		"Inode(@In): Index entry carries sequence number zero, rebind it to the MFT record.",
+	},
+	{ PR_FN_PARENT_SEQNO_ZERO,
+		"Inode(@In): Parent reference of $FILE_NAME carries sequence number zero, update it.",
+	},
 	{ 0, },
 };
 

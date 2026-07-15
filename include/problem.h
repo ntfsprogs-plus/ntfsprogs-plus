@@ -86,6 +86,9 @@ typedef enum {
 	PR_MFT_USA_CORRUPTED,
 	PR_MFT_LINK_COUNT_MISMATCH,
 	PR_MFT_BAAD_RECORD,
+	PR_MFT_SEQNO_ZERO,
+	PR_IDX_SEQNO_ZERO,
+	PR_FN_PARENT_SEQNO_ZERO,
 } problem_code_t;
 
 typedef struct problem_context {

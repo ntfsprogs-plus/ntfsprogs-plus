@@ -1462,7 +1462,18 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 		u64 mft_no = 0;
 
 		mft_no = le64_to_cpu(ictx->entry->indexed_file);
-		if ((MSEQNO_LE(ictx->entry->indexed_file) !=
+		if (MREF(mft_no) == ni->mft_no &&
+				!MSEQNO_LE(ictx->entry->indexed_file) &&
+				ni->mrec->sequence_number) {
+			/*
+			 * The entry was minted while the record had sequence
+			 * number zero: rebind it instead of failing the add
+			 * and leaving a stale duplicate behind.
+			 */
+			ictx->entry->indexed_file = MK_LE_MREF(ni->mft_no,
+					le16_to_cpu(ni->mrec->sequence_number));
+			ntfsck_update_index_entry(ictx);
+		} else if ((MSEQNO_LE(ictx->entry->indexed_file) !=
 					le16_to_cpu(ni->mrec->sequence_number)) ||
 				(MREF(mft_no) != ni->mft_no)) {
 			/* found index and orphaned inode is different */
@@ -1847,7 +1858,7 @@ static int ntfsck_cmp_parent_mft_number(ntfs_inode *parent_ni, FILE_NAME_ATTR *f
 }
 
 static int ntfsck_check_parent_mft_record(ntfs_inode *parent_ni,
-		ntfs_inode *ni, INDEX_ENTRY *ie)
+		ntfs_inode *ni, INDEX_ENTRY *ie, ntfs_index_context *ictx)
 {
 	FILE_NAME_ATTR *fn;
 	FILE_NAME_ATTR *ie_fn;
@@ -1875,12 +1886,43 @@ static int ntfsck_check_parent_mft_record(ntfs_inode *parent_ni,
 		return STATUS_ERROR;
 	}
 
-	if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn)) {
+	if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn) &&
+			MSEQNO_LE(fn->parent_directory)) {
 		ntfs_log_error("Seuqnece number of parent(%"PRIu64")"
 				"and parent directory in $FN of inode(%"PRIu64") is not same\n",
 				parent_ni->mft_no, MREF_LE(fn->parent_directory));
 		ntfs_attr_put_search_ctx(ctx);
 		return STATUS_ERROR;
+	}
+
+	/*
+	 * A zero sequence number in a parent reference disables every stale
+	 * reference check, and it can only have been minted while the parent record
+	 * itself had sequence number zero. The parent binding by mft number is
+	 * already verified above, so refresh both copies of the reference from the
+	 * parent record.
+	 */
+	if (!MSEQNO_LE(fn->parent_directory) ||
+			!MSEQNO_LE(ie_fn->parent_directory)) {
+		u16 pdir_seq = le16_to_cpu(parent_ni->mrec->sequence_number);
+		problem_context_t pctx = {0, };
+
+		ntfs_init_problem_ctx(&pctx, ni, NULL, ctx, ictx, ni->mrec,
+				NULL, fn);
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_FN_PARENT_SEQNO_ZERO, &pctx) &&
+				pdir_seq) {
+			fn->parent_directory =
+				MK_LE_MREF(parent_ni->mft_no, pdir_seq);
+			ie_fn->parent_directory = fn->parent_directory;
+			ntfs_inode_mark_dirty(ctx->ntfs_ino);
+			/*
+			 * The index walk reloads ictx->ib without flushing
+			 * a dirty block, so write the entry out right away.
+			 */
+			if (!ntfsck_update_index_entry(ictx))
+				fsck_err_fixed();
+		}
 	}
 
 	ntfs_attr_put_search_ctx(ctx);
@@ -1892,7 +1934,7 @@ static int ntfsck_check_parent_mft_record(ntfs_inode *parent_ni,
  * and also check parent mft number and sequence in $FN
  */
 static int ntfsck_check_inode_fields(ntfs_inode *parent_ni,
-		ntfs_inode *ni, INDEX_ENTRY *ie)
+		ntfs_inode *ni, INDEX_ENTRY *ie, ntfs_index_context *ictx)
 {
 	u16 ni_seq;		/* ni's MFT sequence no */
 	u16 idx_seq;		/* index entry's MFT sequence no */
@@ -1915,15 +1957,38 @@ static int ntfsck_check_inode_fields(ntfs_inode *parent_ni,
 	/* check indexed_file of index entry and inode mft record and sequence */
 	idx_seq = MSEQNO_LE(ie->indexed_file);
 	ni_seq = le16_to_cpu(ni->mrec->sequence_number);
-	if (ni_seq != idx_seq) {
+	if (idx_seq && ni_seq != idx_seq) {
 		ntfs_log_error("Mismatch sequence number of index and inode(%"PRIu64")\n",
 				ni->mft_no);
 		return STATUS_ERROR;
 	}
 
 	/* check parent mft record of $FN and parent mft record and sequence */
-	if (ntfsck_check_parent_mft_record(parent_ni, ni, ie))
+	if (ntfsck_check_parent_mft_record(parent_ni, ni, ie, ictx))
 		return STATUS_ERROR;
+
+	/*
+	 * A zero sequence number in the reference disables every stale reference
+	 * check, and the name and parent binding verified just above prove the entry
+	 * belongs to this record: rebind it to the record's real sequence number.
+	 */
+	if (!idx_seq) {
+		problem_context_t pctx = {0, };
+
+		ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, ictx, ni->mrec,
+				NULL, NULL);
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_IDX_SEQNO_ZERO, &pctx) &&
+				ni_seq) {
+			ie->indexed_file = MK_LE_MREF(ni->mft_no, ni_seq);
+			/*
+			 * The index walk reloads ictx->ib without flushing
+			 * a dirty block, so write the entry out right away.
+			 */
+			if (!ntfsck_update_index_entry(ictx))
+				fsck_err_fixed();
+		}
+	}
 
 	return STATUS_OK;
 }
@@ -2067,7 +2132,20 @@ stack_of:
 					goto add_to_lostfound;
 				}
 
-				if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn)) {
+				if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn) &&
+						!MSEQNO_LE(fn->parent_directory)) {
+					/*
+					 * A zero sequence in the parent
+					 * reference was minted while the
+					 * parent record had sequence number
+					 * zero: refresh it instead of
+					 * dropping a healthy $FILE_NAME.
+					 */
+					fn->parent_directory =
+						MK_LE_MREF(parent_ni->mft_no,
+						le16_to_cpu(parent_ni->mrec->sequence_number));
+					ntfs_inode_mark_dirty(ctx->ntfs_ino);
+				} else if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn)) {
 					/* do not add inode to parent */
 					ntfs_log_debug("Different sequence number of parent(%"PRIu64
 							") and inode(%"PRIu64")\n",
@@ -4544,7 +4622,7 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 
 	ntfsck_check_link_count(ni);
 
-	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
+	if (ntfsck_check_inode_fields(ictx->ni, ni, ie, ictx))
 		goto remove_index_out;
 
 	/* Check file type */
@@ -4684,7 +4762,7 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 
 	ntfsck_check_link_count(ni);
 
-	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
+	if (ntfsck_check_inode_fields(ictx->ni, ni, ie, ictx))
 		goto err_out;
 
 	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
@@ -7245,7 +7323,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 		ie_fn = (FILE_NAME_ATTR *)&ie->key.file_name;
 		ntfs_attr_put_search_ctx(sys_ctx);
 
-		if (ntfsck_check_inode_fields(root_ni, sys_ni, ie) ||
+		if (ntfsck_check_inode_fields(root_ni, sys_ni, ie, ictx) ||
 				ntfsck_check_file_type(sys_ni, ictx, ie_fn) < 0 ||
 				ntfsck_check_file_name_attr(sys_ni, ie_fn, ictx) < 0) {
 			ntfsck_close_inode(sys_ni);
@@ -7646,6 +7724,235 @@ static int ntfsck_check_backup_boot(ntfs_volume *vol)
 	return STATUS_ERROR;
 }
 
+/*
+ * The references that were minted while the record still had its real
+ * sequence number are the only place it survives. For a base record ask the
+ * directory index entry each $FILE_NAME points back to; for an extent record
+ * ask the $ATTRIBUTE_LIST entries naming it.
+ */
+static u16 ntfsck_recover_seq_no(ntfs_inode *base_ni, ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *actx;
+	FILE_NAME_ATTR *fn;
+	u16 seq_no = 0;
+
+	if (base_ni != ni) {
+		u8 *al = base_ni->attr_list;
+		u8 *al_end = al + base_ni->attr_list_size;
+		ATTR_LIST_ENTRY *ale;
+		u16 ale_len;
+
+		while (al + sizeof(ATTR_LIST_ENTRY) <= al_end) {
+			ale = (ATTR_LIST_ENTRY *)al;
+			ale_len = le16_to_cpu(ale->length);
+			if (ale_len < sizeof(ATTR_LIST_ENTRY) ||
+					al + ale_len > al_end)
+				break;
+			if (MREF_LE(ale->mft_reference) == ni->mft_no &&
+					MSEQNO_LE(ale->mft_reference))
+				return MSEQNO_LE(ale->mft_reference);
+			al += ale_len;
+		}
+		return 1;
+	}
+
+	actx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!actx)
+		return 1;
+	while (!seq_no && !ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+				CASE_SENSITIVE, 0, NULL, 0, actx)) {
+		ntfs_inode *parent_ni;
+		ntfs_index_context *ictx;
+
+		fn = (FILE_NAME_ATTR *)((u8 *)actx->attr +
+				le16_to_cpu(actx->attr->value_offset));
+		if (MREF_LE(fn->parent_directory) == ni->mft_no)
+			continue;
+		parent_ni = ntfsck_open_inode(ni->vol,
+				MREF_LE(fn->parent_directory));
+		if (!parent_ni)
+			continue;
+		ictx = ntfs_index_ctx_get(parent_ni, NTFS_INDEX_I30, 4);
+		if (ictx) {
+			if (!ntfs_index_lookup(fn, sizeof(FILE_NAME_ATTR),
+						ictx) &&
+					MREF_LE(ictx->entry->indexed_file) ==
+					ni->mft_no)
+				seq_no = MSEQNO_LE(ictx->entry->indexed_file);
+			ntfs_index_ctx_put(ictx);
+		}
+		ntfsck_close_inode(parent_ni);
+	}
+	ntfs_attr_put_search_ctx(actx);
+
+	return seq_no ? seq_no : 1;
+}
+
+/*
+ * A zero sequence number can never be caught as stale: reference checks skip
+ * validation when the sequence in the reference is zero, and the record free
+ * path refuses to increment a zero sequence, so references minted from such a
+ * record keep resolving to whatever occupies the slot later. Restore the
+ * sequence number a surviving reference still remembers (one when none does),
+ * together with the references that must match the record exactly: the
+ * $ATTRIBUTE_LIST entries naming this record and, for a base record, the back
+ * reference held by each extent record.
+ */
+static void ntfsck_fix_zero_seq_no(ntfs_inode *base_ni, ntfs_inode *ni)
+{
+	problem_context_t pctx = {0, };
+	u16 seq_no;
+	s32 i;
+
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec,
+			NULL, NULL);
+	fsck_err_found();
+	if (!ntfs_fix_problem(ni->vol, PR_MFT_SEQNO_ZERO, &pctx))
+		return;
+
+	seq_no = ntfsck_recover_seq_no(base_ni, ni);
+	ni->mrec->sequence_number = cpu_to_le16(seq_no);
+
+	if (base_ni->attr_list) {
+		u8 *al = base_ni->attr_list;
+		u8 *al_end = al + base_ni->attr_list_size;
+		ATTR_LIST_ENTRY *ale;
+		u16 ale_len;
+
+		while (al + sizeof(ATTR_LIST_ENTRY) <= al_end) {
+			ale = (ATTR_LIST_ENTRY *)al;
+			ale_len = le16_to_cpu(ale->length);
+			if (ale_len < sizeof(ATTR_LIST_ENTRY) ||
+					al + ale_len > al_end)
+				break;
+			if (MREF_LE(ale->mft_reference) == ni->mft_no &&
+					MSEQNO_LE(ale->mft_reference) !=
+					seq_no) {
+				ale->mft_reference =
+					MK_LE_MREF(ni->mft_no, seq_no);
+				NInoAttrListSetDirty(base_ni);
+			}
+			al += ale_len;
+		}
+	}
+
+	if (base_ni == ni) {
+		for (i = 0; i < ni->nr_extents; i++) {
+			ntfs_inode *eni = ni->extent_nis[i];
+
+			if (eni->mrec->base_mft_record ==
+					MK_LE_MREF(ni->mft_no, seq_no))
+				continue;
+			eni->mrec->base_mft_record =
+				MK_LE_MREF(ni->mft_no, seq_no);
+			ntfs_inode_mark_dirty(eni);
+		}
+	}
+
+	ntfs_inode_mark_dirty(ni);
+	fsck_err_fixed();
+}
+
+static void ntfsck_check_seq_no(ntfs_inode *ni)
+{
+	s32 i;
+
+	if (!ni->mrec->sequence_number)
+		ntfsck_fix_zero_seq_no(ni, ni);
+	for (i = 0; i < ni->nr_extents; i++) {
+		if (!ni->extent_nis[i]->mrec->sequence_number)
+			ntfsck_fix_zero_seq_no(ni, ni->extent_nis[i]);
+	}
+}
+
+/*
+ * ntfs_extent_inode_open() rejects an extent record whose sequence number no
+ * longer matches the $ATTRIBUTE_LIST reference, so an extent whose sequence
+ * number was wiped to zero makes the whole base inode unattachable and parse
+ * #2 would tear it down. The reference still remembers the real sequence
+ * number: restore it raw before retrying the attach (the field sits in the
+ * first sector of the record, outside the multi sector transfer protection).
+ */
+static int ntfsck_salvage_extent_seq_no(ntfs_inode *ni)
+{
+	ntfs_volume *vol = ni->vol;
+	u8 *al = ni->attr_list;
+	u8 *al_end = al + ni->attr_list_size;
+	ATTR_LIST_ENTRY *ale;
+	u16 ale_len;
+	int salvaged = 0;
+
+	if (!NVolFsck(vol) || !vol->mft_na || !al)
+		return STATUS_ERROR;
+
+	while (al + sizeof(ATTR_LIST_ENTRY) <= al_end) {
+		u64 mft_no;
+		u16 seq_no;
+		s64 pos;
+		u8 *pal;
+		MFT_RECORD mrec;
+		problem_context_t pctx = {0, };
+
+		ale = (ATTR_LIST_ENTRY *)al;
+		ale_len = le16_to_cpu(ale->length);
+		if (ale_len < sizeof(ATTR_LIST_ENTRY) || al + ale_len > al_end)
+			break;
+		al += ale_len;
+
+		mft_no = MREF_LE(ale->mft_reference);
+		seq_no = MSEQNO_LE(ale->mft_reference);
+		if (mft_no == ni->mft_no || !seq_no)
+			continue;
+		/* several entries name one extent: handle each record once */
+		for (pal = ni->attr_list; pal < (u8 *)ale;
+				pal += le16_to_cpu(
+					((ATTR_LIST_ENTRY *)pal)->length))
+			if (MREF_LE(((ATTR_LIST_ENTRY *)pal)->mft_reference) ==
+					mft_no)
+				break;
+		if (pal < (u8 *)ale)
+			continue;
+		if ((s64)mft_no + 1 > vol->mft_na->initialized_size >>
+				vol->mft_record_size_bits)
+			continue;
+
+		pos = (s64)mft_no << vol->mft_record_size_bits;
+		if (ntfs_attr_pread(vol->mft_na, pos, sizeof(mrec), &mrec) !=
+				sizeof(mrec))
+			continue;
+		if (!ntfs_is_file_record(mrec.magic) ||
+				mrec.sequence_number ||
+				!(mrec.flags & MFT_RECORD_IN_USE) ||
+				MREF_LE(mrec.base_mft_record) != ni->mft_no)
+			continue;
+
+		pctx.inum = mft_no;
+		fsck_err_found();
+		if (!ntfs_fix_problem(vol, PR_MFT_SEQNO_ZERO, &pctx))
+			continue;
+
+		mrec.sequence_number = cpu_to_le16(seq_no);
+		if (ntfs_attr_pwrite(vol->mft_na,
+					pos + offsetof(MFT_RECORD, sequence_number),
+					sizeof(mrec.sequence_number),
+					&mrec.sequence_number) !=
+				sizeof(mrec.sequence_number)) {
+			ntfs_log_error("Failed to restore the sequence number "
+					"of mft record(%"PRIu64")\n", mft_no);
+			continue;
+		}
+		if ((s64)mft_no < vol->mftmirr_size)
+			ntfs_attr_pwrite(vol->mftmirr_na,
+					pos + offsetof(MFT_RECORD, sequence_number),
+					sizeof(mrec.sequence_number),
+					&mrec.sequence_number);
+		fsck_err_fixed();
+		salvaged++;
+	}
+
+	return salvaged ? STATUS_OK : STATUS_ERROR;
+}
+
 static int ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	ntfs_inode *ni = NULL;
@@ -7686,9 +7993,13 @@ static int ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
 		if (ntfsck_check_attr_list(ni))
 			goto err_check_inode;
 
-		if (ntfs_inode_attach_all_extents(ni))
+		if (ntfs_inode_attach_all_extents(ni) &&
+				(ntfsck_salvage_extent_seq_no(ni) ||
+				 ntfs_inode_attach_all_extents(ni)))
 			goto err_check_inode;
 	}
+
+	ntfsck_check_seq_no(ni);
 
 	/*
 	 * TODO:

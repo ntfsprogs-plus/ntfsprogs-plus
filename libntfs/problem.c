@@ -228,6 +228,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_MFT_USA_CORRUPTED,
 		"Inode(@In): MFT record fixup header is corrupted, salvage the record.",
 	},
+	{ PR_MFT_LINK_COUNT_MISMATCH,
+		"Inode(@In): Hard link count of MFT record differs from the number of $FILE_NAME(@Sd), fix it.",
+	},
 	{ 0, },
 };
 

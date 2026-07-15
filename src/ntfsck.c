@@ -4426,6 +4426,55 @@ static int ntfsck_sparse_compression_unit(ntfs_attr *na, s64 cb_vcn_bytes)
 	ntfs_inode_mark_dirty(na->ni);
 	return 0;
 }
+/*
+ * The hard link count in the MFT record header must equal the number of
+ * $FILE_NAME attributes of the record: every name, including a separate
+ * DOS short name, is one $FILE_NAME plus one index entry in a directory.
+ * The directory walk verifies the index-entry side of every name (and
+ * the orphan pass rebuilds it), so counting the attributes completes the
+ * link accounting. A wrong count is dangerous in both directions: too
+ * low frees the record while names still point at it, too high keeps a
+ * deleted record allocated forever.
+ *
+ * A record without any $FILE_NAME is left alone: the name checks that
+ * follow remove the referencing index entry and hand the record to the
+ * orphan pass, which does its own link accounting.
+ */
+static void ntfsck_check_link_count(ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *ctx;
+	u16 nlink = 0;
+	int walk_err;
+	problem_context_t pctx = {0, };
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return;
+
+	while (!ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+				CASE_SENSITIVE, 0, NULL, 0, ctx))
+		nlink++;
+	walk_err = errno;
+	ntfs_attr_put_search_ctx(ctx);
+
+	/* The walk itself failed: this count proves nothing. */
+	if (walk_err != ENOENT)
+		return;
+
+	if (!nlink || nlink == le16_to_cpu(ni->mrec->link_count))
+		return;
+
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec,
+			NULL, NULL);
+	pctx.dsize = nlink;
+	fsck_err_found();
+	if (ntfs_fix_problem(ni->vol, PR_MFT_LINK_COUNT_MISMATCH, &pctx)) {
+		ni->mrec->link_count = cpu_to_le16(nlink);
+		ntfs_inode_mark_dirty(ni);
+		fsck_err_fixed();
+	}
+}
+
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx)
 {
@@ -4444,6 +4493,8 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		if (ntfs_inode_attach_all_extents(ni))
 			goto err_out;
 	}
+
+	ntfsck_check_link_count(ni);
 
 	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
 		goto remove_index_out;
@@ -4582,6 +4633,8 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		if (ntfs_inode_attach_all_extents(ni))
 			goto err_out;
 	}
+
+	ntfsck_check_link_count(ni);
 
 	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
 		goto err_out;

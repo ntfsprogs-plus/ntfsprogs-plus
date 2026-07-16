@@ -129,6 +129,14 @@ static struct {
  */
 static BOOL opt_salvage;
 
+/*
+ * Force mode. When set, a repair mode may proceed even though Windows is
+ * hibernated on the volume; the hibernation image is invalidated first so
+ * that Windows cannot resume from a memory image that no longer matches the
+ * repaired volume.
+ */
+static BOOL opt_force;
+
 struct dir {
 	struct ntfs_list_head list;
 	u64 mft_no;
@@ -184,6 +192,8 @@ static void usage(int error)
 		"-r, --repair		Repair interactively\n"
 		"-y, --repair-yes		all yes about all question\n"
 		"-S, --salvage		aggressive salvage (may discard unrecoverable data)\n"
+		"-f, --force		repair even if Windows is hibernated on the volume\n"
+		"			(the hibernation image is discarded)\n"
 		"-D, --scratch-dir DIR	back the cluster bitmap with a scratch file under DIR\n"
 		"			(use a filesystem other than the volume being checked)\n"
 		"-v, --verbose		verbose\n"
@@ -213,6 +223,7 @@ static const struct option opts[] = {
 	{"repair-yes",		no_argument,		NULL,	'y' },
 	{"quiet",		no_argument,		NULL,	'q' },
 	{"salvage",		no_argument,		NULL,	'S' },
+	{"force",		no_argument,		NULL,	'f' },
 	{"scratch-dir",		required_argument,	NULL,	'D' },
 	{"verbose",		no_argument,		NULL,	'v' },
 	{"version",		no_argument,		NULL,	'V' },
@@ -8362,7 +8373,7 @@ int main(int argc, char **argv)
 	opterr = 0;
 	option.flags = NTFS_MNT_FSCK | NTFS_MNT_IGNORE_HIBERFILE;
 
-	while ((c = getopt_long(argc, argv, "aCnpqryhSvVD:", opts, NULL)) != EOF) {
+	while ((c = getopt_long(argc, argv, "aCfnpqryhSvVD:", opts, NULL)) != EOF) {
 		switch (c) {
 		case 'a':
 		case 'p':
@@ -8406,6 +8417,9 @@ conflict_option:
 			break;
 		case 'S':
 			opt_salvage = TRUE;
+			break;
+		case 'f':
+			opt_force = TRUE;
 			break;
 		case 'D':
 			/* Consumed by libntfs ntfs_fsck_mount() via getenv(). */
@@ -8476,6 +8490,17 @@ conflict_option:
 		}
 	}
 
+	/*
+	 * Force mode only matters to the repair modes: the read-only checks
+	 * proceed on a hibernated volume anyway.
+	 */
+	if (opt_force && ((option.flags & NTFS_MNT_FS_NO_REPAIR) ||
+				check_dirty_only == TRUE)) {
+		ntfs_log_warning("Force mode (-f) has no effect without a "
+				"repair mode; ignoring it.\n");
+		opt_force = FALSE;
+	}
+
 	if (optind != argc - 1)
 		usage(1);
 	path = argv[optind];
@@ -8540,16 +8565,28 @@ conflict_option:
 	 */
 	errno = 0;
 	if (ntfs_volume_check_hiberfile(vol, 0) < 0 && errno == EPERM) {
-		if (ntfsck_repair_enabled()) {
+		if (ntfsck_repair_enabled() && !opt_force) {
 			ntfs_log_error("Windows is hibernated on %s. Resume and "
 					"shut down Windows fully (no hibernation "
 					"or fast restarting), then run ntfsck "
-					"again.\n", path);
+					"again, or force the repair with -f "
+					"(discards the hibernated state).\n",
+					path);
 			ntfs_fsck_umount(vol);
 			return RETURN_OPERATIONAL_ERROR;
 		}
-		ntfs_log_warning("Windows is hibernated; the volume reflects "
-				"the state of a suspended system.\n");
+		if (ntfsck_repair_enabled()) {
+			ntfs_log_warning("Windows is hibernated on %s; forced "
+					"repair requested, discarding the "
+					"hibernation image.\n", path);
+			if (ntfs_volume_invalidate_hiberfile(vol))
+				ntfs_log_perror("Failed to invalidate "
+						"hiberfil.sys; Windows may "
+						"try to resume from it");
+		} else
+			ntfs_log_warning("Windows is hibernated; the volume "
+					"reflects the state of a suspended "
+					"system.\n");
 	}
 
 	/*

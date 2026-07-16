@@ -5320,6 +5320,8 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	/* NULL for a collation rule without a comparator (e.g. SID). */
 	collate = ntfs_get_collate_function(ir->collation_rule);
 
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec, NULL, NULL);
+
 	/*
 	 * An index without $INDEX_ALLOCATION still has root entries to validate;
 	 * only give up on errors other than the attribute being absent. With no
@@ -5430,6 +5432,21 @@ bad_root_subnode:
 		}
 		if (ie_ret > 0)
 			ir_repaired = TRUE;
+
+		/*
+		 * Every writer leaves the reserved header field zero and no
+		 * reader uses it; a stray value only marks a dirtied entry,
+		 * so clear it.
+		 */
+		if (ie->reserved) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_IE_RESERVED_NOT_ZERO,
+						&pctx)) {
+				ie->reserved = 0;
+				ir_repaired = TRUE;
+				fsck_err_fixed();
+			}
+		}
 
 		/* The last entry cannot contain a name. */
 		if (ie->ie_flags & INDEX_ENTRY_END)
@@ -5589,6 +5606,18 @@ bad_root_subnode:
 			}
 			if (ie_ret > 0)
 				ib_repaired = TRUE;
+
+			/* Zero reserved header field, as in the root above. */
+			if (ie->reserved) {
+				fsck_err_found();
+				if (ntfs_fix_problem(vol,
+							PR_IE_RESERVED_NOT_ZERO,
+							&pctx)) {
+					ie->reserved = 0;
+					ib_repaired = TRUE;
+					fsck_err_fixed();
+				}
+			}
 
 			/* The last entry cannot contain a name. */
 			if (ie->ie_flags & INDEX_ENTRY_END)

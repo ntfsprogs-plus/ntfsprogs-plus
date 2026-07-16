@@ -621,7 +621,16 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 		}
 	}
 
-	if (((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) ==
+	/*
+	 * Only a filename index entry ends right after its aligned key, so only
+	 * there does "exactly eight bytes past the key" prove a missing sub-node
+	 * VCN. A view index entry carries a data part between the key and the VCN,
+	 * and a small payload lands on the same length -- $Quota/$O maps a 16-byte
+	 * SID key to a 4-byte owner id -- so the repair would stamp a leaf entry as
+	 * a node there.
+	 */
+	if (collation_rule == COLLATION_FILE_NAME &&
+			((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) ==
 			(le16_to_cpu(ie->length) - 8)) {
 		if (!(ie->ie_flags & INDEX_ENTRY_NODE)) {
 			fsck_err_found();

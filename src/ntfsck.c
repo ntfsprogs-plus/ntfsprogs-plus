@@ -5292,6 +5292,130 @@ static void ntfsck_reset_ib_lsn(ntfs_attr *ia_na, s64 pos)
 			sizeof(ib.lsn), &ib.lsn);
 }
 
+/* Far beyond any tree the block/record size ratio can produce. */
+#define NTFSCK_MAX_INDEX_DEPTH	16
+
+/*
+ * State shared across one in-order index tree walk. The previously visited
+ * key is copied out of its node buffer because each level's buffer is freed
+ * on the way back up, while the comparison spans node boundaries.
+ */
+struct ntfsck_order_walk {
+	ntfs_index_context *ictx;
+	COLLATE collate;
+	u8 *prev_key;
+	u16 prev_key_len;
+	u8 *visited;	/* index blocks already descended into */
+	u64 max_ib_bits;
+	int depth;
+};
+
+static int ntfsck_check_subtree_order(struct ntfsck_order_walk *ow, VCN vcn);
+
+/*
+ * Walk the entries of one node in order, descending into a sub-node before
+ * its owning entry key is compared. A sorted tree hands the keys to
+ * @ow->collate in ascending order, so an inversion between entries that never
+ * share a node is caught the same as one between neighbours.
+ */
+static int ntfsck_check_entries_order(struct ntfsck_order_walk *ow,
+		u8 *entries, u8 *entries_end)
+{
+	ntfs_index_context *ictx = ow->ictx;
+	ntfs_volume *vol = ictx->ni->vol;
+	INDEX_ENTRY *ie = (INDEX_ENTRY *)entries;
+	u16 key_len;
+
+	for (;; ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
+		if ((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > entries_end ||
+				(u8 *)ie + le16_to_cpu(ie->length) > entries_end)
+			return STATUS_ERROR;
+
+		if (ie->ie_flags & INDEX_ENTRY_NODE) {
+			VCN sub_vcn = ntfs_ie_get_vcn(ie);
+			u64 bmp_bit;
+
+			if (sub_vcn < 0)
+				return STATUS_ERROR;
+			bmp_bit = ((u64)sub_vcn << ictx->vcn_size_bits) /
+					ictx->block_size;
+			/* A block referenced twice means a cycle. */
+			if (bmp_bit >= ow->max_ib_bits ||
+					ntfs_bit_get(ow->visited, bmp_bit))
+				return STATUS_ERROR;
+			ntfs_bit_set(ow->visited, bmp_bit, 1);
+			if (ntfsck_check_subtree_order(ow, sub_vcn))
+				return STATUS_ERROR;
+		}
+
+		if (ie->ie_flags & INDEX_ENTRY_END)
+			break;
+
+		if (!le16_to_cpu(ie->length))
+			break;
+
+		key_len = le16_to_cpu(ie->key_length);
+		if ((u8 *)&ie->key + key_len >
+				(u8 *)ie + le16_to_cpu(ie->length))
+			return STATUS_ERROR;
+
+		if (ow->prev_key_len && key_len &&
+				ow->collate(vol, ow->prev_key, ow->prev_key_len,
+					&ie->key, key_len) > 0)
+			return STATUS_ERROR;
+
+		memcpy(ow->prev_key, &ie->key, key_len);
+		ow->prev_key_len = key_len;
+	}
+
+	return STATUS_OK;
+}
+
+/*
+ * Read the index block at @vcn and continue the in-order walk inside it. The
+ * blocks already passed the per-node checks, but in no-repair mode nothing
+ * was written back, so the header fields feeding the entry bounds are guarded
+ * again.
+ */
+static int ntfsck_check_subtree_order(struct ntfsck_order_walk *ow, VCN vcn)
+{
+	ntfs_index_context *ictx = ow->ictx;
+	INDEX_BLOCK *ib;
+	u32 entries_offset, index_length;
+	int ret = STATUS_ERROR;
+
+	if (ow->depth >= NTFSCK_MAX_INDEX_DEPTH)
+		return STATUS_ERROR;
+
+	ib = ntfs_malloc(ictx->block_size);
+	if (!ib) {
+		ntfs_log_error("Failed to allocate ib buffer\n");
+		/* Verified as far as memory allows; never repair on OOM. */
+		return STATUS_OK;
+	}
+
+	if (ntfs_attr_mst_pread(ictx->ia_na, vcn << ictx->vcn_size_bits, 1,
+				ictx->block_size, ib) != 1)
+		goto out;
+
+	entries_offset = le32_to_cpu(ib->index.entries_offset);
+	index_length = le32_to_cpu(ib->index.index_length);
+	if (entries_offset < sizeof(INDEX_HEADER) ||
+			index_length < entries_offset ||
+			offsetof(INDEX_BLOCK, index) + index_length >
+			ictx->block_size)
+		goto out;
+
+	ow->depth++;
+	ret = ntfsck_check_entries_order(ow,
+			(u8 *)&ib->index + entries_offset,
+			(u8 *)&ib->index + index_length);
+	ow->depth--;
+out:
+	free(ib);
+	return ret;
+}
+
 static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		ntfs_index_context *ictx)
 {
@@ -5650,6 +5774,37 @@ bad_root_subnode:
 		 */
 		if (ib_repaired && ntfs_ib_write(ictx, (INDEX_BLOCK *)ia_buf))
 			goto initialize_index;
+	}
+
+	/*
+	 * The walks above compare only neighbouring entries inside one node, so an
+	 * entry that landed in the wrong block - sorted there, but colliding with
+	 * the separator keys around it - passes both. Redo the comparison as an
+	 * in-order traversal from the root, where any cross-node misplacement shows
+	 * up as an inversion.
+	 */
+	if (collate) {
+		struct ntfsck_order_walk ow = {
+			.ictx = ictx,
+			.collate = collate,
+			.max_ib_bits = max_ib_bits,
+		};
+		int order_ret = STATUS_OK;
+
+		ow.visited = ntfs_calloc(bmp_na->data_size);
+		/* Large enough for any key: key_length is 16 bits. */
+		ow.prev_key = ntfs_malloc(1 << 16);
+		if (ow.visited && ow.prev_key)
+			order_ret = ntfsck_check_entries_order(&ow, ir_buf,
+					ir_buf + ir_entries_len);
+		free(ow.visited);
+		free(ow.prev_key);
+		if (order_ret) {
+			ntfs_log_error("Index entries of inode(%"PRIu64") are "
+					"out of order across nodes\n",
+					ni->mft_no);
+			goto initialize_index;
+		}
 	}
 
 out:

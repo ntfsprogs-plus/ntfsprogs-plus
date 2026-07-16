@@ -903,6 +903,25 @@ int ntfs_index_lookup(const void *key, const int key_len, ntfs_index_context *ic
 		return -1;
 	}
 
+	/*
+	 * Bound the root node against the attribute value before walking it:
+	 * ntfs_ie_lookup() takes the end of the node from index_length, so a corrupt
+	 * length would send the walk past the MFT record buffer. A record with such
+	 * a header is accepted at inode open under fsck (the header is repaired
+	 * later by the index checks); fail the lookup cleanly until then.
+	 */
+	if (le32_to_cpu(ir->index.entries_offset) < sizeof(INDEX_HEADER) ||
+			le32_to_cpu(ir->index.index_length) <
+			le32_to_cpu(ir->index.entries_offset) ||
+			offsetof(INDEX_ROOT, index) +
+			le32_to_cpu(ir->index.index_length) >
+			le32_to_cpu(icx->actx->attr->value_length)) {
+		ntfs_log_error("Corrupt $INDEX_ROOT header in inode %llu\n",
+				(unsigned long long)ni->mft_no);
+		err = errno = EIO;
+		goto err_lookup;
+	}
+
 	icx->block_size = le32_to_cpu(ir->index_block_size);
 	if (icx->block_size < NTFS_BLOCK_SIZE) {
 		errno = EINVAL;

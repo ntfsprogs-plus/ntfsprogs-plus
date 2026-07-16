@@ -3743,6 +3743,27 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 				ir = (INDEX_ROOT *)((const u8 *)a +
 						le16_to_cpu(a->value_offset));
 
+				/*
+				 * Under fsck every INDEX_ROOT header fault is repaired field by field
+				 * later on (see ntfsck_repair_index_root_fields()); rejecting the record
+				 * here would instead discard the whole directory over one fixable header
+				 * byte. Refuse only what that repair cannot work with: a non-resident
+				 * attribute or a value too short to hold even an empty index.
+				 */
+				if (is_fsck) {
+					if (a->non_resident
+							|| (le32_to_cpu(a->value_length)
+								< sizeof(INDEX_ROOT)
+								+ sizeof(INDEX_ENTRY_HEADER))) {
+						ntfs_log_error("Corrupt index root"
+								" in MFT record %lld.\n",
+								(long long)inum);
+						errno = EIO;
+						ret = -1;
+					}
+					break;
+				}
+
 				/* index.allocated_size may overflow while resizing */
 				if (a->non_resident
 						|| (le32_to_cpu(a->value_length)

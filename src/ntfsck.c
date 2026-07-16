@@ -122,6 +122,13 @@ static struct {
 } option;
 
 /*
+ * Ceiling for a plausible index_block_size: Windows and mkntfs only ever use
+ * 4096, but accept any power of two up to 64K so an unusual yet walkable
+ * volume is still checked; anything beyond is a corrupt field, not geometry.
+ */
+#define NTFSCK_MAX_INDEX_BLOCK_SIZE	(64 * 1024)
+
+/*
  * Salvage-aggressive mode. When set, ntfsck is allowed to take destructive
  * recovery actions that trade unrecoverable data for a mountable volume - for
  * example replacing a compression unit that will not decompress with a sparse
@@ -436,14 +443,12 @@ static BOOL ntfsck_repair_index_root_fields(ntfs_volume *vol, u64 mft_no,
 		changed = TRUE;
 	}
 	/*
-	 * An INDEX_ROOT has no update sequence array, so the entries may start right
-	 * after the header, but as in an index block a writer is allowed to leave
-	 * slack. Only rewrite an offset that cannot be walked -- relocating a valid
-	 * one would send the walk into that slack.
+	 * An INDEX_ROOT has no update sequence array, so unlike an index block there
+	 * is nothing to leave slack for: every writer starts the entries right after
+	 * the INDEX_HEADER, and the driver-side check (ntfs_attr_inconsistent())
+	 * accepts nothing else. Restore exactly that layout.
 	 */
-	if (le32_to_cpu(ir->index.entries_offset) < sizeof(INDEX_HEADER) ||
-			(le32_to_cpu(ir->index.entries_offset) & 7) ||
-			le32_to_cpu(ir->index.entries_offset) >= payload_size) {
+	if (le32_to_cpu(ir->index.entries_offset) != sizeof(INDEX_HEADER)) {
 		ir->index.entries_offset = const_cpu_to_le32(sizeof(INDEX_HEADER));
 		changed = TRUE;
 	}
@@ -5291,7 +5296,9 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	 */
 	ir_entries_offset = le32_to_cpu(ir->index.entries_offset);
 	if (ir_size < ir_entries_offset ||
-			ir_entries_offset < sizeof(INDEX_HEADER)) {
+			ir_entries_offset < sizeof(INDEX_HEADER) ||
+			offsetof(INDEX_ROOT, index) + ir_size >
+			le32_to_cpu(ictx->actx->attr->value_length)) {
 		ntfs_log_error("INDEX_ROOT of inode %"PRIu64" has an invalid "
 				"index_length(%u)/entries_offset(%u)\n",
 				ni->mft_no, ir_size, ir_entries_offset);
@@ -5588,10 +5595,17 @@ static int ntfsck_validate_named_index(ntfs_inode *ni,
 	ictx->is_in_root = TRUE;
 	ictx->parent_pos[ictx->pindex] = 0;
 
+	/*
+	 * In no-repair mode the header fix above was only counted, so
+	 * index_block_size may still hold a corrupt value; refuse to derive
+	 * block geometry from one that is out of range or not a power of two.
+	 */
 	ictx->block_size = le32_to_cpu(ir->index_block_size);
-	if (ictx->block_size < NTFS_BLOCK_SIZE) {
-		ntfs_log_perror("Index block size (%d) is smaller than the "
-				"sector size (%d)", ictx->block_size,
+	if (ictx->block_size < NTFS_BLOCK_SIZE ||
+			ictx->block_size > NTFSCK_MAX_INDEX_BLOCK_SIZE ||
+			(ictx->block_size & (ictx->block_size - 1))) {
+		ntfs_log_perror("Index block size (%d) is invalid "
+				"(sector size %d)", ictx->block_size,
 				NTFS_BLOCK_SIZE);
 		goto out;
 	}
@@ -5910,10 +5924,14 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		ictx->is_in_root = TRUE;
 		ictx->parent_pos[ictx->pindex] = 0;
 
+		/* See ntfsck_validate_named_index() on the extra bounds. */
 		ictx->block_size = le32_to_cpu(ir->index_block_size);
-		if (ictx->block_size < NTFS_BLOCK_SIZE) {
-			ntfs_log_perror("Index block size (%d) is smaller than the "
-					"sector size (%d)", ictx->block_size, NTFS_BLOCK_SIZE);
+		if (ictx->block_size < NTFS_BLOCK_SIZE ||
+				ictx->block_size > NTFSCK_MAX_INDEX_BLOCK_SIZE ||
+				(ictx->block_size & (ictx->block_size - 1))) {
+			ntfs_log_perror("Index block size (%d) is invalid "
+					"(sector size %d)", ictx->block_size,
+					NTFS_BLOCK_SIZE);
 			goto err_continue;
 		}
 

@@ -1157,6 +1157,49 @@ out:
 	return errno ? -1 : 0;
 }
 
+/**
+ * ntfs_volume_invalidate_hiberfile - discard the hibernation image
+ * @vol:    volume holding hiberfil.sys
+ *
+ * Zero the magic of the hiberfil.sys header so that Windows does not
+ * try to resume from a memory image that no longer matches the volume.
+ *
+ * Return:  0 on success, or when there is nothing to invalidate
+ *	   -1 otherwise and errno is set to the appropriate value
+ */
+int ntfs_volume_invalidate_hiberfile(ntfs_volume *vol)
+{
+	ntfs_inode *ni;
+	ntfs_attr *na;
+	static const char zero_magic[4];
+	int err = 0;
+
+	ni = ntfs_hiberfile_open(vol);
+	if (!ni) {
+		if (errno == ENOENT)
+			return 0;
+		return -1;
+	}
+
+	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
+	if (!na) {
+		err = errno;
+		goto out;
+	}
+
+	if (na->data_size >= (s64)sizeof(zero_magic) &&
+			ntfs_attr_pwrite(na, 0, sizeof(zero_magic),
+				zero_magic) != sizeof(zero_magic))
+		err = errno ? errno : EIO;
+
+	ntfs_attr_close(na);
+out:
+	if (ntfs_inode_close(ni))
+		ntfs_error_set(&err);
+	errno = err;
+	return err ? -1 : 0;
+}
+
 /*
  *		Make sure a LOGGED_UTILITY_STREAM attribute named "$TXF_DATA"
  *	on the root directory is resident.

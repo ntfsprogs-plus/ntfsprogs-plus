@@ -3033,10 +3033,12 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 
 		/*
 		 * A non-resident $DATA with allocated_size zero owns no clusters, so map it
-		 * as an empty runlist without decoding the mapping pairs. Converting such
-		 * an attribute back to resident (Windows behavior) is a repair, not a
-		 * mapping concern, and is done by ntfsck_check_non_resident_attr() with the
-		 * sizes from the attribute record.
+		 * as an empty runlist without decoding the mapping pairs. If the mapping
+		 * pairs nevertheless still encode cluster runs, those runs are stale and
+		 * are detected (from the raw mapping pairs) and discarded by
+		 * ntfsck_check_non_resident_attr(); hiding them here also keeps their
+		 * clusters out of the fsck bitmap, so the final bitmap reconciliation frees
+		 * them.
 		 */
 		if (!utils_is_metadata(ni) &&
 				na->type == AT_DATA &&
@@ -3629,21 +3631,33 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 	}
 
 	/*
-	 * An empty non-resident $DATA (no clusters, every size field zero) is not
-	 * corruption -- truncation to zero can legitimately leave the attribute
-	 * non-resident -- but Windows normalizes such an attribute back to resident,
-	 * so convert it the same way. Encrypted attributes cannot be made resident
-	 * and the layout is harmless, so leave them alone.
+	 * An empty non-resident $DATA (every size field zero, no cluster runs) is
+	 * not corruption -- truncation to zero can legitimately leave the attribute
+	 * non-resident and the layout is harmless -- so leave it alone. But when the
+	 * mapping pairs still encode cluster runs although every size field says the
+	 * attribute is empty, the runs are stale leftovers whose clusters will be
+	 * reclaimed as free and can end up cross-linked: discard them by rewriting
+	 * the attribute resident, the way Windows keeps an empty $DATA.
 	 */
 	if (na->type == AT_DATA && alloc_size == 0 && data_size == 0 &&
 			init_size == 0 && rls.alloc_size == 0 &&
 			!(na->data_flags & ATTR_IS_ENCRYPTED)) {
-		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_ATTR_EMPTY_NON_RESIDENT_DATA,
-					&pctx)) {
-			if (!ntfs_non_resident_attr_shrink(na, 0) &&
-					!NAttrNonResident(na))
-				fsck_err_fixed();
+		u16 mp_ofs = le16_to_cpu(a->mapping_pairs_offset);
+
+		/*
+		 * The runlist is empty when the mapping pairs begin with the
+		 * terminator. mapping_pairs_offset itself was validated
+		 * against the record length in ntfs_attr_inconsistent().
+		 */
+		if (mp_ofs < le32_to_cpu(a->length) &&
+				((const u8 *)a)[mp_ofs] != 0) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_ATTR_EMPTY_DATA_STALE_RUNS,
+						&pctx)) {
+				if (!ntfs_non_resident_attr_shrink(na, 0) &&
+						!NAttrNonResident(na))
+					fsck_err_fixed();
+			}
 		}
 		goto out;
 	}

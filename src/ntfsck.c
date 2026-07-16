@@ -5336,6 +5336,9 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		goto out;
 	}
 
+	/* Needed by the sub-node bound checks in both entry walks below. */
+	max_ib_bits = bmp_na->data_size << NTFSCK_BYTE_TO_BITS;
+
 	/*
 	 * index_length is measured from the start of the INDEX_HEADER, so the
 	 * entries occupy only (index_length - entries_offset) bytes. Copy just that
@@ -5379,11 +5382,20 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 		if (ie->ie_flags & INDEX_ENTRY_NODE) {
 			VCN vcn = ntfs_ie_get_vcn(ie);
-			u32 sub_bmp_pos;
+			u64 sub_bmp_pos;
 
-			/* check bitmap for sub-node */
-			sub_bmp_pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
-			if (!ntfs_bit_get(bmp_buf, sub_bmp_pos)) {
+			/*
+			 * Bound the sub-node VCN before the bitmap lookup:
+			 * ntfs_bit_get() takes no size, so a corrupt VCN would
+			 * read far outside bmp_buf.
+			 */
+			if (vcn < 0)
+				goto bad_root_subnode;
+			sub_bmp_pos = ((u64)vcn << ictx->vcn_size_bits) /
+					ictx->block_size;
+			if (sub_bmp_pos >= max_ib_bits ||
+					!ntfs_bit_get(bmp_buf, sub_bmp_pos)) {
+bad_root_subnode:
 				ntfs_log_error("Index allocation subnode of inode(%"PRIu64
 						") is in not allocated bitmap cluster\n",
 						ni->mft_no);
@@ -5435,7 +5447,6 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		goto out;
 	}
 
-	max_ib_bits = bmp_na->data_size << NTFSCK_BYTE_TO_BITS;
 	max_vcn = ictx->ia_na->data_size >> ictx->vcn_size_bits;
 	vcn_per_ib = ictx->block_size >> ictx->vcn_size_bits;
 
@@ -5513,7 +5524,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 				/* calculate bit location in $Bitmap for vcn */
 				bmp_bit = (vcn << ictx->vcn_size_bits) / ictx->block_size;
-				if (max_ib_bits <= bmp_bit) {
+				if (vcn < 0 || max_ib_bits <= bmp_bit) {
 					ntfs_log_error("Subnode of inode(%"PRIu64
 							") is larger than max vcn\n",
 							ni->mft_no);

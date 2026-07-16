@@ -621,7 +621,13 @@ static int ntfsck_read_index_block(ntfs_index_context *ictx, VCN vcn,
 	if (ntfs_attr_mst_pread(ictx->ia_na, ntfs_ib_vcn_to_pos(ictx, vcn), 1,
 				ictx->block_size, (u8 *)ib) == 1)
 		return STATUS_OK;
-	if (!NVolFsck(ictx->ni->vol) || NVolFsNoRepair(ictx->ni->vol))
+	/*
+	 * The salvage only rebuilds the in-memory copy; whether it is written
+	 * back is decided by ntfsck_repair_index_block(), so a no-repair run
+	 * may take it too and thereby see - and count - the same state a
+	 * repair run works on.
+	 */
+	if (!NVolFsck(ictx->ni->vol))
 		return STATUS_ERROR;
 
 	bytes = ntfs_attr_pread(ictx->ia_na, ntfs_ib_vcn_to_pos(ictx, vcn),
@@ -657,7 +663,7 @@ static int ntfsck_repair_index_block(ntfs_index_context *ictx, VCN vcn,
 
 	if (!ictx || !ib)
 		return STATUS_ERROR;
-	if (!NVolFsck(ictx->ni->vol) || NVolFsNoRepair(ictx->ni->vol))
+	if (!NVolFsck(ictx->ni->vol))
 		return STATUS_OK;
 
 	expected_usa_count = (ictx->block_size >= NTFS_BLOCK_SIZE) ?
@@ -731,9 +737,17 @@ static int ntfsck_repair_index_block(ntfs_index_context *ictx, VCN vcn,
 	if (!changed)
 		return STATUS_OK;
 
+	/*
+	 * In no-repair mode the block was normalized in memory just the same,
+	 * so the checks that follow behave exactly as in a repair run and the
+	 * corruption is reported at its cause; only the write-back is skipped.
+	 */
 	fsck_err_found();
-	ntfs_log_error("Inode(%llu): INDEX_ALLOCATION block VCN(%lld) header fields are corrupted. Fixed.\n",
-			(unsigned long long)ictx->ni->mft_no, (long long)vcn);
+	ntfs_log_error("Inode(%llu): INDEX_ALLOCATION block VCN(%lld) header fields are corrupted.%s\n",
+			(unsigned long long)ictx->ni->mft_no, (long long)vcn,
+			NVolFsNoRepair(ictx->ni->vol) ? "" : " Fixed.");
+	if (NVolFsNoRepair(ictx->ni->vol))
+		return STATUS_OK;
 	if (ntfs_ib_write(ictx, ib))
 		return STATUS_ERROR;
 	fsck_err_fixed();

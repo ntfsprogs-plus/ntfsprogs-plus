@@ -5295,6 +5295,9 @@ static void ntfsck_reset_ib_lsn(ntfs_attr *ia_na, s64 pos)
 /* Far beyond any tree the block/record size ratio can produce. */
 #define NTFSCK_MAX_INDEX_DEPTH	16
 
+/* ntfsck_check_entries_order() found two entries carrying the same key. */
+#define NTFSCK_ORDER_DUPLICATE	1
+
 /*
  * State shared across one in-order index tree walk. The previously visited
  * key is copied out of its node buffer because each level's buffer is freed
@@ -5334,6 +5337,7 @@ static int ntfsck_check_entries_order(struct ntfsck_order_walk *ow,
 		if (ie->ie_flags & INDEX_ENTRY_NODE) {
 			VCN sub_vcn = ntfs_ie_get_vcn(ie);
 			u64 bmp_bit;
+			int sub_ret;
 
 			if (sub_vcn < 0)
 				return STATUS_ERROR;
@@ -5344,8 +5348,9 @@ static int ntfsck_check_entries_order(struct ntfsck_order_walk *ow,
 					ntfs_bit_get(ow->visited, bmp_bit))
 				return STATUS_ERROR;
 			ntfs_bit_set(ow->visited, bmp_bit, 1);
-			if (ntfsck_check_subtree_order(ow, sub_vcn))
-				return STATUS_ERROR;
+			sub_ret = ntfsck_check_subtree_order(ow, sub_vcn);
+			if (sub_ret)
+				return sub_ret;
 		}
 
 		if (ie->ie_flags & INDEX_ENTRY_END)
@@ -5359,10 +5364,15 @@ static int ntfsck_check_entries_order(struct ntfsck_order_walk *ow,
 				(u8 *)ie + le16_to_cpu(ie->length))
 			return STATUS_ERROR;
 
-		if (ow->prev_key_len && key_len &&
-				ow->collate(vol, ow->prev_key, ow->prev_key_len,
-					&ie->key, key_len) > 0)
-			return STATUS_ERROR;
+		if (ow->prev_key_len && key_len) {
+			int cmp = ow->collate(vol, ow->prev_key,
+					ow->prev_key_len, &ie->key, key_len);
+
+			if (cmp > 0)
+				return STATUS_ERROR;
+			if (!cmp)
+				return NTFSCK_ORDER_DUPLICATE;
+		}
 
 		memcpy(ow->prev_key, &ie->key, key_len);
 		ow->prev_key_len = key_len;
@@ -5586,14 +5596,29 @@ bad_root_subnode:
 		 * place, so rebuild the index.
 		 */
 		if (collate && prev_ie && le16_to_cpu(prev_ie->key_length) &&
-				le16_to_cpu(ie->key_length) &&
-				collate(vol, &prev_ie->key,
+				le16_to_cpu(ie->key_length)) {
+			int cmp = collate(vol, &prev_ie->key,
 					le16_to_cpu(prev_ie->key_length),
 					&ie->key,
-					le16_to_cpu(ie->key_length)) > 0) {
-			ntfs_log_error("Index entries of inode(%"PRIu64") are "
-					"out of order\n", ni->mft_no);
-			goto initialize_index;
+					le16_to_cpu(ie->key_length));
+
+			if (cmp > 0) {
+				ntfs_log_error("Index entries of inode(%"PRIu64
+						") are out of order\n",
+						ni->mft_no);
+				goto initialize_index;
+			}
+			/*
+			 * At most one of two entries carrying the same key
+			 * is reachable by a lookup; which one is undefined.
+			 * Not repairable in place - rebuilding re-inserts
+			 * one entry per key.
+			 */
+			if (!cmp) {
+				ntfs_log_error("Index of inode(%"PRIu64") has "
+						"duplicate keys\n", ni->mft_no);
+				goto initialize_index;
+			}
 		}
 		prev_ie = ie;
 	}
@@ -5750,18 +5775,28 @@ bad_root_subnode:
 			if (!le16_to_cpu(ie->length))
 				break;
 
-			/* Sorted within the node, as in the root above. */
+			/* Sorted and unique within the node, as in the root. */
 			if (collate && prev_ie &&
 					le16_to_cpu(prev_ie->key_length) &&
-					le16_to_cpu(ie->key_length) &&
-					collate(vol, &prev_ie->key,
+					le16_to_cpu(ie->key_length)) {
+				int cmp = collate(vol, &prev_ie->key,
 						le16_to_cpu(prev_ie->key_length),
 						&ie->key,
-						le16_to_cpu(ie->key_length)) > 0) {
-				ntfs_log_error("Index entries of inode(%"PRIu64
-						") are out of order\n",
-						ni->mft_no);
-				goto initialize_index;
+						le16_to_cpu(ie->key_length));
+
+				if (cmp > 0) {
+					ntfs_log_error("Index entries of inode"
+							"(%"PRIu64") are out "
+							"of order\n",
+							ni->mft_no);
+					goto initialize_index;
+				}
+				if (!cmp) {
+					ntfs_log_error("Index of inode(%"PRIu64
+							") has duplicate "
+							"keys\n", ni->mft_no);
+					goto initialize_index;
+				}
 			}
 			prev_ie = ie;
 		}
@@ -5800,9 +5835,13 @@ bad_root_subnode:
 		free(ow.visited);
 		free(ow.prev_key);
 		if (order_ret) {
-			ntfs_log_error("Index entries of inode(%"PRIu64") are "
-					"out of order across nodes\n",
-					ni->mft_no);
+			if (order_ret == NTFSCK_ORDER_DUPLICATE)
+				ntfs_log_error("Index of inode(%"PRIu64") has "
+						"duplicate keys\n", ni->mft_no);
+			else
+				ntfs_log_error("Index entries of inode(%"PRIu64
+						") are out of order across "
+						"nodes\n", ni->mft_no);
 			goto initialize_index;
 		}
 	}

@@ -340,6 +340,63 @@ static ntfs_index_context *open_reparse_index(ntfs_volume *vol)
 
 
 /*
+ *		Check (and restore) the index entry of a reparse point
+ *
+ *	The $Extend/$Reparse index is re-initialized empty when found
+ *	structurally corrupt, which also drops the entries of the intact
+ *	reparse points on the volume; the per-inode fsck check re-inserts
+ *	them through this helper.
+ *
+ *	Returns 0 if the entry is present
+ *		1 if the entry is missing (restored when @add is TRUE)
+ *		-1 if failure, explained by errno
+ */
+
+int ntfs_reparse_index_check(ntfs_inode *ni, le32 reparse_tag, BOOL add)
+{
+	ntfs_index_context *xr;
+	ntfs_inode *xrni;
+	REPARSE_INDEX_KEY key;
+	le64 file_id;
+	int ret;
+
+	if (!ni || !ni->mrec) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	xr = open_reparse_index(ni->vol);
+	if (!xr)
+		return -1;
+
+	file_id = cpu_to_le64(MK_MREF(ni->mft_no,
+			le16_to_cpu(ni->mrec->sequence_number)));
+	key.reparse_tag = reparse_tag;
+	/* danger on processors which require proper alignment ! */
+	memcpy(&key.file_id, &file_id, 8);
+
+	if (!ntfs_index_lookup(&key, sizeof(REPARSE_INDEX_KEY), xr))
+		ret = 0;
+	else if (errno != ENOENT)
+		ret = -1;
+	else {
+		ret = 1;
+		if (add) {
+			if (set_reparse_index(ni, xr, reparse_tag)) {
+				ret = -1;
+			} else {
+				ntfs_index_entry_mark_dirty(xr);
+				NInoSetDirty(xr->ni);
+			}
+		}
+	}
+	xrni = xr->ni;
+	ntfs_index_ctx_put(xr);
+	ntfs_inode_close(xrni);
+	return ret;
+}
+
+/*
  *		Update the reparse data and index
  *
  *	The reparse data attribute should have been created, and

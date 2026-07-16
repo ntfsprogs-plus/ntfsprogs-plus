@@ -147,7 +147,19 @@ static BOOL opt_force;
 struct dir {
 	struct ntfs_list_head list;
 	u64 mft_no;
+	/*
+	 * The directory was reached through the lenient (system metadata)
+	 * path, so its children are system files too. utils_is_system_
+	 * metadata() only recognizes one parent hop past the reserved
+	 * inodes, which reaches $Extend's direct children but not, e.g.,
+	 * the $TxfLog files two levels below $RmMetadata; carrying the
+	 * verdict down the walk keeps the whole subtree lenient.
+	 */
+	BOOL system;
 };
+
+/* Whether the directory parse #4 is currently walking is a system one. */
+static BOOL walking_system_dir;
 
 struct ntfsls_dirent {
 	ntfs_volume *vol;
@@ -4986,6 +4998,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	ni = ntfsck_open_inode(vol, mft_no);
 	if (ni) {
 		BOOL is_mft_checked = FALSE;
+		BOOL lenient;
 
 		/*
 		 * check if mft record is already checked
@@ -5013,9 +5026,11 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		 * utils_is_metadata() here: it also matches ordinary user files carrying
 		 * SYSTEM|HIDDEN attributes (e.g. bootmgr, "System Volume Information").
 		 */
-		if ((utils_is_system_metadata(ni) == 1) ||
-				((utils_is_system_metadata(ictx->ni) == 1) &&
-				 (ictx->ni->mft_no != FILE_root))) {
+		lenient = (utils_is_system_metadata(ni) == 1) ||
+				((walking_system_dir ||
+				  (utils_is_system_metadata(ictx->ni) == 1)) &&
+				 (ictx->ni->mft_no != FILE_root));
+		if (lenient) {
 			/*
 			 * Do not check return value because system files can be deleted.
 			 * this check may be already done in check system files.
@@ -5055,6 +5070,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			}
 
 			dir->mft_no = ni->mft_no;
+			dir->system = lenient;
 			ntfsck_close_inode(ni);
 			ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
 		} else {
@@ -5908,6 +5924,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 	while (!ntfs_list_empty(&ntfs_dirs_list)) {
 
 		dir = ntfs_list_entry(ntfs_dirs_list.next, struct dir, list);
+		walking_system_dir = dir->system;
 		dir_ni = ntfsck_open_inode(vol, dir->mft_no);
 		if (!dir_ni) {
 			ntfs_log_perror("Failed to open inode (%"PRIu64")\n",

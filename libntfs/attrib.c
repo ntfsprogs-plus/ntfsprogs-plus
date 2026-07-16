@@ -3789,25 +3789,15 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 					ret = -1;
 				}
 
-				/* Is it needed? */
 				if (!ret && le32_to_cpu(ir->index_block_size) !=
 						vol->indx_record_size) {
-					if (NVolFsck(vol)) {
-						fsck_err_found();
-						if (ntfs_fix_problem(vol, PR_ATTR_IR_SIZE_MISMATCH, &pctx)) {
-							ir->index_block_size = le32_to_cpu(vol->indx_record_size);
-							*fixed = TRUE;
-							fsck_err_fixed();
-						}
-					} else {
-						ntfs_log_error("Corrupt index block size(%u %u) "
-								"in MFT record %llu.\n",
-								le32_to_cpu(ir->index_block_size),
-								vol->indx_record_size,
-								(unsigned long long)inum);
-						errno = EIO;
-						ret = -1;
-					}
+					ntfs_log_error("Corrupt index block size(%u %u) "
+							"in MFT record %llu.\n",
+							le32_to_cpu(ir->index_block_size),
+							vol->indx_record_size,
+							(unsigned long long)inum);
+					errno = EIO;
+					ret = -1;
 				}
 
 				break;

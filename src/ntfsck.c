@@ -4313,6 +4313,7 @@ static int ntfsck_check_reparse(ntfs_inode *ni)
 {
 	REPARSE_POINT *rp = NULL;
 	s64 attr_size = 0;
+	le32 reparse_tag = const_cpu_to_le32(0);
 	BOOL has_attr, has_flag;
 	BOOL corrupt = FALSE;
 	BOOL recall_missing = FALSE;
@@ -4350,6 +4351,8 @@ static int ntfsck_check_reparse(ntfs_inode *ni)
 						attr_size))
 				recall_missing = TRUE;
 		}
+		if (rp)
+			reparse_tag = rp->reparse_tag;
 		free(rp);
 	}
 
@@ -4427,6 +4430,22 @@ static int ntfsck_check_reparse(ntfs_inode *ni)
 			NInoFileNameSetDirty(ni);
 			ntfs_inode_mark_dirty(ni);
 			fsck_err_fixed();
+		}
+	}
+
+	/*
+	 * A structurally valid reparse point must also be indexed in
+	 * $Extend/$Reparse. Re-initializing a corrupt $R index empties it, and
+	 * unlike $SDH (rebuilt from $SDS) nothing else re-inserts the entries of the
+	 * intact reparse points, so restore this inode's one.
+	 */
+	if (has_attr &&
+			ntfs_reparse_index_check(ni, reparse_tag, FALSE) == 1) {
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_REPARSE_ENTRY_MISSING, &pctx)) {
+			if (ntfs_reparse_index_check(ni, reparse_tag,
+						TRUE) == 1)
+				fsck_err_fixed();
 		}
 	}
 

@@ -48,6 +48,7 @@ int ntfs_reparse_set_wsl_not_symlink(ntfs_inode *ni, mode_t mode);
 int ntfs_set_ntfs_reparse_data(ntfs_inode *ni, const char *value,
 		size_t size, int flags);
 int ntfs_remove_ntfs_reparse_data(ntfs_inode *ni);
+int ntfs_reparse_index_check(ntfs_inode *ni, le32 reparse_tag, BOOL add);
 
 int ntfs_delete_reparse_index(ntfs_inode *ni);
 

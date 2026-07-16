@@ -5320,30 +5320,41 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	/* NULL for a collation rule without a comparator (e.g. SID). */
 	collate = ntfs_get_collate_function(ir->collation_rule);
 
+	/*
+	 * An index without $INDEX_ALLOCATION still has root entries to validate;
+	 * only give up on errors other than the attribute being absent. With no
+	 * allocation max_ib_bits stays zero, so any root entry claiming a sub-node
+	 * fails its bound check below.
+	 */
+	max_ib_bits = 0;
 	ictx->ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION,
 			ictx->name, ictx->name_len);
-	if (!ictx->ia_na)
+	if (!ictx->ia_na && errno != ENOENT)
 		return;
 
-	bmp_na = ntfs_attr_open(ictx->ni, AT_BITMAP, ictx->name, ictx->name_len);
-	if (!bmp_na) {
-		ntfs_log_error("Failed to open bitmap\n");
-		goto out;
-	}
+	if (ictx->ia_na) {
+		bmp_na = ntfs_attr_open(ictx->ni, AT_BITMAP,
+				ictx->name, ictx->name_len);
+		if (!bmp_na) {
+			ntfs_log_error("Failed to open bitmap\n");
+			goto out;
+		}
 
-	bmp_buf = malloc(bmp_na->data_size);
-	if (!bmp_buf) {
-		ntfs_log_error("Failed to allocate bitmap buffer\n");
-		goto out;
-	}
+		bmp_buf = malloc(bmp_na->data_size);
+		if (!bmp_buf) {
+			ntfs_log_error("Failed to allocate bitmap buffer\n");
+			goto out;
+		}
 
-	if (ntfs_attr_pread(bmp_na, 0, bmp_na->data_size, bmp_buf) != bmp_na->data_size) {
-		ntfs_log_perror("Failed to read $BITMAP");
-		goto out;
-	}
+		if (ntfs_attr_pread(bmp_na, 0, bmp_na->data_size, bmp_buf) !=
+				bmp_na->data_size) {
+			ntfs_log_perror("Failed to read $BITMAP");
+			goto out;
+		}
 
-	/* Needed by the sub-node bound checks in both entry walks below. */
-	max_ib_bits = bmp_na->data_size << NTFSCK_BYTE_TO_BITS;
+		/* Needed by the sub-node bound checks in both walks below. */
+		max_ib_bits = bmp_na->data_size << NTFSCK_BYTE_TO_BITS;
+	}
 
 	/*
 	 * index_length is measured from the start of the INDEX_HEADER, so the
@@ -5464,6 +5475,10 @@ bad_root_subnode:
 			ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
 		ntfs_inode_mark_dirty(ni);
 	}
+
+	/* Root-only index: no blocks to check. */
+	if (!ictx->ia_na)
+		goto out;
 
 	ia_buf = ntfs_malloc(ictx->block_size);
 	if (!ia_buf) {

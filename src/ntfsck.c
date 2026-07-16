@@ -5955,9 +5955,9 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 					"%"PRId64"", dir_ni->mft_no);
 			goto err_continue;
 		}
-		ictx->ir = ir;
 		ir = (INDEX_ROOT *)((u8 *)ctx->attr +
 				le16_to_cpu(ctx->attr->value_offset));
+		ictx->ir = ir;
 
 		/* The first index entry. */
 		next = (INDEX_ENTRY *)((u8 *)&ir->index +

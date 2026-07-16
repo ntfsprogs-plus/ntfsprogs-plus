@@ -42,6 +42,7 @@
 #include "lcnalloc.h"
 #include "logfile.h"
 #include "reparse.h"
+#include "collate.h"
 #include "fsck.h"
 
 #define RETURN_FS_NO_ERRORS (0)
@@ -5312,7 +5313,12 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	int ret = STATUS_OK;
 	int ie_ret;
 	BOOL ir_repaired = FALSE;
+	INDEX_ENTRY *prev_ie = NULL;
+	COLLATE collate;
 	problem_context_t pctx = {0, };
+
+	/* NULL for a collation rule without a comparator (e.g. SID). */
+	collate = ntfs_get_collate_function(ir->collation_rule);
 
 	ictx->ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION,
 			ictx->name, ictx->name_len);
@@ -5420,6 +5426,24 @@ bad_root_subnode:
 
 		if (!le16_to_cpu(ie->length))
 			break;
+
+		/*
+		 * The entries must be sorted by the index collation. A misplaced entry is
+		 * invisible to lookups even though the walk sees it - the driver reports
+		 * the name missing on a volume fsck called clean - and cannot be patched in
+		 * place, so rebuild the index.
+		 */
+		if (collate && prev_ie && le16_to_cpu(prev_ie->key_length) &&
+				le16_to_cpu(ie->key_length) &&
+				collate(vol, &prev_ie->key,
+					le16_to_cpu(prev_ie->key_length),
+					&ie->key,
+					le16_to_cpu(ie->key_length)) > 0) {
+			ntfs_log_error("Index entries of inode(%"PRIu64") are "
+					"out of order\n", ni->mft_no);
+			goto initialize_index;
+		}
+		prev_ie = ie;
 	}
 
 	/*
@@ -5502,6 +5526,7 @@ bad_root_subnode:
 		ie = (INDEX_ENTRY *)((u8 *)&ia->index +
 				le32_to_cpu(ia->index.entries_offset));
 
+		prev_ie = NULL;
 		for (;; ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
 			/*
 			 * Check the entry bounds before dereferencing ie. Advancing by ie->length
@@ -5556,6 +5581,21 @@ bad_root_subnode:
 
 			if (!le16_to_cpu(ie->length))
 				break;
+
+			/* Sorted within the node, as in the root above. */
+			if (collate && prev_ie &&
+					le16_to_cpu(prev_ie->key_length) &&
+					le16_to_cpu(ie->key_length) &&
+					collate(vol, &prev_ie->key,
+						le16_to_cpu(prev_ie->key_length),
+						&ie->key,
+						le16_to_cpu(ie->key_length)) > 0) {
+				ntfs_log_error("Index entries of inode(%"PRIu64
+						") are out of order\n",
+						ni->mft_no);
+				goto initialize_index;
+			}
+			prev_ie = ie;
 		}
 
 		/*

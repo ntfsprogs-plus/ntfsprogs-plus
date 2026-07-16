@@ -515,20 +515,12 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 		return -1;
 	}
 
-	if (fixed && ntfs_ask_repair(vol)) {
-		u8 vcn_size_bits;
-
-		ib->magic = magic_INDX;
-
-		if (vol->cluster_size <= block_size)
-			vcn_size_bits = vol->cluster_size_bits;
-		else
-			vcn_size_bits = NTFS_BLOCK_SIZE_BITS;
-
-		if (ntfs_attr_mst_pwrite(ia_na, vcn << vcn_size_bits, 1,
-					block_size, (u8 *)ib) != 1)
-			return -1;
-	}
+	/*
+	 * A wrong magic alone is not repaired here: this runs on every block read,
+	 * so a write from this spot is neither counted nor reported as a repair.
+	 * ntfsck_repair_index_block() restores the magic (with the other header
+	 * fields) when the index is validated.
+	 */
 	return (0);
 }
 

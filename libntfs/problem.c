@@ -267,6 +267,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_ATTR_DATA_FLAGS_CORRUPTED,
 		"Inode(@In): $DATA attribute has an invalid flag combination. Normalize it",
 	},
+	{ PR_MFT_UNNAMED_DATA_MISSING,
+		"Inode(@In): Unnamed $DATA attribute is missing. Add an empty one",
+	},
 	{ 0, },
 };
 

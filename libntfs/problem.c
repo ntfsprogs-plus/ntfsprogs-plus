@@ -270,6 +270,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_MFT_UNNAMED_DATA_MISSING,
 		"Inode(@In): Unnamed $DATA attribute is missing. Add an empty one",
 	},
+	{ PR_DIR_HAVE_UNNAMED_DATA,
+		"Inode(@In): Directory has an unnamed $DATA attribute. Remove it",
+	},
 	{ 0, },
 };
 

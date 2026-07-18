@@ -8111,7 +8111,9 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 		if (wtype == FSCK_BMP_FINAL)
 			fsck_err_found();
 
-		if (ntfs_fix_problem(vol, PR_CLUSTER_BITMAP_MISMATCH, &pctx)) {
+		if (ntfs_fix_problem(vol, na == vol->mftbmp_na ?
+					PR_MFT_BITMAP_MISMATCH :
+					PR_CLUSTER_BITMAP_MISMATCH, &pctx)) {
 			if (wtype == FSCK_BMP_INITIAL)
 				wcnt = ntfs_attr_pwrite(na, pos, count, disk_bm);
 			else if (block_mass_free) {

@@ -91,6 +91,7 @@ typedef enum {
 	PR_MFT_SEQNO_ZERO,
 	PR_IDX_SEQNO_ZERO,
 	PR_FN_PARENT_SEQNO_ZERO,
+	PR_MFT_BITMAP_SIZE_MISMATCH,
 } problem_code_t;
 
 typedef struct problem_context {

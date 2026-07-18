@@ -8754,6 +8754,91 @@ static void ntfsck_check_mft_size(ntfs_volume *vol)
 		fsck_err_fixed();
 }
 
+/*
+ * ntfsck_check_mft_bitmap_size - make $MFT/$BITMAP cover every mft record.
+ *
+ * A record past the end of $MFT/$BITMAP reads as free: pass 1 skips it, so
+ * its clusters are never accounted and the final cluster-bitmap apply frees
+ * them, while a record the directory walk still reaches keeps its in-use bit
+ * only in fsck's memory - the bitmap applies stop at data_size, the bit is
+ * silently dropped, and record allocation can hand the record out again.
+ * So the bitmap must reach full coverage before pass 1 decides anything.
+ *
+ * The extension cannot be plain zeroes: the bits it restores are the very
+ * in-use information that was lost. Rebuild them from the record headers -
+ * a record whose header carries a record magic and MFT_RECORD_IN_USE is
+ * marked allocated, and pass 1 then validates or clears it like any other;
+ * the reverse guess would silently abandon live records.
+ */
+static void ntfsck_check_mft_bitmap_size(ntfs_volume *vol)
+{
+	ntfs_attr *bm_na = vol->mftbmp_na;
+	MFT_RECORD mrec;
+	problem_context_t pctx = {0, };
+	s64 nr_recs, end, expected, aligned, covered, tail_size, rec;
+	u8 *tail;
+
+	nr_recs = vol->mft_na->data_size >> vol->mft_record_size_bits;
+	expected = (nr_recs + 7) >> 3;
+	if (bm_na->data_size >= expected)
+		return;
+
+	ntfs_init_problem_ctx(&pctx, vol->mft_ni, bm_na, NULL, NULL,
+			vol->mft_ni->mrec, NULL, NULL);
+	pctx.dsize = expected;
+	fsck_err_found();
+	if (!ntfs_fix_problem(vol, PR_MFT_BITMAP_SIZE_MISMATCH, &pctx))
+		return;
+
+	/* NTFS keeps the bitmap in 8-byte units; grow to the next boundary. */
+	aligned = (expected + 7) & ~7;
+	covered = bm_na->data_size << 3;
+	tail_size = aligned - bm_na->data_size;
+	tail = ntfs_calloc(tail_size);
+	if (!tail)
+		return;
+
+	/* Records above initialized_size were never written and stay free. */
+	end = vol->mft_na->initialized_size >> vol->mft_record_size_bits;
+	if (end > nr_recs)
+		end = nr_recs;
+
+	/*
+	 * Only the header is inspected, and its fields all sit before the
+	 * first update sequence slot, so a plain read is enough.
+	 */
+	for (rec = covered; rec < end; rec++) {
+		if (ntfs_attr_pread(vol->mft_na,
+					rec << vol->mft_record_size_bits,
+					offsetof(MFT_RECORD, bytes_in_use),
+					&mrec) !=
+				offsetof(MFT_RECORD, bytes_in_use)) {
+			ntfs_log_error("Failed to read mft record(%"PRId64
+					") header\n", rec);
+			free(tail);
+			return;
+		}
+
+		if ((ntfs_is_file_record(mrec.magic) ||
+					ntfs_is_baad_record(mrec.magic)) &&
+				(mrec.flags & MFT_RECORD_IN_USE))
+			ntfs_bit_set(tail, rec - covered, 1);
+	}
+
+	if (ntfs_attr_pwrite(bm_na, bm_na->data_size, tail_size, tail) !=
+			tail_size) {
+		ntfs_log_error("Failed to extend $MFT/$BITMAP to %"PRId64
+				" bytes\n", aligned);
+		free(tail);
+		return;
+	}
+	free(tail);
+
+	/* The in-use cache may hold the window the extension just rewrote. */
+	check_mftrec_in_use(vol, covered, 1);
+	fsck_err_fixed();
+}
+
 static void ntfsck_scan_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
@@ -8824,6 +8909,9 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 
 	/* $MFT must be whole before pass 1 decides which records exist. */
 	ntfsck_check_mft_size(vol);
+
+	/* And its bitmap must cover every record the sizes now describe. */
+	ntfsck_check_mft_bitmap_size(vol);
 
 	/* pass 1 */
 	ntfsck_scan_mft_records(vol);

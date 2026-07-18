@@ -249,6 +249,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_FN_PARENT_SEQNO_ZERO,
 		"Inode(@In): Parent reference of $FILE_NAME carries sequence number zero, update it.",
 	},
+	{ PR_MFT_BITMAP_SIZE_MISMATCH,
+		"$MFT/$BITMAP size(@Ad) doesn't cover all mft records, expected at least(@Sd). Extend it.",
+	},
 	{ 0, },
 };
 

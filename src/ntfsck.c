@@ -3582,7 +3582,6 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 	s64 data_size;
 	s64 alloc_size;
 	s64 init_size;
-	s64 new_size;
 	s64 aligned_data_size;
 	s64 lowest_vcn;
 	struct rl_size rls = {0, };
@@ -3696,35 +3695,56 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 	}
 
 	/*
-	 * Reset non-residnet if sizes are invalid,
-	 * And then make it resident attribute.
+	 * The runlist survived every check above (decode, lcn bounds,
+	 * highest_vcn, duplication), so it is the trusted description of the
+	 * attribute: repair corrupt size fields from it instead of throwing
+	 * the stream away. allocated_size must equal the hole-inclusive
+	 * runlist size and data_size must fit inside it; a single flipped
+	 * size field must not cost the file its clusters.
 	 */
-
-	/* TODO: check more detail */
-
-	if (alloc_size != rls.alloc_size || data_size > alloc_size) {
-		new_size = 0;
-	} else {
-		if (aligned_data_size <= alloc_size)
-			goto out;
-		new_size = alloc_size;
-	}
-
-	/*
-	 * ntfsck_update_runlist will set appropriate flag
-	 * and fields of attribute structure at ntfs_attr_update_meta(),
-	 * that is also including compressed_size and flags.
-	 */
+	if (alloc_size == rls.alloc_size && data_size <= alloc_size &&
+			aligned_data_size <= alloc_size)
+		goto out;
 
 	fsck_err_found();
 	if (!ntfs_fix_problem(vol, PR_ATTR_NON_RESIDENT_SIZES_MISMATCH, &pctx))
 		goto out;
 
 	if (na->type == AT_INDEX_ALLOCATION) {
+		/* index blocks are rebuilt, not resized */
 		if (!ntfsck_initialize_index_attr(ni))
 			fsck_err_fixed();
-	} else if (!ntfs_non_resident_attr_shrink(na, new_size))
-		fsck_err_fixed();
+		goto out;
+	}
+
+	alloc_size = rls.alloc_size;
+	if (data_size > alloc_size)
+		data_size = alloc_size;
+	if (init_size > data_size)
+		init_size = data_size;
+
+	a->allocated_size = cpu_to_sle64(alloc_size);
+	a->data_size = cpu_to_sle64(data_size);
+	a->initialized_size = cpu_to_sle64(init_size);
+	na->allocated_size = alloc_size;
+	na->data_size = data_size;
+	na->initialized_size = init_size;
+
+	/*
+	 * Refresh the cached inode sizes so the $FILE_NAME checks later on compare
+	 * against the repaired values, not the corrupt ones read at open time. For
+	 * compressed/sparse attributes the inode caches compressed_size, which is
+	 * not touched here.
+	 */
+	if (na->type == AT_DATA && na->name == AT_UNNAMED) {
+		ni->data_size = data_size;
+		if (!(a->flags & (ATTR_IS_COMPRESSED | ATTR_IS_SPARSE)))
+			ni->allocated_size = alloc_size;
+		NInoFileNameSetDirty(ni);
+	}
+
+	ntfs_inode_mark_dirty(actx->ntfs_ino);
+	fsck_err_fixed();
 
 out:
 	if (out_rls)

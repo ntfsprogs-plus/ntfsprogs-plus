@@ -1866,6 +1866,7 @@ static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no)
 	ntfsck_check_mft_record_unused(vol, mft_no);
 	ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_no);
 	ntfs_fsck_mftbmp_clear(vol, mft_no);
+	check_mftrec_in_use(vol, mft_no, 1);
 }
 
 /*

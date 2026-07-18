@@ -3695,6 +3695,29 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 	}
 
 	/*
+	 * For sparse/compressed attributes compressed_size counts the bytes actually
+	 * backed by clusters, i.e. the hole-free part of the runlist. The inode
+	 * caches it as its allocated size and the $FILE_NAME checks propagate that
+	 * into every index entry, so a corrupt value must be repaired from the
+	 * runlist before it spreads.
+	 */
+	if ((a->flags & (ATTR_IS_COMPRESSED | ATTR_IS_SPARSE)) &&
+			sle64_to_cpu(a->compressed_size) != rls.real_size) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_ATTR_COMPRESSED_SIZE_MISMATCH,
+					&pctx)) {
+			a->compressed_size = cpu_to_sle64(rls.real_size);
+			na->compressed_size = rls.real_size;
+			if (na->type == AT_DATA && na->name == AT_UNNAMED) {
+				ni->allocated_size = rls.real_size;
+				NInoFileNameSetDirty(ni);
+			}
+			ntfs_inode_mark_dirty(actx->ntfs_ino);
+			fsck_err_fixed();
+		}
+	}
+
+	/*
 	 * The runlist survived every check above (decode, lcn bounds,
 	 * highest_vcn, duplication), so it is the trusted description of the
 	 * attribute: repair corrupt size fields from it instead of throwing

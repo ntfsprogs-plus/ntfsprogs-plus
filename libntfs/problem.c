@@ -261,6 +261,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_ATTR_COMPRESSION_UNIT_CORRUPTED,
 		"Inode(@In:@At): Compression unit of compressed attribute is invalid. Reset to standard",
 	},
+	{ PR_ATTR_COMPRESSED_SIZE_MISMATCH,
+		"Inode(@In:@At): Compressed size of attribute doesn't match its runlist. Repair it",
+	},
 	{ 0, },
 };
 

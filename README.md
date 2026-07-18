@@ -27,11 +27,13 @@ You should have GNU Build system (autoconf, automake, libtool)
 and some libraries to build ntfsprogs-plus. If you don't have them,
 you should install them.
 
-For ubuntu
+For ubuntu or debian
 ```
-sudo apt install build-essential automake autoconf libtool
+sudo apt install build-essential automake autoconf libtool pkgconf uuid-dev
 sudo apt install libgcrypt20-dev libasan8
 ```
+On Debian you can also just `apt install ntfsprogs-plus` with experimental.
+
 For redhat
 ```
 yum install automake autoconf libtool

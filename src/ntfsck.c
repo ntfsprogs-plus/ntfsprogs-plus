@@ -3817,6 +3817,27 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 		goto out;
 	}
 
+	/* a directory must not carry an unnamed $DATA stream */
+	if (ntfs_attr_exist(ni, AT_DATA, AT_UNNAMED, 0)) {
+		ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, NULL,
+				NULL, NULL);
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_DIR_HAVE_UNNAMED_DATA, &pctx)) {
+			ntfs_attr *d_na;
+
+			d_na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
+			if (d_na) {
+				if (!ntfs_attr_rm(d_na))
+					fsck_err_fixed();
+				else
+					ntfs_log_error("Failed to remove unnamed "
+							"$DATA of inode(%"PRId64")\n",
+							ni->mft_no);
+				ntfs_attr_close(d_na);
+			}
+		}
+	}
+
 	ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4);
 	if (!ia_na) {
 		/* directory can have only $INDEX_ROOT. not error */

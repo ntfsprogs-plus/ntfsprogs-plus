@@ -98,6 +98,7 @@ typedef enum {
 	PR_ATTR_COMPRESSED_SIZE_MISMATCH,
 	PR_ATTR_DATA_FLAGS_CORRUPTED,
 	PR_MFT_UNNAMED_DATA_MISSING,
+	PR_DIR_HAVE_UNNAMED_DATA,
 } problem_code_t;
 
 typedef struct problem_context {

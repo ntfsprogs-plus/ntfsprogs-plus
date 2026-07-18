@@ -95,6 +95,7 @@ typedef enum {
 	PR_MFT_BITMAP_MISMATCH,
 	PR_ATTR_SI_FLAG_MISMATCH,
 	PR_ATTR_COMPRESSION_UNIT_CORRUPTED,
+	PR_ATTR_COMPRESSED_SIZE_MISMATCH,
 } problem_code_t;
 
 typedef struct problem_context {

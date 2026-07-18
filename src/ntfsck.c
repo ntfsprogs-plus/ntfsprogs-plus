@@ -4464,6 +4464,151 @@ static int ntfsck_check_reparse(ntfs_inode *ni)
 
 	return STATUS_OK;
 }
+
+/*
+ * Is the $Extend/$Reparse entry keyed {@reparse_tag, @mref} backed by a real
+ * reparse point? That is the case only when the referenced record is a base
+ * record in use under the same sequence number and its $REPARSE_POINT
+ * attribute still carries the indexed tag.
+ */
+static BOOL ntfsck_reparse_entry_backed(ntfs_volume *vol, le32 reparse_tag,
+		u64 mref)
+{
+	ntfs_inode *ni;
+	ntfs_attr *na;
+	le32 tag;
+	BOOL backed = FALSE;
+
+	if (!MSEQNO(mref) || MREF(mref) >=
+			(u64)(vol->mft_na->initialized_size >>
+				vol->mft_record_size_bits))
+		return FALSE;
+
+	/* ntfs_inode_open() verifies in-use, base and sequence number. */
+	ni = ntfs_inode_open(vol, mref);
+	if (!ni)
+		return FALSE;
+
+	if (ntfs_attr_exist(ni, AT_REPARSE_POINT, AT_UNNAMED, 0)) {
+		na = ntfs_attr_open(ni, AT_REPARSE_POINT, AT_UNNAMED, 0);
+		if (na) {
+			if (ntfs_attr_pread(na, 0, 4, &tag) == 4 &&
+					tag == reparse_tag)
+				backed = TRUE;
+			ntfs_attr_close(na);
+		}
+	}
+	ntfs_inode_close(ni);
+	return backed;
+}
+
+/*
+ * Reverse sweep of the $Extend/$Reparse index. ntfsck_check_reparse()
+ * restores the entry of every valid reparse point, but nothing removed
+ * entries whose backing is gone - a cleared or reused record, a dropped
+ * $REPARSE_POINT attribute or a rewritten tag - so the volume kept
+ * enumerating reparse points that do not exist. Walk the index after the
+ * inode checks settled and remove every entry no reparse point vouches for.
+ */
+static void ntfsck_check_reparse_index(ntfs_volume *vol)
+{
+	ntfs_inode *ni, *dir_ni;
+	ntfs_index_context *xr;
+	INDEX_ENTRY *ie;
+	REPARSE_INDEX_KEY key;
+	REPARSE_INDEX_KEY *stale = NULL;
+	int nr_stale = 0, alloc_stale = 0, i;
+	problem_context_t pctx = {0, };
+	u64 inum;
+
+	dir_ni = ntfs_inode_open(vol, FILE_Extend);
+	if (!dir_ni)
+		return;
+	inum = ntfs_inode_lookup_by_mbsname(dir_ni, "$Reparse");
+	ntfs_inode_close(dir_ni);
+	if (inum == (u64)-1)
+		return;
+	ni = ntfs_inode_open(vol, inum);
+	if (!ni)
+		return;
+	xr = ntfs_index_ctx_get(ni, NTFS_INDEX_R, 2);
+	if (!xr) {
+		ntfs_inode_close(ni);
+		return;
+	}
+
+	ntfs_init_problem_ctx(&pctx, NULL, NULL, NULL, NULL, NULL, NULL,
+			NULL);
+
+	/*
+	 * No key collates below all-zero, so the failed lookup leaves the
+	 * context on the smallest entry (an all-zero key itself would be
+	 * found and is checked like any other).
+	 */
+	memset(&key, 0, sizeof(key));
+	if (ntfs_index_lookup(&key, sizeof(key), xr) && errno != ENOENT)
+		goto out;
+
+	ie = xr->entry;
+	if (!ie)
+		goto out;
+	if (ie->ie_flags & INDEX_ENTRY_END)
+		ie = ntfs_index_next(ie, xr);
+
+	/*
+	 * Collect first, remove after: ntfs_index_rm() restructures the
+	 * tree under the walk, whose block reloads then lose or replay
+	 * buffered changes (the mid-walk dirty-buffer trap), so nothing
+	 * may be removed while the iteration is in flight.
+	 */
+	while (ie) {
+		/*
+		 * A key of the wrong size is a structural entry problem
+		 * owned by the index validation, not a stale reference;
+		 * it cannot be looked up for removal below either.
+		 */
+		if (le16_to_cpu(ie->key_length) != sizeof(key)) {
+			ie = ntfs_index_next(ie, xr);
+			continue;
+		}
+		memcpy(&key, &ie->key, sizeof(key));
+
+		if (!ntfsck_reparse_entry_backed(vol, key.reparse_tag,
+					le64_to_cpu(key.file_id))) {
+			if (nr_stale == alloc_stale) {
+				REPARSE_INDEX_KEY *tmp;
+
+				alloc_stale = alloc_stale ?
+					alloc_stale * 2 : 16;
+				tmp = realloc(stale,
+						alloc_stale * sizeof(*stale));
+				if (!tmp)
+					break;
+				stale = tmp;
+			}
+			stale[nr_stale++] = key;
+		}
+		ie = ntfs_index_next(ie, xr);
+	}
+
+	for (i = 0; i < nr_stale; i++) {
+		pctx.inum = MREF(le64_to_cpu(stale[i].file_id));
+		fsck_err_found();
+		if (!ntfs_fix_problem(vol, PR_REPARSE_ENTRY_STALE, &pctx))
+			continue;
+		ntfs_index_ctx_reinit(xr);
+		if (!ntfs_index_lookup(&stale[i], sizeof(stale[i]), xr) &&
+				!ntfs_index_rm(xr))
+			fsck_err_fixed();
+		else
+			ntfs_log_error("Failed to remove stale $Reparse entry "
+					"of inode(%"PRIu64")\n", pctx.inum);
+	}
+out:
+	free(stale);
+	ntfs_index_ctx_put(xr);
+	ntfs_inode_close(ni);
+}
 static int ntfsck_sparse_compression_unit(ntfs_attr *na, s64 cb_vcn_bytes);
 
 /*
@@ -8709,6 +8854,13 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	ntfsck_check_orphaned_mft(vol);
 	if (orphan_changed)
 		*orphan_changed = (fsck_fixes != orphan_fixes_before);
+
+	/*
+	 * After the orphan pass settled which records survive, sweep the
+	 * $Extend/$Reparse index for entries left behind by records that
+	 * did not.
+	 */
+	ntfsck_check_reparse_index(vol);
 
 out:
 	free(mrec_temp_buf);

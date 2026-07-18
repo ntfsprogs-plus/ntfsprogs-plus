@@ -255,6 +255,12 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_MFT_BITMAP_MISMATCH,
 		"Inode(@In:@At): MFT bitmap of fsck and disk are different. Apply to disk",
 	},
+	{ PR_ATTR_SI_FLAG_MISMATCH,
+		"Inode(@In): $STANDARD_INFORMATION flags disagree with the $DATA attribute flags. Sync them",
+	},
+	{ PR_ATTR_COMPRESSION_UNIT_CORRUPTED,
+		"Inode(@In:@At): Compression unit of compressed attribute is invalid. Reset to standard",
+	},
 	{ 0, },
 };
 

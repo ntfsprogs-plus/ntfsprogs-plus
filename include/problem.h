@@ -93,6 +93,8 @@ typedef enum {
 	PR_FN_PARENT_SEQNO_ZERO,
 	PR_MFT_BITMAP_SIZE_MISMATCH,
 	PR_MFT_BITMAP_MISMATCH,
+	PR_ATTR_SI_FLAG_MISMATCH,
+	PR_ATTR_COMPRESSION_UNIT_CORRUPTED,
 } problem_code_t;
 
 typedef struct problem_context {

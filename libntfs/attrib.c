@@ -559,11 +559,39 @@ ntfs_attr *ntfs_attr_open(ntfs_inode *ni, const ATTR_TYPES type,
 	if (na->type == AT_DATA && na->name == AT_UNNAMED &&
 			(((a->flags & ATTR_IS_SPARSE)     && !NAttrSparse(na)) ||
 			 (!(a->flags & ATTR_IS_ENCRYPTED)  != !NAttrEncrypted(na)))) {
-		errno = EIO;
-		ntfs_log_perror("Inode %lld has corrupt attribute flags "
-				"(0x%x <> 0x%x)",(unsigned long long)ni->mft_no,
-				le16_to_cpu(a->flags), le32_to_cpu(na->ni->flags));
-		goto put_err_out;
+		/*
+		 * The stream is the authority on its own state; the $STANDARD_INFORMATION
+		 * flags are only a cached copy. Under fsck resync the inode flags instead
+		 * of refusing the open: the refusal would end with the whole file discarded
+		 * over a repairable one-bit mismatch.
+		 */
+		if (NVolFsck(ni->vol)) {
+			problem_context_t pctx = {0, };
+
+			pctx.ni = ni;
+			pctx.a = a;
+			fsck_err_found();
+			if (!ntfs_fix_problem(ni->vol, PR_ATTR_SI_FLAG_MISMATCH,
+						&pctx)) {
+				errno = EIO;
+				goto put_err_out;
+			}
+			if (a->flags & ATTR_IS_SPARSE)
+				ni->flags |= FILE_ATTR_SPARSE_FILE;
+			if (a->flags & ATTR_IS_ENCRYPTED)
+				ni->flags |= FILE_ATTR_ENCRYPTED;
+			else
+				ni->flags &= ~FILE_ATTR_ENCRYPTED;
+			ntfs_inode_mark_dirty(ni);
+			NInoFileNameSetDirty(ni);
+			fsck_err_fixed();
+		} else {
+			errno = EIO;
+			ntfs_log_perror("Inode %lld has corrupt attribute flags "
+					"(0x%x <> 0x%x)",(unsigned long long)ni->mft_no,
+					le16_to_cpu(a->flags), le32_to_cpu(na->ni->flags));
+			goto put_err_out;
+		}
 	}
 
 	if (a->non_resident) {
@@ -579,23 +607,38 @@ ntfs_attr *ntfs_attr_open(ntfs_inode *ni, const ATTR_TYPES type,
 			goto put_err_out;
 		}
 		if ((a->flags & ATTR_COMPRESSION_MASK)
-				&& !a->compression_unit) {
-			errno = EIO;
-			ntfs_log_perror("Compressed inode %lld attr 0x%x has "
-					"no compression unit",
-					(unsigned long long)ni->mft_no, le32_to_cpu(type));
-			goto put_err_out;
-		}
-		if ((a->flags & ATTR_COMPRESSION_MASK)
 				&& (a->compression_unit
 					!= STANDARD_COMPRESSION_UNIT)) {
-			errno = EIO;
-			ntfs_log_perror("Compressed inode %lld attr 0x%lx has "
-					"an unsupported compression unit %d",
-					(unsigned long long)ni->mft_no,
-					(long)le32_to_cpu(type),
-					(int)a->compression_unit);
-			goto put_err_out;
+			/*
+			 * STANDARD_COMPRESSION_UNIT is the only value Windows
+			 * ever writes, so under fsck restore it instead of
+			 * refusing the attribute, which would end with the
+			 * file discarded over one corrupt byte.
+			 */
+			if (NVolFsck(ni->vol)) {
+				problem_context_t pctx = {0, };
+
+				pctx.ni = ni;
+				pctx.a = a;
+				fsck_err_found();
+				if (!ntfs_fix_problem(ni->vol,
+						PR_ATTR_COMPRESSION_UNIT_CORRUPTED,
+						&pctx)) {
+					errno = EIO;
+					goto put_err_out;
+				}
+				a->compression_unit = STANDARD_COMPRESSION_UNIT;
+				ntfs_inode_mark_dirty(ctx->ntfs_ino);
+				fsck_err_fixed();
+			} else {
+				errno = EIO;
+				ntfs_log_perror("Compressed inode %lld attr 0x%lx "
+						"has an invalid compression unit %d",
+						(unsigned long long)ni->mft_no,
+						(long)le32_to_cpu(type),
+						(int)a->compression_unit);
+				goto put_err_out;
+			}
 		}
 		ntfs_attr_init(na, TRUE, a->flags,
 				a->flags & ATTR_IS_ENCRYPTED,

@@ -2952,8 +2952,28 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 				return STATUS_ERROR;
 			}
 			if (!ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4)) {
-				/* there are no $DATA and $INDEX_ROOT in MFT */
-				return STATUS_ERROR;
+				/*
+				 * Neither an unnamed $DATA nor an $INDEX_ROOT. The record is otherwise
+				 * healthy, and deleting it over the one missing attribute would also
+				 * discard any named streams it still carries, so restore a zero-length
+				 * unnamed $DATA the way chkdsk does and keep the file.
+				 */
+				fsck_err_found();
+				if (!ntfs_fix_problem(vol,
+						PR_MFT_UNNAMED_DATA_MISSING,
+						&pctx))
+					return STATUS_ERROR;
+
+				if (ntfs_attr_add(ni, AT_DATA, AT_UNNAMED, 0,
+							NULL, 0)) {
+					ntfs_log_error("Failed to add unnamed "
+							"$DATA to inode(%"PRIu64")\n",
+							ni->mft_no);
+					return STATUS_ERROR;
+				}
+				ntfs_inode_mark_dirty(ni);
+				fsck_err_fixed();
+				return (int32_t)ie_flags;
 			}
 
 			/* found $INDEX_ROOT */

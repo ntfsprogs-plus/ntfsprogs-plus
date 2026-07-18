@@ -252,6 +252,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_MFT_BITMAP_SIZE_MISMATCH,
 		"$MFT/$BITMAP size(@Ad) doesn't cover all mft records, expected at least(@Sd). Extend it.",
 	},
+	{ PR_MFT_BITMAP_MISMATCH,
+		"Inode(@In:@At): MFT bitmap of fsck and disk are different. Apply to disk",
+	},
 	{ 0, },
 };
 

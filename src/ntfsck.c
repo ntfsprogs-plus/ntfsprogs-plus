@@ -3887,7 +3887,8 @@ static int ntfsck_check_file(ntfs_inode *ni)
 	ntfs_attr_search_ctx *ctx;
 	ntfs_volume *vol;
 	ATTR_RECORD *a;
-	FILE_ATTR_FLAGS attr_flags = 0;
+	le16 mask;
+	problem_context_t pctx = {0, };
 
 	if (!ni)
 		return STATUS_ERROR;
@@ -3898,42 +3899,85 @@ static int ntfsck_check_file(ntfs_inode *ni)
 	if (!ctx)
 		return STATUS_ERROR;
 
-	if (ntfs_attr_lookup(AT_DATA, NULL, 0, CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+	if (ntfs_attr_lookup(AT_DATA, AT_UNNAMED, 0, CASE_SENSITIVE, 0, NULL, 0,
+				ctx)) {
 		ntfs_log_error("$DATA attribute of Inode(%"PRIu64") is missing\n",
 				ni->mft_no);
 		goto err_out;
 	}
 
 	a = ctx->attr;
-	if (a->flags & (ATTR_COMPRESSION_MASK | ATTR_IS_SPARSE)) {
-		if (a->flags & ATTR_COMPRESSION_MASK) {
-			attr_flags = FILE_ATTR_COMPRESSED;
-			if (vol->cluster_size > 4096) {
-				ntfs_log_error("Found compressed data(%"PRIu64" but "
-						"compression is disabled due to "
-						"cluster size(%i) > 4kiB.\n",
-						ni->mft_no, vol->cluster_size);
-				goto err_out;
-			}
+	ntfs_init_problem_ctx(&pctx, ni, NULL, ctx, NULL, ni->mrec, a, NULL);
 
-			if ((a->flags & ATTR_COMPRESSION_MASK) != ATTR_IS_COMPRESSED) {
-				ntfs_log_error("Found unknown compression method "
-						"or corrupt file.(%"PRIu64")\n",
-						ni->mft_no);
-				goto err_out;
+	/*
+	 * A compression mask that cannot be real is normalized instead of failing
+	 * the whole file (the failure path removes the index entry and the orphan
+	 * pass then deletes the record - way out of scale for a flag fault). The
+	 * mask is impossible on a resident or encrypted attribute, on a volume whose
+	 * clusters are too big to compress, and in a header too short to carry
+	 * compressed_size; otherwise a non-standard method is normalized to the only
+	 * one Windows ever writes.
+	 */
+	mask = a->flags & ATTR_COMPRESSION_MASK;
+	if (mask) {
+		BOOL keep = TRUE;
+
+		if (!a->non_resident ||
+				vol->cluster_size > MAX_COMPRESSION_CLUSTER_SIZE ||
+				(a->flags & ATTR_IS_ENCRYPTED) ||
+				le16_to_cpu(a->mapping_pairs_offset) <
+				offsetof(ATTR_RECORD, compressed_end))
+			keep = FALSE;
+
+		if (!keep || mask != ATTR_IS_COMPRESSED) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_ATTR_DATA_FLAGS_CORRUPTED,
+						&pctx)) {
+				a->flags &= ~ATTR_COMPRESSION_MASK;
+				if (keep)
+					a->flags |= ATTR_IS_COMPRESSED;
+				else if (a->non_resident &&
+						!(a->flags & ATTR_IS_SPARSE))
+					a->compression_unit = 0;
+				ntfs_inode_mark_dirty(ctx->ntfs_ino);
+				fsck_err_fixed();
 			}
 		}
-		if (a->flags & ATTR_IS_SPARSE)
-			attr_flags |= FILE_ATTR_SPARSE_FILE;
 	}
 
-	if (a->flags & ATTR_IS_ENCRYPTED) {
-		if (attr_flags & FILE_ATTR_COMPRESSED) {
-			ntfs_log_error("Found encrypted and compressed data.(%"PRIu64")\n",
-					ni->mft_no);
+	/*
+	 * A compressed stream must be visible as such in the inode flags, or the
+	 * file is served without decompression. Only the set direction is enforced,
+	 * and only for a stream that holds data: FILE_ATTR_COMPRESSED without a
+	 * compressed attribute is the legal "compress new data" state, and empty
+	 * streams re-derive their compression state from the inode flags on every
+	 * open.
+	 */
+	if ((a->flags & ATTR_IS_COMPRESSED) &&
+			(a->non_resident ? a->initialized_size != 0 :
+					   a->value_length != 0)) {
+		STANDARD_INFORMATION *si;
+
+		ntfs_attr_reinit_search_ctx(ctx);
+		a = NULL;	/* invalidated by the reinit */
+		if (ntfs_attr_lookup(AT_STANDARD_INFORMATION, AT_UNNAMED, 0,
+					CASE_SENSITIVE, 0, NULL, 0, ctx))
 			goto err_out;
+
+		si = ctx->attr->non_resident ? NULL :
+			(STANDARD_INFORMATION *)((u8 *)ctx->attr +
+				le16_to_cpu(ctx->attr->value_offset));
+		if (si && !(si->file_attributes & FILE_ATTR_COMPRESSED)) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_ATTR_SI_FLAG_MISMATCH,
+						&pctx)) {
+				si->file_attributes |= FILE_ATTR_COMPRESSED;
+				ni->flags |= FILE_ATTR_COMPRESSED;
+				ntfs_inode_mark_dirty(ctx->ntfs_ino);
+				NInoFileNameSetDirty(ni);
+				fsck_err_fixed();
+			}
 		}
-		attr_flags |= FILE_ATTR_ENCRYPTED;
 	}
 
 	ntfs_attr_put_search_ctx(ctx);

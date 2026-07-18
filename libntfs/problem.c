@@ -264,6 +264,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_ATTR_COMPRESSED_SIZE_MISMATCH,
 		"Inode(@In:@At): Compressed size of attribute doesn't match its runlist. Repair it",
 	},
+	{ PR_ATTR_DATA_FLAGS_CORRUPTED,
+		"Inode(@In): $DATA attribute has an invalid flag combination. Normalize it",
+	},
 	{ 0, },
 };
 

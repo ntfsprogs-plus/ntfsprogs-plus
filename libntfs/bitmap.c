@@ -44,6 +44,7 @@
 #include "debug.h"
 #include "logging.h"
 #include "misc.h"
+#include "fsck.h"
 
 /* GENMASK macro from linux code */
 #define GENMASK(h, l) \
@@ -263,6 +264,29 @@ free_err_out:
 	return ret;
 }
 
+/*
+ * Once fsck builds its in-memory mft bitmap, that copy is authoritative: the
+ * final bitmap apply overwrites the disk with it. Any record the library
+ * allocates or frees in between only flips the on-disk bit, so mirror those
+ * flips into the fsck bitmap or the apply would revert them.
+ */
+static void ntfs_bitmap_mirror_fsck_mftbmp(ntfs_attr *na, s64 start_bit,
+		s64 count, int value)
+{
+	ntfs_volume *vol;
+	s64 bit;
+
+	if (!na->ni)
+		return;
+
+	vol = na->ni->vol;
+	if (!vol || !vol->fsck_mft_bitmap || na != vol->mftbmp_na)
+		return;
+
+	for (bit = 0; bit < count; bit++)
+		ntfs_fsck_set_mftbmp_value(vol, start_bit + bit, value);
+}
+
 /**
  * ntfs_bitmap_set_run - set a run of bits in a bitmap
  * @na:		attribute containing the bitmap
@@ -281,6 +305,8 @@ int ntfs_bitmap_set_run(ntfs_attr *na, s64 start_bit, s64 count)
 	ntfs_log_enter("Set from bit %lld, count %lld\n",
 			(long long)start_bit, (long long)count);
 	ret = ntfs_bitmap_set_bits_in_run(na, start_bit, count, 1);
+	if (!ret)
+		ntfs_bitmap_mirror_fsck_mftbmp(na, start_bit, count, 1);
 	ntfs_log_leave("\n");
 	return ret;
 }
@@ -303,6 +329,8 @@ int ntfs_bitmap_clear_run(ntfs_attr *na, s64 start_bit, s64 count)
 	ntfs_log_enter("Clear from bit %lld, count %lld\n",
 			(long long)start_bit, (long long)count);
 	ret = ntfs_bitmap_set_bits_in_run(na, start_bit, count, 0);
+	if (!ret)
+		ntfs_bitmap_mirror_fsck_mftbmp(na, start_bit, count, 0);
 	ntfs_log_leave("\n");
 	return ret;
 }

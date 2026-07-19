@@ -3159,6 +3159,29 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	}
 
 	/*
+	 * file_name_type only has four defined namespaces (POSIX, WIN32, DOS and
+	 * WIN32_AND_DOS); a larger value is corruption that confuses name matching
+	 * and DOS-name pairing. The original namespace cannot be recovered, so
+	 * normalize both copies to WIN32, the case-insensitive default.
+	 */
+	if (ie_fn->file_name_type > FILE_NAME_WIN32_AND_DOS ||
+			fn->file_name_type > FILE_NAME_WIN32_AND_DOS) {
+		if (!filename)
+			filename = ntfs_attr_name_get(ie_fn->file_name,
+					ie_fn->file_name_length);
+		pctx.filename = filename;
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_ATTR_FN_NAMESPACE_INVALID, &pctx)) {
+			ie_fn->file_name_type = FILE_NAME_WIN32;
+			fn->file_name_type = FILE_NAME_WIN32;
+			ntfs_inode_mark_dirty(ni);
+			NInoFileNameSetDirty(ni);
+			if (!ntfsck_update_index_entry(ictx))
+				fsck_err_fixed();
+		}
+	}
+
+	/*
 	 * Windows chkdsk seems to fix reparse tag of index entry silently.
 	 * And don't touch reparse tags of MFT/$FN and $Reparse attribute.
 	 */

@@ -103,6 +103,7 @@ typedef enum {
 	PR_MFT_SI_MISSING,
 	PR_MFT_SECURITY_ID_DANGLING,
 	PR_MFT_USN_INVALID,
+	PR_ATTR_FN_CORRUPTED_REMOVE,
 } problem_code_t;
 
 typedef struct problem_context {

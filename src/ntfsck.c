@@ -289,6 +289,7 @@ static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
 static ntfs_inode *ntfsck_open_inode_after_raw_mft_check(ntfs_volume *vol,
 		u64 mft_no, BOOL expect_in_use);
 static BOOL ntfsck_rebuild_standard_information(ntfs_volume *vol, u64 mft_no);
+static BOOL ntfsck_remove_corrupt_file_name(ntfs_volume *vol, u64 mft_no);
 
 #define ntfsck_delete_mft	ntfsck_delete_orphaned_mft
 
@@ -300,6 +301,8 @@ static ntfs_inode *ntfsck_open_inode(ntfs_volume *vol, u64 mft_no)
 	if (!ni) {
 		ni = ntfs_inode_open(vol, mft_no);
 		if (!ni && ntfsck_rebuild_standard_information(vol, mft_no))
+			ni = ntfs_inode_open(vol, mft_no);
+		if (!ni && ntfsck_remove_corrupt_file_name(vol, mft_no))
 			ni = ntfs_inode_open(vol, mft_no);
 	}
 	return ni;
@@ -1222,6 +1225,111 @@ out:
 	free(ext_m);
 	free(m);
 	return rebuilt;
+}
+
+struct ntfsck_fn_walk {
+	u32 bad_fn_off, bad_fn_len;	/* first structurally corrupt $FN */
+	BOOL has_al;			/* an $ATTRIBUTE_LIST is present */
+};
+
+static BOOL ntfsck_fn_walk_cb(ATTR_RECORD *a, u32 offset, void *priv)
+{
+	struct ntfsck_fn_walk *w = priv;
+	u32 vlen = le32_to_cpu(a->value_length);
+	FILE_NAME_ATTR *fn;
+
+	if (a->type == AT_ATTRIBUTE_LIST) {
+		w->has_al = TRUE;
+		return TRUE;
+	}
+	if (a->type != AT_FILE_NAME || w->bad_fn_off)
+		return TRUE;
+
+	/* mirror the structural checks ntfs_attr_inconsistent() rejects on */
+	if (!a->non_resident &&
+			vlen >= offsetof(FILE_NAME_ATTR, file_name) &&
+			(u32)le16_to_cpu(a->value_offset) + vlen <=
+			le32_to_cpu(a->length)) {
+		fn = (FILE_NAME_ATTR *)((u8 *)a + le16_to_cpu(a->value_offset));
+		if (fn->file_name_length &&
+				fn->file_name_length * sizeof(ntfschar) +
+				offsetof(FILE_NAME_ATTR, file_name) <= vlen)
+			return TRUE;	/* well-formed name */
+	}
+	w->bad_fn_off = offset;
+	w->bad_fn_len = le32_to_cpu(a->length);
+	return TRUE;
+}
+
+/*
+ * ntfs_attr_inconsistent() rejects a $FILE_NAME whose value is truncated,
+ * non-resident or whose name overflows, which fails ntfs_mft_record_check()
+ * and so the whole inode open, after which the caller removes the index entry
+ * and the orphan pass discards the record -- one corrupt name used to cost
+ * the file and every intact hard-link or DOS name with it. chkdsk instead
+ * drops only the bad name, so remove just the corrupt $FILE_NAME (adjusting
+ * the hard-link count) and let the open be retried; the directory walk then
+ * prunes the matching index entry. A record carrying an attribute list also
+ * has a list entry for the name, and re-pointing that is out of scope here,
+ * so such records are left to the existing path.
+ */
+static BOOL ntfsck_remove_corrupt_file_name(ntfs_volume *vol, u64 mft_no)
+{
+	MFT_RECORD *m;
+	ATTR_RECORD *a;
+	struct ntfsck_fn_walk w = {0, };
+	problem_context_t pctx = {0, };
+	u32 biu;
+	u16 link_count;
+	BOOL removed = FALSE;
+
+	if (!NVolFsck(vol))
+		return FALSE;
+
+	m = ntfs_malloc(vol->mft_record_size);
+	if (!m)
+		return FALSE;
+
+	if (ntfs_mft_record_read(vol, mft_no, m))
+		goto out;
+
+	if (!ntfs_is_file_record(m->magic) ||
+			!(m->flags & MFT_RECORD_IN_USE) ||
+			m->base_mft_record)
+		goto out;
+
+	a = ntfsck_walk_raw_record(vol, m, ntfsck_fn_walk_cb, &w);
+	if (!a || !w.bad_fn_off || w.has_al)
+		goto out;
+
+	pctx.inum = mft_no;
+	fsck_err_found();
+	if (!ntfs_fix_problem(vol, PR_ATTR_FN_CORRUPTED_REMOVE, &pctx))
+		goto out;
+
+	biu = le32_to_cpu(m->bytes_in_use);
+	do {
+		memmove((u8 *)m + w.bad_fn_off,
+				(u8 *)m + w.bad_fn_off + w.bad_fn_len,
+				biu - w.bad_fn_off - w.bad_fn_len);
+		biu -= w.bad_fn_len;
+		m->bytes_in_use = cpu_to_le32(biu);
+		link_count = le16_to_cpu(m->link_count);
+		if (link_count)
+			m->link_count = cpu_to_le16(link_count - 1);
+
+		memset(&w, 0, sizeof(w));
+		a = ntfsck_walk_raw_record(vol, m, ntfsck_fn_walk_cb, &w);
+	} while (a && w.bad_fn_off && !w.has_al);
+
+	if (ntfs_mft_record_write(vol, mft_no, m))
+		goto out;
+
+	fsck_err_fixed();
+	removed = TRUE;
+out:
+	free(m);
+	return removed;
 }
 
 static int ntfsck_close_inode(ntfs_inode *ni)

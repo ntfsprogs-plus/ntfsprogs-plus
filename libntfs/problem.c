@@ -285,6 +285,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_MFT_USN_INVALID,
 		"Inode(@In): usn points beyond the $UsnJrnl journal. Clear it",
 	},
+	{ PR_ATTR_FN_CORRUPTED_REMOVE,
+		"Inode(@In): a $FILE_NAME attribute is corrupted. Remove it",
+	},
 	{ 0, },
 };
 

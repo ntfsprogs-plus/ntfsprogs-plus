@@ -3603,7 +3603,12 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 	runlist *rl = NULL;
 	BOOL rebuilt_attr_list = FALSE;
 	int not_mapped;
-	int err;
+	/*
+	 * Conservative default: only the normal end-of-extents exit sets this to
+	 * ENOENT (which marks the runlist fully mapped). Any other exit leaves it
+	 * EIO so a half-built runlist is never treated as complete.
+	 */
+	int err = EIO;
 	problem_context_t pctx = {0, };
 
 	if (!na || !na->ni)

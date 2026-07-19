@@ -273,6 +273,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_DIR_HAVE_UNNAMED_DATA,
 		"Inode(@In): Directory has an unnamed $DATA attribute. Remove it",
 	},
+	{ PR_MFT_SI_FIELDS_CORRUPTED,
+		"Inode(@In): $STANDARD_INFORMATION fields are corrupted. Fix them",
+	},
 	{ 0, },
 };
 

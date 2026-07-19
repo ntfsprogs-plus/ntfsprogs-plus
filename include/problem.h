@@ -99,6 +99,7 @@ typedef enum {
 	PR_ATTR_DATA_FLAGS_CORRUPTED,
 	PR_MFT_UNNAMED_DATA_MISSING,
 	PR_DIR_HAVE_UNNAMED_DATA,
+	PR_MFT_SI_FIELDS_CORRUPTED,
 } problem_code_t;
 
 typedef struct problem_context {

@@ -288,6 +288,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_ATTR_FN_CORRUPTED_REMOVE,
 		"Inode(@In): a $FILE_NAME attribute is corrupted. Remove it",
 	},
+	{ PR_ORPHANED_MFT_NO_NAME,
+		"Inode(@In): orphaned record has no $FILE_NAME. Recover it to lost+found",
+	},
 	{ 0, },
 };
 

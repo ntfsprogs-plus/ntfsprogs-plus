@@ -279,6 +279,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_MFT_SI_MISSING,
 		"Inode(@In): $STANDARD_INFORMATION is missing or too short. Rebuild it from $FILE_NAME",
 	},
+	{ PR_MFT_SECURITY_ID_DANGLING,
+		"Inode(@In): security_id is not in $Secure's $SII index. Clear it",
+	},
 	{ 0, },
 };
 

@@ -1959,8 +1959,9 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 			ntfs_log_error("Index already exist in parent(%"PRIu64"), "
 					"inode(%"PRIu64")\n",
 					parent_ni->mft_no, ni->mft_no);
-			errno = EEXIST;
 			ntfs_index_ctx_put(ictx);
+			/* Set after the put so the helper cannot clobber it. */
+			errno = EEXIST;
 			return STATUS_ERROR;
 		}
 
@@ -2029,9 +2030,17 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	int tfn_len;
 
 	ret = ntfsck_find_and_check_index(parent_ni, ni, fn, FALSE);
-	if (ret == STATUS_OK) { /* index already exist in parent inode */
+	if (ret == STATUS_OK) {
 		return STATUS_OK;
 	} else if (ret == STATUS_ERROR) {
+		/*
+		 * An entry for this same inode already exists in the parent (EEXIST): the
+		 * inode is already correctly linked, so there is nothing to add. Treat it
+		 * as success -- reporting failure here sends the caller down the lost+found
+		 * path, which drops the $FILE_NAME when that add also fails.
+		 */
+		if (errno == EEXIST)
+			return STATUS_OK;
 		err = -EIO;
 		return STATUS_ERROR;
 	}
@@ -8742,11 +8751,20 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 			int lookup_err = errno;
 
 			if (lookup_err != ENOENT) {
-				ntfs_log_error("Failed to lookup system file entry"
-						"(%"PRId64") in root\n", mft_num);
+				/*
+				 * A hard (non-ENOENT) lookup error means the root $I30 index itself is
+				 * corrupt, not that this one entry is missing. The system-file entries
+				 * cannot be verified against an unreadable index, and failing here would
+				 * abort the whole run before pass 3 (ntfsck_scan_index_entries) gets to
+				 * wipe and repopulate the root index.
+				 */
+				ntfs_log_error("Root $I30 index is unreadable; "
+						"deferring system-file entry checks "
+						"to the index rebuild pass\n");
 				ntfs_attr_put_search_ctx(sys_ctx);
 				ntfsck_close_inode(sys_ni);
-				goto check_trivial;
+				ret = STATUS_OK;
+				goto put_index_ctx;
 			}
 
 			ntfs_init_problem_ctx(&pctx, sys_ni, NULL, NULL,

@@ -926,24 +926,125 @@ static ntfs_inode *ntfsck_open_inode_after_raw_mft_check(ntfs_volume *vol,
  * missing or shorter than the NTFS 1.2 layout, and the caller of a failed
  * open removes the index entry, after which the orphan pass fails the same
  * open and discards the record, so one lost attribute used to cost the whole
- * file. Rebuild the attribute instead: the base record still carries the same
- * times and flags in $FILE_NAME, which is what chkdsk recreates
- * $STANDARD_INFORMATION from.
+ * file. Rebuild the attribute instead: prefer the value of a copy a corrupted
+ * attribute list left in an extent record (Windows only ever reads the
+ * attribute from the base record, so such a copy is unreachable yet keeps the
+ * genuine times, security_id and usn), and fall back to $FILE_NAME, which
+ * duplicates the times and flags and is what chkdsk recreates the attribute
+ * from.
  */
+static ATTR_RECORD *ntfsck_walk_raw_record(ntfs_volume *vol, MFT_RECORD *m,
+		BOOL (*cb)(ATTR_RECORD *a, u32 offset, void *priv), void *priv)
+{
+	ATTR_RECORD *a = NULL;
+	u32 offset, biu, alen;
+
+	if (le32_to_cpu(m->bytes_allocated) != vol->mft_record_size)
+		return NULL;
+
+	biu = le32_to_cpu(m->bytes_in_use);
+	offset = le16_to_cpu(m->attrs_offset);
+	if ((biu & 7) || biu > vol->mft_record_size || (offset & 7) ||
+			offset < (u32)((le16_to_cpu(m->usa_ofs) +
+					le16_to_cpu(m->usa_count) * 2 + 7) & ~7))
+		return NULL;
+
+	while (offset + 8 <= biu) {
+		a = (ATTR_RECORD *)((u8 *)m + offset);
+		if (a->type == AT_END)
+			return a;	/* reached the attribute terminator */
+		if (offset + offsetof(ATTR_RECORD, resident_end) > biu)
+			return NULL;
+		alen = le32_to_cpu(a->length);
+		if (!alen || (alen & 7) || alen > biu - offset)
+			return NULL;
+		if (cb && !cb(a, offset, priv))
+			return NULL;
+		offset += alen;
+	}
+	return NULL;
+}
+
+struct ntfsck_si_base_walk {
+	u32 bad_si_off, bad_si_len;	/* broken $SI, if still present */
+	u32 al_off;			/* resident $ATTRIBUTE_LIST */
+	u32 fn_off;			/* first resident $FILE_NAME */
+	BOOL healthy_si, bad_al;
+};
+
+static BOOL ntfsck_si_base_walk_cb(ATTR_RECORD *a, u32 offset, void *priv)
+{
+	struct ntfsck_si_base_walk *w = priv;
+	u32 alen = le32_to_cpu(a->length);
+
+	if (a->type == AT_STANDARD_INFORMATION) {
+		if (!a->non_resident && le32_to_cpu(a->value_length) >=
+				offsetof(STANDARD_INFORMATION, v1_end)) {
+			w->healthy_si = TRUE;	/* open failed for another reason */
+			return FALSE;
+		}
+		w->bad_si_off = offset;
+		w->bad_si_len = alen;
+	} else if (a->type == AT_ATTRIBUTE_LIST) {
+		/* only a resident, well-formed list can be re-pointed */
+		if (a->non_resident || w->al_off ||
+				le16_to_cpu(a->value_offset) +
+				le32_to_cpu(a->value_length) > alen) {
+			w->bad_al = TRUE;
+			return FALSE;
+		}
+		w->al_off = offset;
+	} else if (a->type == AT_FILE_NAME && !w->fn_off &&
+			!a->non_resident &&
+			le16_to_cpu(a->value_offset) +
+			le32_to_cpu(a->value_length) <= alen &&
+			le32_to_cpu(a->value_length) >=
+			offsetof(FILE_NAME_ATTR, file_name))
+		w->fn_off = offset;
+	return TRUE;
+}
+
+struct ntfsck_si_ext_walk {
+	le16 instance;			/* wanted $SI instance */
+	u32 si_off, si_len, si_vlen;	/* located $SI copy */
+};
+
+static BOOL ntfsck_si_ext_walk_cb(ATTR_RECORD *a, u32 offset, void *priv)
+{
+	struct ntfsck_si_ext_walk *w = priv;
+
+	if (a->type != AT_STANDARD_INFORMATION || a->non_resident ||
+			a->instance != w->instance)
+		return TRUE;
+	if (le16_to_cpu(a->value_offset) + le32_to_cpu(a->value_length) >
+			le32_to_cpu(a->length) ||
+			le32_to_cpu(a->value_length) <
+			offsetof(STANDARD_INFORMATION, v1_end))
+		return TRUE;
+	w->si_off = offset;
+	w->si_len = le32_to_cpu(a->length);
+	w->si_vlen = le32_to_cpu(a->value_length);
+	return TRUE;
+}
+
 static BOOL ntfsck_rebuild_standard_information(ntfs_volume *vol, u64 mft_no)
 {
 	MFT_RECORD *m;
+	MFT_RECORD *ext_m = NULL;
 	ATTR_RECORD *a;
-	ATTR_RECORD *bad_si = NULL;
-	FILE_NAME_ATTR *fn = NULL;
+	ATTR_LIST_ENTRY *e = NULL;
+	FILE_NAME_ATTR *fn;
 	STANDARD_INFORMATION *si;
-	sle64 creation_time, last_data_change_time;
-	sle64 last_mft_change_time, last_access_time;
-	le32 file_attributes;
-	u32 attr_len = offsetof(ATTR_RECORD, resident_end) +
-		offsetof(STANDARD_INFORMATION, v3_end);
-	u32 offset, biu, alen, removed = 0;
-	u8 *first;
+	struct ntfsck_si_base_walk w = {0, };
+	struct ntfsck_si_ext_walk xw = {0, };
+	u8 src[offsetof(STANDARD_INFORMATION, v3_end)] = {0, };
+	u32 attr_len = offsetof(ATTR_RECORD, resident_end) + sizeof(src);
+	u32 al_entry_len = (offsetof(ATTR_LIST_ENTRY, name) + 7) & ~7;
+	u32 biu, need, al_si_pos = 0;
+	u64 ext_no = 0;
+	le16 new_inst;
+	u8 *p;
+	BOOL have_src = FALSE, have_al_si = FALSE;
 	problem_context_t pctx = {0, };
 	BOOL rebuilt = FALSE;
 
@@ -962,49 +1063,66 @@ static BOOL ntfsck_rebuild_standard_information(ntfs_volume *vol, u64 mft_no)
 			m->base_mft_record)
 		goto out;
 
-	if (le32_to_cpu(m->bytes_allocated) != vol->mft_record_size)
+	/* the walk must have ended on the attribute terminator */
+	a = ntfsck_walk_raw_record(vol, m, ntfsck_si_base_walk_cb, &w);
+	if (!a || w.healthy_si || w.bad_al || !w.fn_off)
 		goto out;
-
 	biu = le32_to_cpu(m->bytes_in_use);
-	offset = le16_to_cpu(m->attrs_offset);
-	if ((biu & 7) || biu > vol->mft_record_size || (offset & 7) ||
-			offset < (u32)((le16_to_cpu(m->usa_ofs) +
-					le16_to_cpu(m->usa_count) * 2 + 7) & ~7))
-		goto out;
 
-	a = NULL;
-	while (offset + 8 <= biu) {
-		a = (ATTR_RECORD *)((u8 *)m + offset);
-		if (a->type == AT_END)
-			break;
-		if (offset + offsetof(ATTR_RECORD, resident_end) > biu)
-			goto out;
-		alen = le32_to_cpu(a->length);
-		if (!alen || (alen & 7) || alen > biu - offset)
-			goto out;
-		if (a->type == AT_STANDARD_INFORMATION) {
-			if (!a->non_resident && le32_to_cpu(a->value_length) >=
-					offsetof(STANDARD_INFORMATION, v1_end))
-				goto out;	/* open failed for another reason */
-			bad_si = a;
-			removed = alen;
-		} else if (a->type == AT_FILE_NAME && !fn &&
-				!a->non_resident &&
-				le16_to_cpu(a->value_offset) +
-				le32_to_cpu(a->value_length) <= alen &&
-				le32_to_cpu(a->value_length) >=
-				offsetof(FILE_NAME_ATTR, file_name))
-			fn = (FILE_NAME_ATTR *)((u8 *)a +
-					le16_to_cpu(a->value_offset));
-		offset += alen;
-		a = NULL;
+	/* find the attribute list entry for $STANDARD_INFORMATION */
+	if (w.al_off) {
+		ATTR_RECORD *al = (ATTR_RECORD *)((u8 *)m + w.al_off);
+		u32 alvl = le32_to_cpu(al->value_length);
+
+		p = (u8 *)al + le16_to_cpu(al->value_offset);
+		while (al_si_pos + offsetof(ATTR_LIST_ENTRY, name) <= alvl) {
+			u16 el;
+
+			e = (ATTR_LIST_ENTRY *)(p + al_si_pos);
+			el = le16_to_cpu(e->length);
+			if (el < offsetof(ATTR_LIST_ENTRY, name) || (el & 7) ||
+					al_si_pos + el > alvl)
+				goto out;	/* leave a broken list alone */
+			if (e->type == AT_STANDARD_INFORMATION) {
+				have_al_si = TRUE;
+				break;
+			}
+			al_si_pos += el;
+		}
+
+		/*
+		 * The reachable copy the list points at may live in an extent
+		 * record; salvage its value, it is the genuine attribute.
+		 */
+		if (have_al_si &&
+				MREF(le64_to_cpu(e->mft_reference)) != mft_no) {
+			ext_no = MREF(le64_to_cpu(e->mft_reference));
+			ext_m = ntfs_malloc(vol->mft_record_size);
+			if (!ext_m)
+				goto out;
+			xw.instance = e->instance;
+			if (!ntfs_mft_record_read(vol, ext_no, ext_m) &&
+					ntfs_is_file_record(ext_m->magic) &&
+					(ext_m->flags & MFT_RECORD_IN_USE) &&
+					le64_to_cpu(ext_m->base_mft_record) &&
+					MREF_LE(ext_m->base_mft_record) ==
+					mft_no &&
+					ntfsck_walk_raw_record(vol, ext_m,
+						ntfsck_si_ext_walk_cb, &xw) &&
+					xw.si_len) {
+				a = (ATTR_RECORD *)((u8 *)ext_m + xw.si_off);
+				memcpy(src, (u8 *)a +
+						le16_to_cpu(a->value_offset),
+						xw.si_vlen > sizeof(src) ?
+						sizeof(src) : xw.si_vlen);
+				have_src = TRUE;
+			} else
+				xw.si_len = 0;	/* unusable: fall back to $FN */
+		}
 	}
 
-	/* the walk must have ended on the attribute terminator */
-	if (!a || a->type != AT_END || !fn)
-		goto out;
-
-	if (biu - removed + attr_len > le32_to_cpu(m->bytes_allocated))
+	need = attr_len + (w.al_off && !have_al_si ? al_entry_len : 0);
+	if (biu - w.bad_si_len + need > le32_to_cpu(m->bytes_allocated))
 		goto out;
 
 	pctx.inum = mft_no;
@@ -1012,41 +1130,88 @@ static BOOL ntfsck_rebuild_standard_information(ntfs_volume *vol, u64 mft_no)
 	if (!ntfs_fix_problem(vol, PR_MFT_SI_MISSING, &pctx))
 		goto out;
 
-	/* The moves below invalidate @fn; take what the rebuild needs now. */
-	creation_time = fn->creation_time;
-	last_data_change_time = fn->last_data_change_time;
-	last_mft_change_time = fn->last_mft_change_time;
-	last_access_time = fn->last_access_time;
-	file_attributes = fn->file_attributes & FILE_ATTR_VALID_FLAGS;
-
-	if (bad_si) {
-		memmove(bad_si, (u8 *)bad_si + removed,
-				biu - ((u8 *)bad_si - (u8 *)m) - removed);
-		biu -= removed;
+	if (!have_src) {
+		fn = (FILE_NAME_ATTR *)((u8 *)m + w.fn_off +
+				le16_to_cpu(((ATTR_RECORD *)((u8 *)m +
+						w.fn_off))->value_offset));
+		si = (STANDARD_INFORMATION *)src;
+		si->creation_time = fn->creation_time;
+		si->last_data_change_time = fn->last_data_change_time;
+		si->last_mft_change_time = fn->last_mft_change_time;
+		si->last_access_time = fn->last_access_time;
+		si->file_attributes = fn->file_attributes &
+			FILE_ATTR_VALID_FLAGS;
 	}
 
-	first = (u8 *)m + le16_to_cpu(m->attrs_offset);
-	memmove(first + attr_len, first, biu - le16_to_cpu(m->attrs_offset));
-	a = (ATTR_RECORD *)first;
+	/* drop the stale extent copy first; the base is untouched on failure */
+	if (ext_m && xw.si_len) {
+		u32 ext_biu = le32_to_cpu(ext_m->bytes_in_use);
+
+		memmove((u8 *)ext_m + xw.si_off,
+				(u8 *)ext_m + xw.si_off + xw.si_len,
+				ext_biu - xw.si_off - xw.si_len);
+		ext_m->bytes_in_use = cpu_to_le32(ext_biu - xw.si_len);
+		if (ntfs_mft_record_write(vol, ext_no, ext_m))
+			goto out;
+	}
+
+	if (w.bad_si_len) {
+		memmove((u8 *)m + w.bad_si_off,
+				(u8 *)m + w.bad_si_off + w.bad_si_len,
+				biu - w.bad_si_off - w.bad_si_len);
+		biu -= w.bad_si_len;
+		if (w.al_off > w.bad_si_off)
+			w.al_off -= w.bad_si_len;
+	}
+
+	p = (u8 *)m + le16_to_cpu(m->attrs_offset);
+	memmove(p + attr_len, p, biu - le16_to_cpu(m->attrs_offset));
+	biu += attr_len;
+	if (w.al_off)
+		w.al_off += attr_len;
+	a = (ATTR_RECORD *)p;
 	memset(a, 0, attr_len);
 	a->type = AT_STANDARD_INFORMATION;
 	a->length = cpu_to_le32(attr_len);
 	a->name_offset = cpu_to_le16(offsetof(ATTR_RECORD, resident_end));
-	a->instance = m->next_attr_instance;
+	new_inst = m->next_attr_instance;
+	a->instance = new_inst;
 	m->next_attr_instance = cpu_to_le16(
 			le16_to_cpu(m->next_attr_instance) + 1);
-	a->value_length = cpu_to_le32(offsetof(STANDARD_INFORMATION, v3_end));
+	a->value_length = cpu_to_le32(sizeof(src));
 	a->value_offset = cpu_to_le16(offsetof(ATTR_RECORD, resident_end));
+	memcpy((u8 *)a + offsetof(ATTR_RECORD, resident_end), src, sizeof(src));
 
-	si = (STANDARD_INFORMATION *)((u8 *)a +
-			offsetof(ATTR_RECORD, resident_end));
-	si->creation_time = creation_time;
-	si->last_data_change_time = last_data_change_time;
-	si->last_mft_change_time = last_mft_change_time;
-	si->last_access_time = last_access_time;
-	si->file_attributes = file_attributes;
+	/* keep the attribute list pointing at the base record */
+	if (w.al_off) {
+		ATTR_RECORD *al = (ATTR_RECORD *)((u8 *)m + w.al_off);
 
-	m->bytes_in_use = cpu_to_le32(biu + attr_len);
+		p = (u8 *)al + le16_to_cpu(al->value_offset);
+		if (!have_al_si) {
+			u32 alv_off = p - (u8 *)m;
+
+			memmove(p + al_entry_len, p, biu - alv_off);
+			biu += al_entry_len;
+			al->length = cpu_to_le32(le32_to_cpu(al->length) +
+					al_entry_len);
+			al->value_length = cpu_to_le32(
+					le32_to_cpu(al->value_length) +
+					al_entry_len);
+			memset(p, 0, al_entry_len);
+			al_si_pos = 0;
+			e = (ATTR_LIST_ENTRY *)p;
+			e->type = AT_STANDARD_INFORMATION;
+			e->length = cpu_to_le16(al_entry_len);
+			e->name_offset = offsetof(ATTR_LIST_ENTRY, name);
+		} else
+			e = (ATTR_LIST_ENTRY *)(p + al_si_pos);
+		e->lowest_vcn = const_cpu_to_sle64(0);
+		e->mft_reference = MK_LE_MREF(mft_no,
+				le16_to_cpu(m->sequence_number));
+		e->instance = new_inst;
+	}
+
+	m->bytes_in_use = cpu_to_le32(biu);
 
 	if (ntfs_mft_record_write(vol, mft_no, m))
 		goto out;
@@ -1054,6 +1219,7 @@ static BOOL ntfsck_rebuild_standard_information(ntfs_volume *vol, u64 mft_no)
 	fsck_err_fixed();
 	rebuilt = TRUE;
 out:
+	free(ext_m);
 	free(m);
 	return rebuilt;
 }

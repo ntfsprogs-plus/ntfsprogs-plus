@@ -7211,6 +7211,13 @@ static ntfs_inode *ntfsck_check_root_inode(ntfs_volume *vol)
 	ntfs_inode *ni;
 
 	ni = ntfsck_open_inode(vol, FILE_root);
+	if (!ni)
+		/*
+		 * The root record is mandatory, so give it the same raw-record salvage
+		 * (fixup/BAAD repair, in-use flag) the MFT scan applies to every other
+		 * inode before giving up. It is always in use.
+		 */
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, FILE_root, TRUE);
 	if (!ni) {
 		ntfs_log_error("Couldn't open the root directory.\n");
 		goto err_out;
@@ -7224,14 +7231,20 @@ static ntfs_inode *ntfsck_check_root_inode(ntfs_volume *vol)
 			goto err_out;
 	}
 
+	/*
+	 * A structural failure of the root is fatal to the run, but bail out
+	 * gracefully instead of exit()ing from deep in a pass: returning NULL
+	 * lets the caller unwind and the top level report the volume as not
+	 * fully checked (and keep it dirty) rather than terminating abruptly.
+	 */
 	if (ntfsck_check_inode_non_resident(ni, 1)) {
 		ntfs_log_error("Failed to check non resident attribute of root directory.\n");
-		exit(STATUS_ERROR);
+		goto err_out;
 	}
 
 	if (ntfsck_check_directory(ni)) {
 		ntfs_log_error("Failed to check root directory.\n");
-		exit(STATUS_ERROR);
+		goto err_out;
 	}
 
 	ntfsck_set_mft_record_bitmap(ni, FALSE);

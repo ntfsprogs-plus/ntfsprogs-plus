@@ -1536,13 +1536,35 @@ static const unsigned char ntfs_attrdef_default[2560] = {
 };
 
 /*
+ * ntfs_attrdef_default_flags - canonical $AttrDef flags for a standard type
+ *
+ * Returns the flags the default NTFS 3.x table assigns to @type, or (le32)~0
+ * when @type is not one of the fixed standard entries (a user-defined or
+ * newer-version attribute we have no reference for).
+ */
+static le32 ntfs_attrdef_default_flags(le32 type)
+{
+	const ATTR_DEF *ad = (const ATTR_DEF *)ntfs_attrdef_default;
+	const u8 *end = ntfs_attrdef_default + sizeof(ntfs_attrdef_default);
+
+	for (; (const u8 *)ad + sizeof(ATTR_DEF) <= end && ad->type; ++ad)
+		if (ad->type == type)
+			return ad->flags;
+	return cpu_to_le32(~0U);
+}
+
+/*
  * ntfs_attrdef_check - structural/semantic sanity of the loaded $AttrDef
  *
  * Validates only invariants that ntfs_attr_find_in_attrdef() and the attribute
- * bound checks rely on, so a valid but Windows-version-specific table passes
- * and is never rewritten:
+ * bound/residency checks rely on, so a valid but Windows-version-specific table
+ * passes and is never rewritten:
  *   - entries are strictly ascending by type (the lookup stops early otherwise),
  *   - each entry has sane size bounds (a negative max_size means "unlimited"),
+ *   - the flags of a standard type match the canonical table (a wrong
+ *     ATTR_DEF_RESIDENT bit silently mis-drives the resident/non-resident
+ *     decision for that attribute -- these flags are identical across every
+ *     real NTFS version, so a mismatch means corruption),
  *   - the fundamental types $STANDARD_INFORMATION/$FILE_NAME/$DATA are present.
  *
  * Returns TRUE when the table is usable, FALSE when it is definitely corrupt.
@@ -1565,6 +1587,7 @@ static BOOL ntfs_attrdef_check(const ntfs_volume *vol)
 		u32 type = le32_to_cpu(ad->type);
 		s64 min_size = sle64_to_cpu(ad->min_size);
 		s64 max_size = sle64_to_cpu(ad->max_size);
+		le32 def_flags = ntfs_attrdef_default_flags(ad->type);
 
 		if (type <= prev_type)		/* must be sorted, no duplicates */
 			return FALSE;
@@ -1573,6 +1596,9 @@ static BOOL ntfs_attrdef_check(const ntfs_volume *vol)
 		if (min_size < 0)
 			return FALSE;
 		if (max_size >= 0 && min_size > max_size)
+			return FALSE;
+
+		if (def_flags != cpu_to_le32(~0U) && ad->flags != def_flags)
 			return FALSE;
 
 		if (type == le32_to_cpu(AT_STANDARD_INFORMATION))
@@ -1589,10 +1615,15 @@ static BOOL ntfs_attrdef_check(const ntfs_volume *vol)
 /*
  * ntfs_attrdef_repair - regenerate a corrupt $AttrDef from the default table
  *
- * Writes the canonical NTFS 3.x table back to $AttrDef/$DATA and replaces the
- * in-core copy used by the rest of the mount and by every fsck pass.
+ * Writes the canonical NTFS 3.x table back to $AttrDef/$DATA (recreating the
+ * $DATA attribute if it is gone entirely) and replaces the in-core copy used
+ * by the rest of the mount and by every fsck pass.
  *
- * Returns 0 on success, -1 on failure.
+ * Returns 0 on success, -1 on failure. When the $DATA attribute still exists,
+ * a failure to rewrite the disk still leaves the in-core copy holding the
+ * canonical table, so the rest of this mount runs against a trustworthy
+ * $AttrDef. A wholly missing $DATA is left untouched (see below) and returns
+ * -1 without altering the in-core copy, so the caller aborts the mount.
  */
 static int ntfs_attrdef_repair(ntfs_volume *vol)
 {

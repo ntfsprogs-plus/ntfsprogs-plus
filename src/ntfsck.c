@@ -1833,9 +1833,14 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
 
-			/* check lcn corrupted */
+			/*
+			 * An lcn beyond the volume is corruption. Drop this run and everything
+			 * after it in memory; the resulting shorter rls->alloc_size no longer
+			 * matches the on-disk allocated_size, so the non-resident size
+			 * reconciliation in ntfsck_check_non_resident_attr() is what rewrites the
+			 * truncated runlist to disk.
+			 */
 			if (rl[i].lcn >= vol->nr_clusters) {
-				/* truncate runlist */
 				rl[i].lcn = LCN_ENOENT;
 				rl[i].length = 0;
 				break;

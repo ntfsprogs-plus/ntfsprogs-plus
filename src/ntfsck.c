@@ -3686,8 +3686,10 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 			runlist *part_rl = NULL;
 
 			rl = ntfs_decompress_cluster_run(vol, attr, temp_rl, &part_rl);
-			if (!rl)
+			if (!rl) {
+				ntfs_attr_put_search_ctx(actx);
 				return NULL;
+			}
 
 			if (rl == part_rl) {
 				*need_fix = TRUE;

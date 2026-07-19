@@ -1477,7 +1477,14 @@ static int ntfsck_collect_attrlist_items(ntfs_inode *base_ni,
 
 		record_ni = extent_index < 0 ? base_ni :
 			base_ni->extent_nis[extent_index];
-		ctx = ntfs_attr_get_search_ctx(record_ni, NULL);
+		/*
+		 * Walk each record physically by anchoring the context on the raw mft
+		 * record. A context opened on the base inode would go through
+		 * ntfs_external_attr_find(), enumerate the whole logical attribute set, and
+		 * then the extent iterations below would collect the extent attributes a
+		 * second time, producing a duplicated (and therefore corrupt) rebuilt list.
+		 */
+		ctx = ntfs_attr_get_search_ctx(NULL, record_ni->mrec);
 		if (!ctx)
 			goto err_out;
 
@@ -4699,12 +4706,16 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 	u8 *al_start;
 	u8 *al_end;
 	u8 *next_al_end = 0;
+	u64 nr_mft_records;
 	int ret = STATUS_OK;
 	problem_context_t pctx = {0, };
 
 	ni = ctx->ntfs_ino;
 	if (ctx->base_ntfs_ino && ni != ctx->base_ntfs_ino)
 		return STATUS_ERROR;
+
+	nr_mft_records = (u64)(ni->vol->mft_na->initialized_size >>
+			ni->vol->mft_record_size_bits);
 
 	ntfs_init_problem_ctx(&pctx, ni, NULL, ctx, NULL, ctx->mrec, ctx->attr, NULL);
 	al_start = ni->attr_list;
@@ -4748,6 +4759,37 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 		if (remaining < al_length)
 			break;
 
+		/*
+		 * The attribute name must lie inside the entry. A bogus
+		 * name_offset/name_length would make ntfs_attr_lookup() read
+		 * past the entry when it compares external attribute names.
+		 */
+		if (al_entry->name_length &&
+				(al_entry->name_offset <
+					offsetof(ATTR_LIST_ENTRY, name) ||
+				 (u32)al_entry->name_offset +
+					(u32)al_entry->name_length *
+					sizeof(ntfschar) > al_length)) {
+			ret = STATUS_ERROR;
+			goto out;
+		}
+
+		/*
+		 * The referenced base/extent record must exist. Attach walks
+		 * these references, so an out-of-range value would drive it to
+		 * a non-existent record.
+		 */
+		if (MREF_LE(al_entry->mft_reference) >= nr_mft_records) {
+			ret = STATUS_ERROR;
+			goto out;
+		}
+
+		/* lowest_vcn is a signed value and can never be negative. */
+		if (sle64_to_cpu(al_entry->lowest_vcn) < 0) {
+			ret = STATUS_ERROR;
+			goto out;
+		}
+
 		al_real_length += al_length;
 		next_al_entry =
 			(ATTR_LIST_ENTRY *)((u8 *)al_entry + al_length);
@@ -4767,14 +4809,34 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 	} while (1);
 
 out:
-	if (ni->attr_list_size != al_real_length) {
+	/*
+	 * Only trim a trailing-garbage tail off a list whose entries are otherwise
+	 * sound (ret == STATUS_OK). When an entry is corrupt the caller regenerates
+	 * the whole list from the real attributes, so truncating here would drop the
+	 * extents past the corrupt entry before the rebuild can collect them.
+	 */
+	if (ret == STATUS_OK && ni->attr_list_size != al_real_length) {
 		fsck_err_found();
 		if (ntfs_fix_problem(ni->vol, PR_ATTRLIST_LENGTH_CORRUPTED, &pctx)) {
-			ntfs_set_attribute_value_length(ctx->attr, al_real_length);
-			ni->attr_list_size = al_real_length;
-			if (!errno) {
-				ntfs_inode_mark_dirty(ni);
-				fsck_err_fixed();
+			ntfs_attr *al_na;
+
+			/*
+			 * Resize through ntfs_attr_truncate() so a non-resident
+			 * $ATTRIBUTE_LIST keeps a cluster-aligned allocated_size
+			 * and a matching runlist; ntfs_set_attribute_value_length()
+			 * would leave allocated_size desynced from the runlist.
+			 */
+			al_na = ntfs_attr_open(ni, AT_ATTRIBUTE_LIST, AT_UNNAMED, 0);
+			if (al_na) {
+				if (!ntfs_attr_truncate(al_na, al_real_length) &&
+						ntfs_attr_pwrite(al_na, 0, al_real_length,
+							ni->attr_list) == al_real_length) {
+					ni->attr_list_size = al_real_length;
+					NInoAttrListSetDirty(ni);
+					ntfs_inode_mark_dirty(ni);
+					fsck_err_fixed();
+				}
+				ntfs_attr_close(al_na);
 			}
 		}
 	}
@@ -4785,6 +4847,7 @@ out:
 static int ntfsck_check_attr_list(ntfs_inode *ni)
 {
 	ntfs_attr_search_ctx *ctx;
+	problem_context_t pctx = {0, };
 	int ret = STATUS_OK;
 
 	if (!ni->attr_list)
@@ -4796,14 +4859,34 @@ static int ntfsck_check_attr_list(ntfs_inode *ni)
 
 	if (ntfs_attr_lookup(AT_ATTRIBUTE_LIST, AT_UNNAMED, 0, CASE_SENSITIVE,
 				0, NULL, 0, ctx)) {
-		ret = STATUS_ERROR;
-		goto out;
+		ntfs_attr_put_search_ctx(ctx);
+		return STATUS_ERROR;
 	}
 
 	ret = _ntfsck_check_attr_list_type(ctx);
-
-out:
+	/* Drop the search context before the rebuild rewrites the list. */
 	ntfs_attr_put_search_ctx(ctx);
+
+	if (ret != STATUS_OK) {
+		/*
+		 * The attribute-list entries are corrupt. Rather than discard the whole
+		 * inode, regenerate $ATTRIBUTE_LIST from the attribute records that
+		 * actually live in the base and extent records. ntfsck_rebuild_attr_list()
+		 * needs the extents attached, so attach them first; a list too broken to
+		 * attach (a bad length or an unreachable mft_reference) leaves 'ret' set so
+		 * the caller still drops the inode.
+		 */
+		ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec,
+				NULL, NULL);
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_ATTRLIST_REBUILD, &pctx) &&
+				!ntfs_inode_attach_all_extents(ni) &&
+				!ntfsck_rebuild_attr_list(ni)) {
+			fsck_err_fixed();
+			ret = STATUS_OK;
+		}
+	}
+
 	return ret;
 }
 

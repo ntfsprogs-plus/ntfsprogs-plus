@@ -4377,6 +4377,49 @@ out:
 	return STATUS_OK;
 }
 
+/*
+ * Add a fresh, empty $INDEX_ROOT (a single END entry, small index, no
+ * $INDEX_ALLOCATION) for the $I30 directory index -- the same layout
+ * ntfs_create() lays down for a new directory. Used to rebuild the root
+ * directory's index root when it is missing: the root can never be deleted,
+ * and the orphan pass repopulates the entries afterwards.
+ */
+static int ntfsck_create_empty_index_root(ntfs_inode *ni)
+{
+	ntfs_volume *vol = ni->vol;
+	INDEX_ROOT *ir;
+	INDEX_ENTRY *ie;
+	int ir_len, index_len, ret;
+
+	index_len = sizeof(INDEX_HEADER) + sizeof(INDEX_ENTRY_HEADER);
+	ir_len = offsetof(INDEX_ROOT, index) + index_len;
+	ir = ntfs_calloc(ir_len);
+	if (!ir)
+		return STATUS_ERROR;
+
+	ir->type = AT_FILE_NAME;
+	ir->collation_rule = COLLATION_FILE_NAME;
+	ir->index_block_size = cpu_to_le32(vol->indx_record_size);
+	if (vol->cluster_size <= vol->indx_record_size)
+		ir->clusters_per_index_block =
+			vol->indx_record_size >> vol->cluster_size_bits;
+	else
+		ir->clusters_per_index_block =
+			vol->indx_record_size >> NTFS_BLOCK_SIZE_BITS;
+	ir->index.entries_offset = const_cpu_to_le32(sizeof(INDEX_HEADER));
+	ir->index.index_length = cpu_to_le32(index_len);
+	ir->index.allocated_size = cpu_to_le32(index_len);
+	ie = (INDEX_ENTRY *)((u8 *)ir + sizeof(INDEX_ROOT));
+	ie->length = const_cpu_to_le16(sizeof(INDEX_ENTRY_HEADER));
+	ie->key_length = const_cpu_to_le16(0);
+	ie->ie_flags = INDEX_ENTRY_END;
+
+	ret = ntfs_attr_add(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4,
+			(u8 *)ir, ir_len);
+	free(ir);
+	return ret ? STATUS_ERROR : STATUS_OK;
+}
+
 static int ntfsck_check_directory(ntfs_inode *ni)
 {
 	ntfs_attr *ia_na = NULL;
@@ -4392,10 +4435,31 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 	 * (ntfs_attr_inconsistent()). just check existence of $INDEX_ROOT.
 	 */
 	if (!ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4)) {
-		ntfs_log_perror("$IR is missing in inode(%"PRId64")", ni->mft_no);
-		ret = STATUS_ERROR;
-		/* remove mft entry */
-		goto out;
+		/*
+		 * A non-root directory with no $INDEX_ROOT is discarded (its
+		 * children are relinked by the orphan pass), but the root
+		 * directory cannot be removed, so rebuild an empty index root
+		 * for it and let the orphan pass refill it.
+		 */
+		if (ni->mft_no == FILE_root) {
+			ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL,
+					ni->mrec, NULL, NULL);
+			fsck_err_found();
+			if (!ntfs_fix_problem(ni->vol, PR_DIR_IDX_INITIALIZE,
+						&pctx) ||
+					ntfsck_create_empty_index_root(ni)) {
+				ret = STATUS_ERROR;
+				goto out;
+			}
+			fsck_err_fixed();
+			/* $IR now exists; keep checking the rest below */
+		} else {
+			ntfs_log_perror("$IR is missing in inode(%"PRId64")",
+					ni->mft_no);
+			ret = STATUS_ERROR;
+			/* remove mft entry */
+			goto out;
+		}
 	}
 
 	/* a directory must not carry an unnamed $DATA stream */

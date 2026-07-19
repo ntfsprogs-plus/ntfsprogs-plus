@@ -3456,8 +3456,8 @@ not_found:
 	}
 }
 
-static int ntfs_attr_check_standard_information(BOOL is_fsck,
-		ATTR_RECORD *a, u64 inum, BOOL *fixed)
+static int ntfs_attr_check_standard_information(ntfs_volume *vol,
+		BOOL is_fsck, ATTR_RECORD *a, u64 inum, BOOL *fixed)
 {
 	static const u32 valid_si_flags = const_le32_to_cpu(FILE_ATTR_VALID_FLAGS) |
 			const_le32_to_cpu(FILE_ATTR_VIEW_INDEX_PRESENT) |
@@ -3465,9 +3465,10 @@ static int ntfs_attr_check_standard_information(BOOL is_fsck,
 			const_le32_to_cpu(FILE_ATTR_TXF_INTERNAL);
 	static const u8 zero12[12];
 	STANDARD_INFORMATION *si;
-	u32 value_len;
+	u32 value_len, eff_len;
 	u32 file_attributes;
-	BOOL changed;
+	BOOL bad_len, bad_reserved, bad_flags;
+	problem_context_t pctx = {0, };
 
 	value_len = le32_to_cpu(a->value_length);
 	if (a->non_resident || value_len < offsetof(STANDARD_INFORMATION, v1_end)) {
@@ -3479,63 +3480,37 @@ static int ntfs_attr_check_standard_information(BOOL is_fsck,
 	}
 
 	si = (STANDARD_INFORMATION *)((u8 *)a + le16_to_cpu(a->value_offset));
-	changed = FALSE;
 
-	if (value_len != offsetof(STANDARD_INFORMATION, v1_end) &&
-			value_len != offsetof(STANDARD_INFORMATION, v3_end)) {
-		if (!is_fsck) {
-			ntfs_log_error("Corrupt STANDARD_INFORMATION in MFT record %lld: "
-					"invalid value_length %u\n",
-					(long long)inum, value_len);
-			errno = EIO;
-			return -1;
-		}
-		value_len = (value_len < offsetof(STANDARD_INFORMATION, v3_end)) ?
+	/* Decide every repair first; nothing is modified until agreed to. */
+	eff_len = value_len;
+	bad_len = (value_len != offsetof(STANDARD_INFORMATION, v1_end) &&
+			value_len != offsetof(STANDARD_INFORMATION, v3_end));
+	if (bad_len)
+		eff_len = (value_len < offsetof(STANDARD_INFORMATION, v3_end)) ?
 			offsetof(STANDARD_INFORMATION, v1_end) :
 			offsetof(STANDARD_INFORMATION, v3_end);
-		a->value_length = cpu_to_le32(value_len);
-		changed = TRUE;
-	}
 
-	if (value_len == offsetof(STANDARD_INFORMATION, v1_end) &&
-			memcmp(si->reserved12, zero12, sizeof(si->reserved12))) {
-		if (!is_fsck) {
-			ntfs_log_error("Corrupt STANDARD_INFORMATION in MFT record %lld: "
-					"non-zero reserved12\n", (long long)inum);
-			errno = EIO;
-			return -1;
-		}
-		memset(si->reserved12, 0, sizeof(si->reserved12));
-		changed = TRUE;
-	}
+	bad_reserved = (eff_len == offsetof(STANDARD_INFORMATION, v1_end) &&
+			memcmp(si->reserved12, zero12, sizeof(si->reserved12)));
 
 	file_attributes = le32_to_cpu(si->file_attributes);
-	if (file_attributes & ~valid_si_flags) {
-		if (!is_fsck) {
-			ntfs_log_error("Corrupt STANDARD_INFORMATION in MFT record %lld: "
-					"invalid file_attributes 0x%x\n",
-					(long long)inum, file_attributes);
+	bad_flags = !!(file_attributes & ~valid_si_flags);
+
+	if (!is_fsck) {
+		if (bad_len || bad_reserved || bad_flags) {
+			ntfs_log_error("Corrupt STANDARD_INFORMATION in MFT "
+					"record %lld: value_length %u, "
+					"file_attributes 0x%x\n",
+					(long long)inum, value_len,
+					file_attributes);
 			errno = EIO;
 			return -1;
 		}
-		ntfs_log_error("Inode(%llu): STANDARD_INFORMATION file_attributes "
-				"0x%x has unknown bits 0x%x\n",
-				(unsigned long long)inum, file_attributes,
-				file_attributes & ~valid_si_flags);
-		si->file_attributes = cpu_to_le32(file_attributes & valid_si_flags);
-		changed = TRUE;
 	}
 
-	if (value_len >= offsetof(STANDARD_INFORMATION, v3_end) &&
+	if (eff_len >= offsetof(STANDARD_INFORMATION, v3_end) &&
 			!le32_to_cpu(si->maximum_versions) &&
 			le32_to_cpu(si->version_number)) {
-		if (!is_fsck) {
-			ntfs_log_error("Corrupt STANDARD_INFORMATION in MFT record %lld: "
-					"non-zero version_number with zero maximum_versions\n",
-					(long long)inum);
-			errno = EIO;
-			return -1;
-		}
 		/*
 		 * Windows does not always reset version_number to zero when
 		 * maximum_versions is cleared. Treat as stale, not corrupt.
@@ -3546,13 +3521,34 @@ static int ntfs_attr_check_standard_information(BOOL is_fsck,
 				le32_to_cpu(si->version_number));
 	}
 
-	if (changed) {
+	if (!is_fsck || !(bad_len || bad_reserved || bad_flags))
+		return 0;
+
+	/*
+	 * Attribute checks for $MFT/$MFTMirr run with the volume's fsck state
+	 * cleared, which suppresses every prompt; keep repairing those two silently
+	 * as part of bringing the volume up. All other records go through the
+	 * regular problem flow, so no-repair mode neither modifies the record nor
+	 * lets the caller write it back.
+	 */
+	if (NVolFsck(vol)) {
+		pctx.inum = inum;
+		pctx.a = a;
 		fsck_err_found();
-		ntfs_log_error("Inode(%llu): STANDARD_INFORMATION fields are corrupted. Fixed.\n",
-				(unsigned long long)inum);
-		*fixed = TRUE;
+		if (!ntfs_fix_problem(vol, PR_MFT_SI_FIELDS_CORRUPTED, &pctx))
+			return 0;
+	} else if (NVolFsNoRepair(vol))
+		return 0;
+
+	if (bad_len)
+		a->value_length = cpu_to_le32(eff_len);
+	if (bad_reserved)
+		memset(si->reserved12, 0, sizeof(si->reserved12));
+	if (bad_flags)
+		si->file_attributes = cpu_to_le32(file_attributes & valid_si_flags);
+	*fixed = TRUE;
+	if (NVolFsck(vol))
 		fsck_err_fixed();
-	}
 
 	return 0;
 }
@@ -3845,8 +3841,8 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 
 				break;
 			case AT_STANDARD_INFORMATION :
-				ret = ntfs_attr_check_standard_information(is_fsck, mod_a,
-						inum, fixed);
+				ret = ntfs_attr_check_standard_information(vol,
+						is_fsck, mod_a, inum, fixed);
 				break;
 			case AT_OBJECT_ID :
 				if (a->non_resident

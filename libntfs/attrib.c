@@ -3759,8 +3759,15 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 					ret = -1;
 				}
 
-				if (!ret && a->resident_flags != RESIDENT_ATTR_IS_INDEXED &&
-						!(fn->file_attributes & FILE_ATTR_NOT_CONTENT_INDEXED)) {
+				/*
+				 * Every $FILE_NAME is a key in the parent's $I30 index, so its
+				 * resident_flags must carry RESIDENT_ATTR_IS_INDEXED.
+				 * FILE_ATTR_NOT_CONTENT_INDEXED is unrelated -- it only excludes the
+				 * file's contents from the Windows search index -- so it must not gate
+				 * this repair, or the flag never gets fixed on the many files that set
+				 * it.
+				 */
+				if (!ret && a->resident_flags != RESIDENT_ATTR_IS_INDEXED) {
 					if (NVolFsck(vol)) {
 						fsck_err_found();
 						if (ntfs_fix_problem(vol, PR_ATTR_FN_FLAG_MISMATCH, &pctx)) {

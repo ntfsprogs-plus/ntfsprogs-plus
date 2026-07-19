@@ -101,6 +101,7 @@ typedef enum {
 	PR_DIR_HAVE_UNNAMED_DATA,
 	PR_MFT_SI_FIELDS_CORRUPTED,
 	PR_MFT_SI_MISSING,
+	PR_MFT_SECURITY_ID_DANGLING,
 } problem_code_t;
 
 typedef struct problem_context {

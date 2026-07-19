@@ -4773,6 +4773,68 @@ static BOOL ntfsck_reparse_entry_backed(ntfs_volume *vol, le32 reparse_tag,
 }
 
 /*
+ * $STANDARD_INFORMATION's security_id is only meaningful while $Secure's $SII
+ * index lists it: the id is the lookup key for the descriptor in $SDS, and a
+ * dangling id leaves the file without a resolvable security descriptor.
+ * Clearing it to zero is the neutral "no descriptor assigned" state that
+ * pre-NTFS-3.0 records use.
+ */
+static ntfs_index_context *ntfsck_sii_ctx;
+static BOOL ntfsck_sii_ctx_tried;
+
+static ntfs_index_context *ntfsck_get_sii_ctx(ntfs_volume *vol)
+{
+	if (!ntfsck_sii_ctx && !ntfsck_sii_ctx_tried) {
+		ntfsck_sii_ctx_tried = TRUE;
+		if (vol->secure_ni && ntfs_attr_exist(vol->secure_ni,
+					AT_INDEX_ROOT, NTFS_INDEX_SII, 4))
+			ntfsck_sii_ctx = ntfs_index_ctx_get(vol->secure_ni,
+					NTFS_INDEX_SII, 4);
+	}
+	return ntfsck_sii_ctx;
+}
+
+static void ntfsck_put_sii_ctx(void)
+{
+	if (ntfsck_sii_ctx) {
+		ntfs_index_ctx_put(ntfsck_sii_ctx);
+		ntfsck_sii_ctx = NULL;
+	}
+	ntfsck_sii_ctx_tried = FALSE;
+}
+
+static void ntfsck_check_security_id(ntfs_inode *ni)
+{
+	ntfs_volume *vol = ni->vol;
+	ntfs_index_context *sii;
+	SII_INDEX_KEY key;
+	problem_context_t pctx = {0, };
+
+	if (!ni->security_id)
+		return;
+
+	sii = ntfsck_get_sii_ctx(vol);
+	if (!sii)
+		return;
+
+	ntfs_index_ctx_reinit(sii);
+	key.security_id = ni->security_id;
+	if (!ntfs_index_lookup(&key, sizeof(key), sii))
+		return;
+	if (errno != ENOENT)
+		return;
+
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, NULL, NULL, NULL);
+	fsck_err_found();
+	if (!ntfs_fix_problem(vol, PR_MFT_SECURITY_ID_DANGLING, &pctx))
+		return;
+
+	ni->security_id = const_cpu_to_le32(0);
+	ntfs_inode_mark_dirty(ni);
+	fsck_err_fixed();
+}
+
+/*
  * Reverse sweep of the $Extend/$Reparse index. ntfsck_check_reparse()
  * restores the entry of every valid reparse point, but nothing removed
  * entries whose backing is gone - a cleared or reused record, a dropped
@@ -5155,6 +5217,9 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	/* validate reparse point ($REPARSE_POINT / $Extend/$Reparse) */
 	ntfsck_check_reparse(ni);
 
+	/* validate $SI security_id against $Secure's $SII index */
+	ntfsck_check_security_id(ni);
+
 	/* validate compression units of compressed data attributes */
 	ntfsck_check_compressed(ni);
 
@@ -5334,6 +5399,7 @@ static int ntfsck_check_orphan_inode(ntfs_inode *parent_ni, ntfs_inode *ni)
 	 */
 	ntfsck_check_ea(ni);
 	ntfsck_check_reparse(ni);
+	ntfsck_check_security_id(ni);
 	ntfsck_check_compressed(ni);
 
 	return STATUS_OK;
@@ -9223,6 +9289,8 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	ntfsck_check_reparse_index(vol);
 
 out:
+	/* the volume is re-mounted between rounds; drop the cached $SII ctx */
+	ntfsck_put_sii_ctx();
 	free(mrec_temp_buf);
 	mrec_temp_buf = NULL;
 	return ret;

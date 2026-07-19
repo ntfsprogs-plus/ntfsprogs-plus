@@ -276,6 +276,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_MFT_SI_FIELDS_CORRUPTED,
 		"Inode(@In): $STANDARD_INFORMATION fields are corrupted. Fix them",
 	},
+	{ PR_MFT_SI_MISSING,
+		"Inode(@In): $STANDARD_INFORMATION is missing or too short. Rebuild it from $FILE_NAME",
+	},
 	{ 0, },
 };
 

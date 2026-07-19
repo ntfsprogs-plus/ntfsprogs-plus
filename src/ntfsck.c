@@ -2262,6 +2262,93 @@ rename_fn:
 	goto add_to_parent;
 }
 
+/*
+ * An orphaned record that has lost every $FILE_NAME cannot be relinked by the
+ * loop above -- it never iterates -- so the record used to be marked unused
+ * and its data discarded. chkdsk instead invents a name and files the record
+ * under lost+found; do the same by synthesizing a $FILE_NAME
+ * ("FSCK_<mft_no>") from the cached $STANDARD_INFORMATION and indexing it
+ * there. Returns STATUS_OK once the inode carries an indexed name again.
+ */
+static int ntfsck_add_nameless_inode_to_lostfound(ntfs_inode *ni,
+		ntfs_attr_search_ctx *ctx)
+{
+	FILE_NAME_ATTR *new_fn = NULL;
+	FILE_NAME_ATTR *fn;
+	ntfs_volume *vol = ni->vol;
+	ntfs_inode *lost_found = NULL;
+	ntfschar *ucs_name = (ntfschar *)NULL;
+	int ucs_namelen;
+	int fn_len;
+	int ret = STATUS_ERROR;
+	char filename[MAX_FILENAME_LEN_LOST_FOUND] = {0, };
+
+	lost_found = ntfsck_open_inode(vol, vol->lost_found);
+	if (!lost_found) {
+		ntfs_log_error("Can't open lost+found directory\n");
+		return ret;
+	}
+
+	snprintf(filename, MAX_FILENAME_LEN_LOST_FOUND, "%s%"PRIu64"",
+			FILENAME_PREFIX_LOST_FOUND, ni->mft_no);
+	ucs_namelen = ntfs_mbstoucs(filename, &ucs_name);
+	if (ucs_namelen <= 0) {
+		ntfs_log_error("ntfs_mbstoucs failed, ucs_namelen : %d\n",
+				ucs_namelen);
+		goto err_out;
+	}
+
+	fn_len = sizeof(FILE_NAME_ATTR) + ucs_namelen * sizeof(ntfschar);
+	new_fn = ntfs_calloc(fn_len);
+	if (!new_fn)
+		goto err_out;
+
+	new_fn->parent_directory = MK_LE_MREF(lost_found->mft_no,
+			le16_to_cpu(lost_found->mrec->sequence_number));
+	new_fn->creation_time = ni->creation_time;
+	new_fn->last_data_change_time = ni->last_data_change_time;
+	new_fn->last_mft_change_time = ni->last_mft_change_time;
+	new_fn->last_access_time = ni->last_access_time;
+	new_fn->allocated_size = cpu_to_sle64(ni->allocated_size);
+	new_fn->data_size = cpu_to_sle64(ni->data_size);
+	new_fn->file_attributes = ni->flags & FILE_ATTR_VALID_FLAGS;
+	new_fn->file_name_length = ucs_namelen;
+	new_fn->file_name_type = FILE_NAME_WIN32;
+	memcpy(new_fn->file_name, ucs_name, ucs_namelen * sizeof(ntfschar));
+
+	ntfs_attr_reinit_search_ctx(ctx);
+	if (ntfs_attr_add(ni, AT_FILE_NAME, AT_UNNAMED, 0, (u8 *)new_fn, fn_len)) {
+		ntfs_log_error("Failed to add $FN(%"PRIu64")\n", ni->mft_no);
+		goto err_out;
+	}
+
+	/*
+	 * The single synthesized name is the record's only link; set the
+	 * count now so the consistency check ntfsck_add_inode_to_parent()
+	 * runs internally does not reject it as a zero-link record.
+	 */
+	ni->mrec->link_count = const_cpu_to_le16(1);
+	ntfs_inode_mark_dirty(ni);
+
+	ntfs_attr_reinit_search_ctx(ctx);
+	fn = ntfsck_find_file_name_attr(ni, new_fn, ctx);
+	if (!fn) {
+		ntfs_log_error("Failed to lookup synthesized $FILE_NAME of inode(%"PRIu64")\n",
+				ni->mft_no);
+		goto err_out;
+	}
+
+	ret = ntfsck_add_inode_to_parent(vol, lost_found, ni, fn, ctx);
+err_out:
+	if (ucs_name)
+		free(ucs_name);
+	if (new_fn)
+		ntfs_free(new_fn);
+	if (lost_found)
+		ntfsck_close_inode(lost_found);
+	return ret;
+}
+
 MFT_RECORD *mrec_temp_buf;
 /* delete orphaned mft, call this when inode open failed. */
 static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no)
@@ -2657,9 +2744,29 @@ add_to_lostfound:
 			}
 		} /* while (!ntfs_attr_lookup(AT_FILE_NAME, ... */
 
+		if (nlink == 0 && ni) {
+			problem_context_t pctx = {0, };
+
+			/*
+			 * The record kept no name the loop could relink; rather
+			 * than discard it and its data, invent one under
+			 * lost+found.
+			 */
+			pctx.inum = entry->mft_no;
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_NO_NAME, &pctx) &&
+					ntfsck_add_nameless_inode_to_lostfound(ni, ctx) ==
+					STATUS_OK) {
+				nlink = 1;
+				fsck_err_fixed();
+			}
+		}
+
 		if (nlink == 0) {
-			ntfsck_close_inode(ni);
-			ni = NULL;
+			if (ni) {
+				ntfsck_close_inode(ni);
+				ni = NULL;
+			}
 			ntfsck_check_mft_record_unused(vol, entry->mft_no);
 			ntfs_fsck_mftbmp_clear(vol, entry->mft_no);
 			check_mftrec_in_use(vol, entry->mft_no, 1);
@@ -2815,9 +2922,17 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	if (ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
 				CASE_SENSITIVE, 0, NULL, 0, ctx)) {
-		ntfs_log_error("Failed to find filename of inode(%"PRIu64")\n",
-				ni->mft_no);
-		goto err_check_inode;
+		/*
+		 * A record that opens cleanly but carries no $FILE_NAME is still a
+		 * candidate: the relink pass invents a name for it under lost+found rather
+		 * than discarding the record. Only a genuine lookup failure (not "no such
+		 * attribute") is fatal.
+		 */
+		if (errno != ENOENT) {
+			ntfs_log_error("Failed to find filename of inode(%"PRIu64")\n",
+					ni->mft_no);
+			goto err_check_inode;
+		}
 	}
 
 	if (ni->attr_list) {

@@ -291,6 +291,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_ORPHANED_MFT_NO_NAME,
 		"Inode(@In): orphaned record has no $FILE_NAME. Recover it to lost+found",
 	},
+	{ PR_ATTR_FN_NAMESPACE_INVALID,
+		"Inode(@In): $FILE_NAME namespace is out of range. Reset it to Win32",
+	},
 	{ 0, },
 };
 

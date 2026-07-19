@@ -282,6 +282,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_MFT_SECURITY_ID_DANGLING,
 		"Inode(@In): security_id is not in $Secure's $SII index. Clear it",
 	},
+	{ PR_MFT_USN_INVALID,
+		"Inode(@In): usn points beyond the $UsnJrnl journal. Clear it",
+	},
 	{ 0, },
 };
 

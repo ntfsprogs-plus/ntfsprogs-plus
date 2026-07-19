@@ -5001,6 +5001,68 @@ static void ntfsck_check_security_id(ntfs_inode *ni)
 }
 
 /*
+ * si->usn is a byte offset into $Extend/$UsnJrnl's $J stream. An offset past
+ * the journal's end -- or any non-zero offset when the journal has been
+ * deleted -- can never resolve to a change record, so clear it; Windows
+ * stamps a fresh usn on the next change it journals.
+ */
+#define NTFSCK_USNJRNL_UNKNOWN	(-2)
+#define NTFSCK_USNJRNL_BROKEN	(-3)
+static s64 ntfsck_usnjrnl_size = NTFSCK_USNJRNL_UNKNOWN;
+
+static s64 ntfsck_get_usnjrnl_size(ntfs_volume *vol)
+{
+	ntfs_inode *ni;
+	ntfs_attr *na;
+	ntfschar J[2] = { const_cpu_to_le16('$'), const_cpu_to_le16('J') };
+
+	if (ntfsck_usnjrnl_size != NTFSCK_USNJRNL_UNKNOWN)
+		return ntfsck_usnjrnl_size;
+
+	ni = ntfs_pathname_to_inode(vol, NULL, "$Extend/$UsnJrnl");
+	if (!ni) {
+		ntfsck_usnjrnl_size = (errno == ENOENT) ?
+			-1 : NTFSCK_USNJRNL_BROKEN;
+		return ntfsck_usnjrnl_size;
+	}
+
+	ntfsck_usnjrnl_size = NTFSCK_USNJRNL_BROKEN;
+	na = ntfs_attr_open(ni, AT_DATA, J, 2);
+	if (na) {
+		ntfsck_usnjrnl_size = na->data_size;
+		ntfs_attr_close(na);
+	}
+	ntfs_inode_close(ni);
+	return ntfsck_usnjrnl_size;
+}
+
+static void ntfsck_check_usn(ntfs_inode *ni)
+{
+	s64 jsize, usn;
+	problem_context_t pctx = {0, };
+
+	if (!test_nino_flag(ni, v3_Extensions) || !ni->usn)
+		return;
+
+	jsize = ntfsck_get_usnjrnl_size(ni->vol);
+	if (jsize == NTFSCK_USNJRNL_BROKEN)
+		return;
+
+	usn = sle64_to_cpu(ni->usn);
+	if (jsize >= 0 && usn >= 0 && usn <= jsize)
+		return;
+
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, NULL, NULL, NULL);
+	fsck_err_found();
+	if (!ntfs_fix_problem(ni->vol, PR_MFT_USN_INVALID, &pctx))
+		return;
+
+	ni->usn = const_cpu_to_le64(0);
+	ntfs_inode_mark_dirty(ni);
+	fsck_err_fixed();
+}
+
+/*
  * Reverse sweep of the $Extend/$Reparse index. ntfsck_check_reparse()
  * restores the entry of every valid reparse point, but nothing removed
  * entries whose backing is gone - a cleared or reused record, a dropped
@@ -5386,6 +5448,9 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	/* validate $SI security_id against $Secure's $SII index */
 	ntfsck_check_security_id(ni);
 
+	/* validate $SI usn against $Extend/$UsnJrnl */
+	ntfsck_check_usn(ni);
+
 	/* validate compression units of compressed data attributes */
 	ntfsck_check_compressed(ni);
 
@@ -5566,6 +5631,7 @@ static int ntfsck_check_orphan_inode(ntfs_inode *parent_ni, ntfs_inode *ni)
 	ntfsck_check_ea(ni);
 	ntfsck_check_reparse(ni);
 	ntfsck_check_security_id(ni);
+	ntfsck_check_usn(ni);
 	ntfsck_check_compressed(ni);
 
 	return STATUS_OK;
@@ -9457,6 +9523,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 out:
 	/* the volume is re-mounted between rounds; drop the cached $SII ctx */
 	ntfsck_put_sii_ctx();
+	ntfsck_usnjrnl_size = NTFSCK_USNJRNL_UNKNOWN;
 	free(mrec_temp_buf);
 	mrec_temp_buf = NULL;
 	return ret;

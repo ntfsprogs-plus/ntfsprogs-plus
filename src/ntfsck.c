@@ -5583,6 +5583,177 @@ out:
 	ntfs_index_ctx_put(xr);
 	ntfs_inode_close(ni);
 }
+
+/*
+ * One collected $Extend/$Deleted directory entry: enough to reopen the child
+ * and hand its exact name to ntfs_delete().
+ */
+struct ntfsck_deleted_ent {
+	u64 mft_no;
+	ntfschar *name;
+	int name_len;
+	BOOL is_dir;
+};
+
+struct ntfsck_deleted_ctx {
+	struct ntfsck_deleted_ent *ents;
+	int count;
+	int alloc;
+	u64 dir_mft_no;		/* to recognise the "." self entry */
+};
+
+/* Bound the recursion into nested $Deleted subdirectories. */
+#define NTFSCK_DELETED_MAX_DEPTH	32
+
+static int ntfsck_purge_deleted_dir(ntfs_volume *vol, u64 dir_mft_no,
+		int depth);
+
+/*
+ * ntfs_readdir() filldir callback: record every real child of a $Deleted
+ * subtree. The synthesized "." / ".." entries and the DOS half of a Win32+DOS
+ * pair are skipped -- ntfs_delete() removes the DOS name together with its
+ * Win32 name.
+ */
+static int ntfsck_collect_deleted(void *dirent, const ntfschar *name,
+		const int name_len, const int name_type,
+		const s64 pos __attribute__((unused)), const MFT_REF mref,
+		const unsigned dt_type)
+{
+	struct ntfsck_deleted_ctx *c = (struct ntfsck_deleted_ctx *)dirent;
+	struct ntfsck_deleted_ent *e;
+
+	if (name_type == FILE_NAME_DOS)
+		return 0;
+	if (MREF(mref) == c->dir_mft_no)
+		return 0;
+	if (name_len == 1 && le16_to_cpu(name[0]) == '.')
+		return 0;
+	if (name_len == 2 && le16_to_cpu(name[0]) == '.' &&
+			le16_to_cpu(name[1]) == '.')
+		return 0;
+
+	if (c->count == c->alloc) {
+		int na = c->alloc ? c->alloc * 2 : 16;
+		struct ntfsck_deleted_ent *tmp;
+
+		tmp = realloc(c->ents, na * sizeof(*tmp));
+		if (!tmp)
+			return -1;
+		c->ents = tmp;
+		c->alloc = na;
+	}
+	e = &c->ents[c->count];
+	e->name = ntfs_malloc(name_len * sizeof(ntfschar));
+	if (!e->name)
+		return -1;
+	memcpy(e->name, name, name_len * sizeof(ntfschar));
+	e->name_len = name_len;
+	e->mft_no = MREF(mref);
+	e->is_dir = (dt_type == NTFS_DT_DIR);
+	c->count++;
+	return 0;
+}
+
+/*
+ * ntfsck_purge_deleted_dir - remove every child of the directory @dir_mft_no.
+ *
+ * Deletes each child (recursing into subdirectories first so ntfs_delete()
+ * never trips over a non-empty directory), but leaves the directory itself in
+ * place; the caller removes it. Enumerate fully before deleting: ntfs_delete()
+ * restructures the parent's $I30 tree under the walk.
+ */
+static int ntfsck_purge_deleted_dir(ntfs_volume *vol, u64 dir_mft_no, int depth)
+{
+	ntfs_inode *dir_ni, *ni;
+	struct ntfsck_deleted_ctx c = { NULL, 0, 0, dir_mft_no };
+	problem_context_t pctx = {0, };
+	s64 pos;
+	int i;
+
+	if (depth > NTFSCK_DELETED_MAX_DEPTH)
+		return -1;
+
+	dir_ni = ntfs_inode_open(vol, dir_mft_no);
+	if (!dir_ni)
+		return -1;
+	pos = 0;
+	if (ntfs_readdir(dir_ni, &pos, &c, ntfsck_collect_deleted))
+		ntfs_log_perror("Failed to enumerate $Deleted inode(%"PRIu64")",
+				dir_mft_no);
+	ntfs_inode_close(dir_ni);
+
+	ntfs_init_problem_ctx(&pctx, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+	for (i = 0; i < c.count; i++) {
+		/* Empty a subdirectory before deleting it. */
+		if (c.ents[i].is_dir)
+			ntfsck_purge_deleted_dir(vol, c.ents[i].mft_no, depth + 1);
+
+		pctx.inum = c.ents[i].mft_no;
+		fsck_err_found();
+		if (!ntfs_fix_problem(vol, PR_DELETED_ORPHAN_REMOVE, &pctx))
+			continue;
+
+		/* ntfs_delete() closes both inodes, so reopen the parent. */
+		ni = ntfs_inode_open(vol, c.ents[i].mft_no);
+		if (!ni) {
+			ntfs_log_error("Failed to open $Deleted inode(%"PRIu64")\n",
+					c.ents[i].mft_no);
+			continue;
+		}
+		dir_ni = ntfs_inode_open(vol, dir_mft_no);
+		if (!dir_ni) {
+			ntfs_inode_close(ni);
+			continue;
+		}
+		if (ntfs_delete(vol, NULL, ni, dir_ni, c.ents[i].name,
+					c.ents[i].name_len))
+			ntfs_log_error("Failed to remove $Deleted inode(%"PRIu64")\n",
+					c.ents[i].mft_no);
+		else
+			fsck_err_fixed();
+	}
+
+	for (i = 0; i < c.count; i++)
+		free(c.ents[i].name);
+	free(c.ents);
+	return 0;
+}
+
+/*
+ * ntfsck_empty_deleted_dir - clear out $Extend/$Deleted.
+ *
+ * The Windows NTFS driver implements POSIX unlink (deleting a file that is
+ * still open) by moving the file into the hidden \$Extend\$Deleted directory
+ * and freeing it only once the last handle closes. A crash between the move
+ * and that final close strands the file there forever: it is unreachable by
+ * name yet still consumes its MFT record and clusters. Windows chkdsk empties
+ * $Deleted at boot; do the same, so an interrupted POSIX delete does not leak
+ * space on a volume the Linux driver (which never uses $Deleted) later mounts.
+ *
+ * Runs before pass 1 so the freed records and clusters are gone before the
+ * bitmaps are rebuilt from them. $Deleted is optional (only newer Windows
+ * creates it), so its absence is a no-op. The directory itself is kept.
+ */
+static void ntfsck_empty_deleted_dir(ntfs_volume *vol)
+{
+	ntfs_inode *ext_ni;
+	u64 inum;
+
+	/* $Extend exists only on NTFS 3.0+. */
+	if (vol->major_ver < 3)
+		return;
+
+	ext_ni = ntfs_inode_open(vol, FILE_Extend);
+	if (!ext_ni)
+		return;
+	inum = ntfs_inode_lookup_by_mbsname(ext_ni, "$Deleted");
+	ntfs_inode_close(ext_ni);
+	if (inum == (u64)-1)
+		return;			/* no $Deleted -> nothing to clean */
+
+	ntfsck_purge_deleted_dir(vol, inum, 0);
+}
+
 static int ntfsck_sparse_compression_unit(ntfs_attr *na, s64 cb_vcn_bytes);
 
 /*
@@ -9918,6 +10089,14 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 
 	/* And its bitmap must cover every record the sizes now describe. */
 	ntfsck_check_mft_bitmap_size(vol);
+
+	/*
+	 * Clear $Extend/$Deleted before pass 1 counts anything: it holds files
+	 * left by a POSIX delete (unlink of an open file) that a crash cut short
+	 * before the final close. chkdsk empties it at boot; doing the same here
+	 * frees those records and clusters before the bitmaps are built from them.
+	 */
+	ntfsck_empty_deleted_dir(vol);
 
 	/* pass 1 */
 	ntfsck_scan_mft_records(vol);

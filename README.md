@@ -29,8 +29,8 @@ you should install them.
 
 For ubuntu or debian
 ```
-sudo apt install build-essential automake autoconf libtool pkgconf uuid-dev
-sudo apt install libgcrypt20-dev libasan8
+sudo apt install build-essential automake autoconf libtool pkgconf uuid-dev libgcrypt20-dev
+sudo apt install libasan8 # only install when on x86/arm architecture
 ```
 On Debian you can also just `apt install ntfsprogs-plus` with experimental.
 

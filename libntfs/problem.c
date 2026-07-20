@@ -294,6 +294,9 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_ATTR_FN_NAMESPACE_INVALID,
 		"Inode(@In): $FILE_NAME namespace is out of range. Reset it to Win32",
 	},
+	{ PR_DELETED_ORPHAN_REMOVE,
+		"Inode(@In) was left in $Extend/$Deleted by an interrupted delete. Remove it.",
+	},
 	{ 0, },
 };
 

@@ -1637,14 +1637,23 @@ static int ntfs_attrdef_repair(ntfs_volume *vol)
 	if (!ni)
 		return -1;
 	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
-	if (!na)
-		goto out;
+	if (!na) {
+		/*
+		 * $DATA is gone entirely. Recreating it means allocating clusters, but
+		 * ntfs_fsck_mount() does not set up the fsck cluster bitmaps until after
+		 * ntfs_mount() returns, so a cluster allocation here would dereference them
+		 * while still NULL.
+		 */
+		ntfs_inode_close(ni);
+		return -1;
+	}
 
-	if (na->data_size != sz && ntfs_attr_truncate(na, sz))
-		goto out;
-	if (ntfs_attr_pwrite(na, 0, sz, ntfs_attrdef_default) != sz)
-		goto out;
-
+	/*
+	 * Install the canonical table in core first so the truncate/pwrite
+	 * below validate against a trustworthy $AttrDef (it is the very table
+	 * being repaired), and so the rest of the mount runs against a good
+	 * copy even if the disk write fails.
+	 */
 	buf = ntfs_malloc(sz);
 	if (!buf)
 		goto out;
@@ -1652,6 +1661,11 @@ static int ntfs_attrdef_repair(ntfs_volume *vol)
 	free(vol->attrdef);
 	vol->attrdef = (ATTR_DEF *)buf;
 	vol->attrdef_len = (s32)sz;
+
+	if (na->data_size != sz && ntfs_attr_truncate(na, sz))
+		goto out;
+	if (ntfs_attr_pwrite(na, 0, sz, ntfs_attrdef_default) != sz)
+		goto out;
 	ret = 0;
 out:
 	if (na)
@@ -2031,55 +2045,56 @@ upcase_ok:
 		ntfs_log_perror("Failed to open $AttrDef");
 		goto error_exit;
 	}
-	/* Get an ntfs attribute for $AttrDef/$DATA. */
+	/*
+	 * Read the attribute-definition table. A missing, oversized or short $DATA
+	 * leaves vol->attrdef NULL; the validation step below then treats that
+	 * exactly like corrupt content and regenerates it in fsck mode, rather than
+	 * failing the mount outright.
+	 */
 	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
-	if (!na) {
-		ntfs_log_perror("Failed to open ntfs attribute");
-		ntfs_inode_close(ni);
-		goto error_exit;
+	if (na) {
+		if ((u64)na->data_size > 0xffffffLL) {
+			/* Too big to be the 24-bit-bounded table; ignore it. */
+			ntfs_log_error("Attribute definition table is too big "
+					"(max 24-bit allowed).\n");
+		} else {
+			vol->attrdef_len = na->data_size;
+			vol->attrdef = ntfs_malloc(na->data_size);
+			if (vol->attrdef && ntfs_attr_pread(na, 0, na->data_size,
+						vol->attrdef) != na->data_size) {
+				ntfs_log_error("Failed to read $AttrDef.\n");
+				free(vol->attrdef);
+				vol->attrdef = NULL;
+				vol->attrdef_len = 0;
+			}
+		}
+		ntfs_attr_close(na);
 	}
-	/* Check we don't overflow 24-bits. */
-	if ((u64)na->data_size > 0xffffffLL) {
-		ntfs_log_error("Attribute definition table is too big (max "
-				"24-bit allowed).\n");
-		errno = EINVAL;
-		goto error_close;
-	}
-	vol->attrdef_len = na->data_size;
-	vol->attrdef = ntfs_malloc(na->data_size);
-	if (!vol->attrdef) {
-		goto error_close;
-	}
-	/* Read in the $DATA attribute value into the buffer. */
-	l = ntfs_attr_pread(na, 0, na->data_size, vol->attrdef);
-	if (l != na->data_size) {
-		ntfs_log_error("Failed to read $AttrDef, unexpected length "
-				"(%lld != %lld).\n", (long long)l,
-				(long long)na->data_size);
-		errno = EIO;
-		goto error_close;
-	}
-	/* Done with the $AttrDef mft record. */
-	ntfs_attr_close(na);
 	if (ntfs_inode_close(ni)) {
 		ntfs_log_perror("Failed to close $AttrDef");
 		goto error_exit;
 	}
 
 	/*
-	 * Validate the $AttrDef content. A corrupt table would silently mis-drive
-	 * every attribute bound/resident check the fsck passes make, so in fsck mode
-	 * regenerate the default table when it is definitely broken.
+	 * Validate the $AttrDef. An unreadable or corrupt table would silently
+	 * mis-drive every attribute bound/resident check the fsck passes make, so in
+	 * fsck mode regenerate the default table.
 	 */
-	if (NVolFsck(vol) && !ntfs_attrdef_check(vol)) {
-		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_ATTRDEF_CORRUPTED, &pctx)
-				&& !ntfs_attrdef_repair(vol)) {
-			ntfs_log_info("$AttrDef regenerated from the default "
-					"table\n");
-			fsck_err_fixed();
-		} else
-			ntfs_log_error("Corrupted file $AttrDef\n");
+	if (!vol->attrdef || !ntfs_attrdef_check(vol)) {
+		if (NVolFsck(vol)) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_ATTRDEF_CORRUPTED, &pctx)
+					&& !ntfs_attrdef_repair(vol)) {
+				ntfs_log_info("$AttrDef regenerated from the "
+						"default table\n");
+				fsck_err_fixed();
+			} else
+				ntfs_log_error("Corrupted file $AttrDef\n");
+		}
+		if (!vol->attrdef) {
+			errno = EIO;
+			goto error_exit;
+		}
 	}
 
 	/* Open $Secure. */

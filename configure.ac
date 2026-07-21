@@ -530,20 +530,21 @@ AC_CONFIG_FILES([
 	include/Makefile
 	libntfs/Makefile
 	src/Makefile
-	src/mkntfs.8
-	src/ntfsclone.8
-	src/ntfscluster.8
-	src/ntfsresize.8
-	src/ntfsinfo.8
-	src/ntfslabel.8
-	src/ntfsprogs-plus.8
-	src/ntfsck.8
-	src/ntfsls.8
-	src/ntfscat.8
-	src/ntfscmp.8
-	src/ntfswipe.8
-	src/ntfsundelete.8
-	src/ntfscp.8
+	manpages/Makefile
+	manpages/mkntfs.8
+	manpages/ntfsclone.8
+	manpages/ntfscluster.8
+	manpages/ntfsresize.8
+	manpages/ntfsinfo.8
+	manpages/ntfslabel.8
+	manpages/ntfsprogs-plus.8
+	manpages/ntfsck.8
+	manpages/ntfsls.8
+	manpages/ntfscat.8
+	manpages/ntfscmp.8
+	manpages/ntfswipe.8
+	manpages/ntfsundelete.8
+	manpages/ntfscp.8
 ])
 AC_OUTPUT
 

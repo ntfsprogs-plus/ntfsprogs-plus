@@ -21,13 +21,6 @@ sbin_PROGRAMS		= mkntfs ntfslabel ntfsclone ntfsck ntfsresize \
 EXTRA_PROGRAM_NAMES	= ntfswipe
 QUARANTINED_PROGRAM_NAMES = ntfsmove
 
-man_MANS		= mkntfs.8 ntfslabel.8 ntfsinfo.8 ntfsck.8 \
-			  ntfsprogs-plus.8 ntfsclone.8 ntfscluster.8 \
-			  ntfsresize.8 ntfsls.8 ntfscat.8 ntfscmp.8 \
-			  ntfswipe.8 ntfsundelete.8 ntfscp.8
-
-EXTRA_MANS		=
-
 CLEANFILES		= $(EXTRA_PROGRAMS)
 
 if ENABLE_EXTRAS
@@ -111,20 +104,13 @@ libs:
 
 extras:	libs $(EXTRA_PROGRAMS)
 
-# mkfs.ntfs[.8] hard link
+# mkfs.ntfs and fsck.ntfs symbolic links
 
 install-exec-hook:
 	$(INSTALL) -d $(DESTDIR)/$(sbindir)
 	$(LN_S) -f $(sbindir)/mkntfs $(DESTDIR)$(sbindir)/mkfs.ntfs
 	$(LN_S) -f $(sbindir)/ntfsck $(DESTDIR)$(sbindir)/fsck.ntfs
 
-install-data-hook:
-	$(INSTALL) -d $(DESTDIR)$(man8dir)
-	$(LN_S) -f mkntfs.8 $(DESTDIR)$(man8dir)/mkfs.ntfs.8
-	$(LN_S) -f ntfsck.8 $(DESTDIR)$(man8dir)/fsck.ntfs.8
-
 uninstall-local:
 	$(RM) -f $(DESTDIR)/sbin/mkfs.ntfs
 	$(RM) -f $(DESTDIR)/sbin/fsck.ntfs
-	$(RM) -f $(DESTDIR)$(man8dir)/mkfs.ntfs.8
-	$(RM) -f $(DESTDIR)$(man8dir)/fsck.ntfs.8

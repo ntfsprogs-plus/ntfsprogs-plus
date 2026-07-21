@@ -139,6 +139,11 @@ You can look into more detail information of inode that consist of inode:
 ntfsinfo -i <inode number> <device>
 ```
 
+# Reporting Issues
+If you encounter an issue, please report it to the
+[NTFS mailing list](mailto:ntfs@lists.linux.dev) or open an issue on
+[GitHub Issues](https://github.com/ntfsprogs-plus/ntfsprogs-plus/issues).
+
 # License
 ntfsprogs-plus is published under GPLv2 license.
 

@@ -26,7 +26,7 @@
 
 # Autoconf
 AC_PREREQ([2.59])
-AC_INIT([ntfsprogs-plus],[1.0.0],[linkinjeon@kernel.org])
+AC_INIT([ntfsprogs-plus],[1.0.0],[ntfs@lists.linux.dev])
 AC_CONFIG_SRCDIR([config.h.in])
 
 # Environment

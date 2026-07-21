@@ -98,7 +98,7 @@ There are no known problems with \fBntfscp\fR. If you find a bug please send an
 email describing the problem to the development team:
 .br
 .nh
-linkinjeon@kernel.org
+ntfs@lists.linux.dev
 .hy
 .SH AUTHORS
 \fBntfscp\fR was written by Yura Pakhuchiy, with contributions from Anton

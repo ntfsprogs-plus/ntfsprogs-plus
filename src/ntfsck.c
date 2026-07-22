@@ -7819,6 +7819,149 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	fsck_end_step();
 }
 
+/*
+ * Return TRUE when a validated base inode's $ATTRIBUTE_LIST explicitly
+ * references @extent_no with @extent_seq. The list was structurally checked
+ * in pass 1; bounds are nevertheless repeated here because this predicate is
+ * used to decide whether an extent record may be released.
+ */
+static BOOL ntfsck_attr_list_references_extent(ntfs_inode *base_ni,
+		u64 extent_no, u16 extent_seq)
+{
+	u8 *pos;
+	u8 *end;
+
+	if (!base_ni || !base_ni->attr_list || !base_ni->attr_list_size)
+		return FALSE;
+
+	pos = base_ni->attr_list;
+	end = pos + base_ni->attr_list_size;
+	while (pos + offsetof(ATTR_LIST_ENTRY, name) <= end) {
+		ATTR_LIST_ENTRY *ale = (ATTR_LIST_ENTRY *)pos;
+		u16 length = le16_to_cpu(ale->length);
+		u16 name_bytes = ale->name_length * sizeof(ntfschar);
+
+		if (length < offsetof(ATTR_LIST_ENTRY, name) || (length & 7) ||
+				pos + length > end ||
+				ale->name_offset < offsetof(ATTR_LIST_ENTRY, name) ||
+				ale->name_offset + name_bytes > length)
+			return FALSE;
+
+		if (MREF_LE(ale->mft_reference) == extent_no &&
+				MSEQNO_LE(ale->mft_reference) == extent_seq)
+			return TRUE;
+		pos += length;
+	}
+
+	return FALSE;
+}
+
+/*
+ * Check every allocated extent record from the record side. Attaching the
+ * extents of a reachable base validates references present in its attribute
+ * list, but it cannot find an allocated extent which no list references.
+ */
+static void ntfsck_verify_extent_records(ntfs_volume *vol)
+{
+	MFT_RECORD *m;
+	s64 nr_mft_records;
+	s64 mft_no;
+
+	if (namespace_walk_failed)
+		return;
+
+	m = ntfs_malloc(vol->mft_record_size);
+	if (!m)
+		return;
+
+	nr_mft_records = vol->mft_na->initialized_size >>
+		vol->mft_record_size_bits;
+	for (mft_no = FILE_first_user; mft_no < nr_mft_records; mft_no++) {
+		ntfs_inode *base_ni = NULL;
+		MFT_REF base_ref;
+		u64 base_no;
+		u16 base_seq;
+		u16 extent_seq;
+		int base_used;
+		BOOL orphan = FALSE;
+		problem_context_t pctx = {0, };
+
+		if (check_mftrec_in_use(vol, mft_no, 0) <= 0)
+			continue;
+		if (ntfs_mft_record_read(vol, mft_no, m) ||
+				!ntfs_is_file_record(m->magic) ||
+				!(m->flags & MFT_RECORD_IN_USE))
+			continue;
+
+		base_ref = le64_to_cpu(m->base_mft_record);
+		base_no = MREF(base_ref);
+		if (!base_no)
+			continue;
+
+		base_seq = MSEQNO(base_ref);
+		extent_seq = le16_to_cpu(m->sequence_number);
+		base_used = base_no < (u64)nr_mft_records ?
+			check_mftrec_in_use(vol, base_no, 0) : 0;
+		if (base_no == (u64)mft_no || base_no >= (u64)nr_mft_records) {
+			orphan = TRUE;
+		} else if (base_used > 0) {
+			base_ni = ntfsck_open_inode(vol, base_no);
+			if (!base_ni) {
+				/* Preserve data when the alleged base cannot be verified. */
+				ntfs_log_error("Cannot verify base inode(%"PRIu64") "
+						"of extent record(%"PRId64").\n",
+						base_no, mft_no);
+				continue;
+			}
+
+			/*
+			 * Absence from a list is deletion proof only when the alleged base itself
+			 * was reached from root and the reference identifies its current
+			 * incarnation. Otherwise preserve the extent for the orphan pass;
+			 * corrupted base flags or stale references must never cascade into extent
+			 * loss.
+			 */
+			if (!ntfs_fsck_mftbmp_get(vol, base_no) || !base_seq ||
+					base_seq !=
+					le16_to_cpu(base_ni->mrec->sequence_number)) {
+				ntfsck_close_inode(base_ni);
+				continue;
+			}
+
+			if (MREF_LE(base_ni->mrec->base_mft_record) ||
+					!ntfsck_attr_list_references_extent(base_ni,
+						mft_no, extent_seq))
+				orphan = TRUE;
+		} else {
+			/* A free or unreadable base bitmap bit is not deletion proof. */
+			ntfs_log_error("Cannot verify extent base allocation; "
+					"preserving record.\n");
+			continue;
+		}
+
+		if (base_ni)
+			ntfsck_close_inode(base_ni);
+		if (!orphan)
+			continue;
+
+		pctx.inum = mft_no;
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_ORPHANED_EXTENT_RECORD, &pctx)) {
+			if (ntfsck_check_mft_record_unused(vol, mft_no))
+				continue;
+			if (!ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_no)) {
+				ntfs_fsck_mftbmp_clear(vol, mft_no);
+				check_mftrec_in_use(vol, mft_no, 1);
+				fsck_err_fixed();
+			} else {
+				ntfs_log_perror("Failed to clear extent record bitmap");
+			}
+		}
+	}
+
+	free(m);
+}
+
 /* Flush every pending device write to stable storage. */
 static int ntfsck_device_sync(ntfs_volume *vol)
 {
@@ -10163,6 +10306,13 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 		ret = -1;
 		goto out;
 	}
+
+	/*
+	 * Validate extent records from the reverse direction. This catches an
+	 * allocated extent which no base $ATTRIBUTE_LIST claims, a case the normal
+	 * attach-all-extents path cannot discover.
+	 */
+	ntfsck_verify_extent_records(vol);
 
 	/* pass 4 */
 	/* apply mft bitmap & cluster bitmap to disk */

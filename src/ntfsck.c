@@ -7962,6 +7962,212 @@ static void ntfsck_verify_extent_records(ntfs_volume *vol)
 	free(m);
 }
 
+static int ntfsck_verify_file_name_index(ntfs_inode *parent_ni,
+		ntfs_inode *ni, FILE_NAME_ATTR *fn)
+{
+	ntfs_index_context *ictx;
+	INDEX_ENTRY *ie;
+	FILE_NAME_ATTR *ie_fn;
+	int ret = STATUS_ERROR;
+
+	ictx = ntfs_index_ctx_get(parent_ni, NTFS_INDEX_I30, 4);
+	if (!ictx)
+		return STATUS_ERROR;
+
+	if (ntfs_index_lookup(fn, sizeof(FILE_NAME_ATTR), ictx)) {
+		if (errno == ENOENT)
+			ret = STATUS_NOT_FOUND;
+		goto out;
+	}
+
+	ie = ictx->entry;
+	if (!ie || MREF_LE(ie->indexed_file) != ni->mft_no ||
+			ntfsck_check_inode_fields(parent_ni, ni, ie, ictx))
+		goto out;
+
+	/*
+	 * Only the namespace identity is relevant here. The duplicated times and
+	 * sizes in an index $FILE_NAME are allowed to be stale (and commonly are on
+	 * Windows-created volumes), so the full metadata comparison used by the
+	 * forward index checker would produce false positives.
+	 */
+	ie_fn = &ie->key.file_name;
+	if (ie_fn->parent_directory != fn->parent_directory ||
+			ie_fn->file_name_type != fn->file_name_type ||
+			ie_fn->file_name_length != fn->file_name_length ||
+			memcmp(ie_fn->file_name, fn->file_name,
+				fn->file_name_length * sizeof(ntfschar)))
+		goto out;
+
+	ret = STATUS_OK;
+out:
+	ntfs_index_ctx_put(ictx);
+	return ret;
+}
+
+/*
+ * Verify the reverse half of the NTFS namespace invariant. The ordinary
+ * directory walk proves INDEX_ENTRY -> MFT/$FILE_NAME.
+ */
+static void ntfsck_verify_file_name_index_links(ntfs_volume *vol)
+{
+	s64 nr_mft_records;
+	s64 mft_no;
+
+	if (namespace_walk_failed)
+		return;
+
+	nr_mft_records = vol->mft_na->initialized_size >>
+		vol->mft_record_size_bits;
+	for (mft_no = FILE_first_user; mft_no < nr_mft_records; mft_no++) {
+		ntfs_inode *ni;
+		ntfs_attr_search_ctx *ctx;
+		u16 verified_links = 0;
+		u16 names = 0;
+		int walk_ret;
+		BOOL complete = TRUE;
+
+		if (check_mftrec_in_use(vol, mft_no, 0) <= 0)
+			continue;
+		ni = ntfsck_open_inode(vol, mft_no);
+		if (!ni)
+			continue;
+		if (MREF_LE(ni->mrec->base_mft_record)) {
+			ntfsck_close_inode(ni);
+			continue;
+		}
+
+		ctx = ntfs_attr_get_search_ctx(ni, NULL);
+		if (!ctx) {
+			ntfsck_close_inode(ni);
+			continue;
+		}
+
+		while (!(walk_ret = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+					CASE_SENSITIVE, 0, NULL, 0, ctx))) {
+			FILE_NAME_ATTR *fn;
+			FILE_NAME_ATTR *fn_copy;
+			ntfs_inode *parent_ni = NULL;
+			u64 parent_no;
+			u16 parent_seq;
+			u32 fn_len;
+			int ret = STATUS_ERROR;
+			BOOL linked = FALSE;
+			problem_context_t pctx = {0, };
+
+			fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
+					le16_to_cpu(ctx->attr->value_offset));
+			fn_len = sizeof(FILE_NAME_ATTR) +
+					fn->file_name_length * sizeof(ntfschar);
+			fn_copy = ntfs_malloc(fn_len);
+			if (!fn_copy) {
+				complete = FALSE;
+				continue;
+			}
+			memcpy(fn_copy, fn, fn_len);
+			names++;
+			parent_no = MREF_LE(fn_copy->parent_directory);
+			parent_seq = MSEQNO_LE(fn_copy->parent_directory);
+
+			if (parent_no < (u64)nr_mft_records && parent_no != ni->mft_no)
+				parent_ni = ntfsck_open_inode(vol, parent_no);
+			if (parent_ni && (parent_ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) &&
+					parent_seq && parent_seq ==
+					le16_to_cpu(parent_ni->mrec->sequence_number))
+				ret = ntfsck_verify_file_name_index(parent_ni, ni,
+						fn_copy);
+
+			if (ret == STATUS_OK) {
+				linked = TRUE;
+			} else if (ret == STATUS_NOT_FOUND && parent_ni &&
+					ntfs_fsck_mftbmp_get(vol, parent_ni->mft_no)) {
+				pctx.ni = ni;
+				pctx.fn = fn;
+				fsck_err_found();
+				if (ntfs_fix_problem(vol, PR_FN_INDEX_ENTRY_MISSING, &pctx) &&
+						!ntfsck_add_filename_to_parent(vol, parent_ni,
+							ni, fn_copy)) {
+					linked = TRUE;
+					fsck_err_fixed();
+				}
+			}
+
+			if (linked) {
+				verified_links++;
+				/* Reachability is inherited only from a reachable parent. */
+				if (parent_ni &&
+						ntfs_fsck_mftbmp_get(vol, parent_ni->mft_no))
+					ntfsck_set_mft_record_bitmap(ni, FALSE);
+			} else {
+				complete = FALSE;
+			}
+
+			if (parent_ni)
+				ntfsck_close_inode(parent_ni);
+			free(fn_copy);
+		}
+
+		if (walk_ret && errno != ENOENT)
+			complete = FALSE;
+		if (complete && names &&
+				verified_links != le16_to_cpu(ni->mrec->link_count)) {
+			problem_context_t pctx = {0, };
+
+			pctx.ni = ni;
+			pctx.dsize = verified_links;
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_NAMESPACE_LINK_COUNT_MISMATCH,
+						&pctx)) {
+				ni->mrec->link_count = cpu_to_le16(verified_links);
+				ntfs_inode_mark_dirty(ni);
+				fsck_err_fixed();
+			}
+		}
+
+		ntfs_attr_put_search_ctx(ctx);
+		ntfsck_close_inode(ni);
+	}
+}
+
+/*
+ * Final record-level invariant: every allocated base record must have been
+ * reached from the root (or seeded as mandatory metadata). This pass is
+ * deliberately verification-only; pass 4/5 performs recovery, while a
+ * residual here prevents ntfsck from claiming the namespace is clean.
+ */
+static void ntfsck_verify_namespace_reachability(ntfs_volume *vol)
+{
+	MFT_RECORD *m;
+	s64 nr_mft_records;
+	s64 mft_no;
+
+	if (namespace_walk_failed)
+		return;
+	m = ntfs_malloc(vol->mft_record_size);
+	if (!m)
+		return;
+
+	nr_mft_records = vol->mft_na->initialized_size >>
+		vol->mft_record_size_bits;
+	for (mft_no = FILE_MFT; mft_no < nr_mft_records; mft_no++) {
+		problem_context_t pctx = {0, };
+
+		if (check_mftrec_in_use(vol, mft_no, 0) <= 0 ||
+				ntfs_fsck_mftbmp_get(vol, mft_no))
+			continue;
+		if (ntfs_mft_record_read(vol, mft_no, m) ||
+				!ntfs_is_file_record(m->magic) ||
+				!(m->flags & MFT_RECORD_IN_USE) ||
+				MREF_LE(m->base_mft_record))
+			continue;
+
+		pctx.inum = mft_no;
+		fsck_err_found();
+		ntfs_print_problem(vol, PR_NAMESPACE_RECORD_UNREACHABLE, &pctx);
+	}
+	free(m);
+}
+
 /* Flush every pending device write to stable storage. */
 static int ntfsck_device_sync(ntfs_volume *vol)
 {
@@ -10257,6 +10463,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 {
 	int ret = 0;
 	int orphan_fixes_before;
+	BOOL had_orphan_candidates;
 
 	if (orphan_changed)
 		*orphan_changed = FALSE;
@@ -10324,7 +10531,21 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 
 	/* pass 5 */
 	orphan_fixes_before = fsck_fixes;
-	ntfsck_check_orphaned_mft(vol);
+	had_orphan_candidates = !ntfs_list_empty(&oc_list_head);
+	if (ntfsck_check_orphaned_mft(vol)) {
+		ret = -1;
+		goto out;
+	}
+
+	/*
+	 * The pass-3 reachability bitmap predates orphan recovery. Validate it only
+	 * when this round made no orphan changes; otherwise the mandatory
+	 * remount/recheck round rebuilds it from the repaired namespace first.
+	 */
+	if (!had_orphan_candidates && fsck_fixes == orphan_fixes_before) {
+		ntfsck_verify_file_name_index_links(vol);
+		ntfsck_verify_namespace_reachability(vol);
+	}
 	if (orphan_changed)
 		*orphan_changed = (fsck_fixes != orphan_fixes_before);
 

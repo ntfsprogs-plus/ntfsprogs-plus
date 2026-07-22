@@ -10413,6 +10413,8 @@ static void ntfsck_check_mft_bitmap_size(ntfs_volume *vol)
 static void ntfsck_scan_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
+	s64 invalid_records = 0;
+	BOOL saved_warn;
 	problem_context_t pctx = {0, };
 
 	fsck_start_step("Scan mft entries in volume...");
@@ -10427,14 +10429,32 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 	progress_init(&prog, 0, nr_mft_records, 1000, pb_flags);
 
 	/*
+	 * A damaged range can contain thousands of records with a bad MST header.
+	 * ntfs_attr_mst_pread() normally reports each one, which buries the useful
+	 * checker output. The scan still receives BAAD records and validates them;
+	 * print one summary after the pass instead.
+	 */
+	saved_warn = NVolNoFixupWarn(vol);
+	NVolSetNoFixupWarn(vol);
+
+	/*
 	 * Force to read first bitmap block to invalidate static cache
 	 * array buffer.
 	 */
 	for (mft_num = FILE_MFT; mft_num < nr_mft_records; mft_num++) {
 		if (!ntfsck_scan_mft_record(vol, mft_num))
 			total_cnt++;
+		else
+			invalid_records++;
 		progress_update(&prog, mft_num + 1);
 	}
+	if (!saved_warn)
+		NVolClearNoFixupWarn(vol);
+
+	if (invalid_records)
+		ntfs_log_error("MFT scan: %"PRId64" allocated record(s) failed "
+				"validation; individual fixup warnings were suppressed.\n",
+				invalid_records);
 
 	fsck_end_step();
 }

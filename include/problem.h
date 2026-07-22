@@ -107,6 +107,7 @@ typedef enum {
 	PR_ORPHANED_MFT_NO_NAME,
 	PR_ATTR_FN_NAMESPACE_INVALID,
 	PR_DELETED_ORPHAN_REMOVE,
+	PR_NAMESPACE_WALK_INCOMPLETE,
 } problem_code_t;
 
 typedef struct problem_context {

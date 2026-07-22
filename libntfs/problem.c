@@ -297,6 +297,10 @@ static struct ntfs_problem problem_table[] = {
 	{ PR_DELETED_ORPHAN_REMOVE,
 		"Inode(@In) was left in $Extend/$Deleted by an interrupted delete. Remove it.",
 	},
+	{ PR_NAMESPACE_WALK_INCOMPLETE,
+		"Directory namespace walk was incomplete. Refusing reachability-based deletion.",
+		PR_NO_NOMSG,
+	},
 	{ 0, },
 };
 

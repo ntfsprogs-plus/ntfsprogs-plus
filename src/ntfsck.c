@@ -162,6 +162,13 @@ struct dir {
 /* Whether the directory parse #4 is currently walking is a system one. */
 static BOOL walking_system_dir;
 
+/*
+ * Set when pass 3 cannot walk a directory completely. An MFT record not
+ * reached by an incomplete walk is not proof of an orphan, so pass 4 must not
+ * release records on that evidence.
+ */
+static BOOL namespace_walk_failed;
+
 struct ntfsls_dirent {
 	ntfs_volume *vol;
 };
@@ -7542,12 +7549,15 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		if (!dir_ni) {
 			ntfs_log_perror("Failed to open inode (%"PRIu64")\n",
 					dir->mft_no);
+			namespace_walk_failed = TRUE;
 			goto err_continue;
 		}
 
 		ctx = ntfs_attr_get_search_ctx(dir_ni, NULL);
-		if (!ctx)
+		if (!ctx) {
+			namespace_walk_failed = TRUE;
 			goto err_continue;
+		}
 
 		/* Find the index root attribute in the mft record. */
 		if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4, CASE_SENSITIVE, 0, NULL,
@@ -7555,6 +7565,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			ntfs_log_perror("Index root attribute missing in directory inode "
 					"%"PRId64"", dir_ni->mft_no);
 			ntfs_attr_put_search_ctx(ctx);
+			namespace_walk_failed = TRUE;
 			goto err_continue;
 		}
 
@@ -7568,12 +7579,14 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		 */
 		if (ntfsck_repair_named_index_root(dir_ni, ctx)) {
 			ntfs_attr_put_search_ctx(ctx);
+			namespace_walk_failed = TRUE;
 			goto err_continue;
 		}
 
 		ictx = ntfs_index_ctx_get(dir_ni, NTFS_INDEX_I30, 4);
 		if (!ictx) {
 			ntfs_attr_put_search_ctx(ctx);
+			namespace_walk_failed = TRUE;
 			goto err_continue;
 		}
 
@@ -7595,6 +7608,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			ntfs_log_perror("Index block size (%d) is invalid "
 					"(sector size %d)", ictx->block_size,
 					NTFS_BLOCK_SIZE);
+			namespace_walk_failed = TRUE;
 			goto err_continue;
 		}
 
@@ -7616,6 +7630,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 					CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 			ntfs_log_perror("Index root attribute missing in directory inode "
 					"%"PRId64"", dir_ni->mft_no);
+			namespace_walk_failed = TRUE;
 			goto err_continue;
 		}
 		ir = (INDEX_ROOT *)((u8 *)ctx->attr +
@@ -7633,6 +7648,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			if (!ictx->ia_na) {
 				ntfs_log_perror("Failed to open index allocation of inode "
 						"%"PRIu64"", dir_ni->mft_no);
+				namespace_walk_failed = TRUE;
 				goto err_continue;
 			}
 
@@ -7641,6 +7657,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			if (!bm_na) {
 				ntfs_log_perror("Failed to open bitmap of inode "
 						"%"PRIu64"", dir_ni->mft_no);
+				namespace_walk_failed = TRUE;
 				goto err_continue;
 			}
 
@@ -7649,6 +7666,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 				dir_ni->fsck_ibm = ntfs_calloc(bm_na->data_size);
 				if (!dir_ni->fsck_ibm) {
 					ntfs_log_perror("Failed to allocate fsck_ibm memory\n");
+					namespace_walk_failed = TRUE;
 					goto err_continue;
 				}
 				dir_ni->fsck_ibm_size = bm_na->data_size;
@@ -7678,8 +7696,10 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
 			next = ntfs_index_walk_down(next, ictx);
-			if (!next)
+			if (!next) {
+				namespace_walk_failed = TRUE;
 				goto next_dir;
+			}
 		}
 
 		if (!(next->ie_flags & INDEX_ENTRY_END))
@@ -7694,8 +7714,10 @@ check_index:
 			ret = ntfsck_check_index(vol, next, ictx);
 			if (ret) {
 				next = ictx->entry;
-				if (ret < 0 || !ictx->actx || !next)
+				if (ret < 0 || !ictx->actx || !next) {
+					namespace_walk_failed = TRUE;
 					break;
+				}
 				if (!(next->ie_flags & INDEX_ENTRY_END))
 					goto check_index;
 			}
@@ -7708,8 +7730,10 @@ check_index:
 next_dir:
 		/* compare index allocation bitmap between disk & fsck */
 		if (bm_na) {
-			if (ntfsck_check_index_bitmap(dir_ni, bm_na))
+			if (ntfsck_check_index_bitmap(dir_ni, bm_na)) {
+				namespace_walk_failed = TRUE;
 				goto err_continue;
+			}
 		}
 
 err_continue:
@@ -7759,8 +7783,16 @@ static int ntfsck_scan_index_entries(ntfs_volume *vol)
 static void ntfsck_check_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
+	problem_context_t pctx = {0, };
 
 	fsck_start_step("Scan orphaned MFTs candidiates...");
+
+	if (namespace_walk_failed) {
+		fsck_err_found();
+		ntfs_print_problem(vol, PR_NAMESPACE_WALK_INCOMPLETE, &pctx);
+		fsck_end_step();
+		return;
+	}
 
 	// For each mft record, verify that it contains a valid file record.
 	nr_mft_records = vol->mft_na->initialized_size >>
@@ -10125,6 +10157,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	}
 
 	/* pass 3 */
+	namespace_walk_failed = FALSE;
 	if (ntfsck_scan_index_entries(vol)) {
 		ntfs_log_error("Stop processing fsck due to critical problems\n");
 		ret = -1;
@@ -10134,6 +10167,10 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	/* pass 4 */
 	/* apply mft bitmap & cluster bitmap to disk */
 	ntfsck_check_mft_records(vol);
+	if (namespace_walk_failed) {
+		ret = -1;
+		goto out;
+	}
 
 	/* pass 5 */
 	orphan_fixes_before = fsck_fixes;

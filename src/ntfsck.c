@@ -201,6 +201,7 @@ int pb_flags;
 u64 total_cnt;
 u64 checked_cnt;
 u64 orphan_cnt;
+static u64 mft_open_failures;
 
 #define NTFS_PROGS	"ntfsck"
 /**
@@ -2928,6 +2929,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			return;
 		}
 
+		mft_open_failures++;
 		fsck_err_found();
 		if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_OPEN_FAILURE, &pctx)) {
 			if (ntfsck_check_mft_record_unused(vol, mft_num))
@@ -7783,6 +7785,7 @@ static int ntfsck_scan_index_entries(ntfs_volume *vol)
 static void ntfsck_check_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
+	BOOL saved_warn;
 	problem_context_t pctx = {0, };
 
 	fsck_start_step("Scan orphaned MFTs candidiates...");
@@ -7800,6 +7803,15 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	ntfs_log_verbose("Checking %"PRId64" MFT records.\n", nr_mft_records);
 
 	progress_init(&prog, 0, nr_mft_records, 1000, pb_flags);
+	mft_open_failures = 0;
+
+	/*
+	 * Pass 4 revisits unreadable records to offer the normal recovery prompt.
+	 * Keep that prompt, but suppress the same per-record MST and FILE-magic
+	 * diagnostics that pass 1 already summarized.
+	 */
+	saved_warn = NVolNoFixupWarn(vol);
+	NVolSetNoFixupWarn(vol);
 
 	/*
 	 * Force to read first bitmap block to invalidate static cache
@@ -7812,9 +7824,15 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 		ntfsck_verify_mft_record(vol, mft_num);
 		progress_update(&prog, mft_num + 1);
 	}
+	if (!saved_warn)
+		NVolClearNoFixupWarn(vol);
 
 	if (clear_mft_cnt)
 		ntfs_log_info("Clear MFT bitmap count:%"PRId64"\n", clear_mft_cnt);
+	if (mft_open_failures)
+		ntfs_log_error("Orphan MFT scan: %"PRIu64" record(s) could not "
+				"be opened; individual fixup warnings were suppressed.\n",
+				mft_open_failures);
 
 	fsck_end_step();
 }

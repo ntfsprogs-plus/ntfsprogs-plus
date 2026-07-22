@@ -279,7 +279,7 @@ static ntfs_inode *ntfsck_get_opened_ni_vol(ntfs_volume *vol, s64 mft_num);
 static int ntfsck_validate_system_file(ntfs_inode *ni);
 static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit);
 static void ntfsck_check_mft_records(ntfs_volume *vol);
-static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num);
+static int ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num);
 static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no);
 static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size, ntfs_attr_search_ctx *actx);
 static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
@@ -2846,7 +2846,7 @@ static int ntfsck_check_if_extent_mft_record(ntfs_volume *vol, s64 mft_num)
 	return STATUS_OK;	/* extent mft */
 }
 
-static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
+static int ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 {
 	u16 seq_no;
 	s64 pos = mft_num * vol->mft_record_size;
@@ -2855,14 +2855,14 @@ static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 	if (ntfs_attr_pread(vol->mft_na, pos, count, mrec_temp_buf) != count) {
 		ntfs_log_perror("Couldn't read $MFT record %lld",
 				(long long)mft_num);
-		return;
+		return STATUS_ERROR;
 	}
 
 	if (!ntfs_is_file_record(mrec_temp_buf->magic) ||
 			!(mrec_temp_buf->flags & MFT_RECORD_IN_USE)) {
 		ntfs_log_verbose("Record(%"PRId64") unused. Skipping.\n",
 				mft_num);
-		return;
+		return STATUS_OK;
 	}
 
 	ntfs_log_error("Record(%"PRId64") used. "
@@ -2878,7 +2878,9 @@ static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 	if (ntfs_attr_pwrite(vol->mft_na, pos, count, mrec_temp_buf) != count) {
 		ntfs_log_error("Failed to write mft record(%"PRId64")\n",
 				mft_num);
+		return STATUS_ERROR;
 	}
+	return STATUS_OK;
 }
 
 static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
@@ -2919,16 +2921,19 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			return;
 		}
 
+		fsck_err_found();
 		if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_OPEN_FAILURE, &pctx)) {
+			if (ntfsck_check_mft_record_unused(vol, mft_num))
+				return;
 			if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
 				ntfs_log_error("ntfs_bitmap_clear_bit failed, errno : %d\n",
 						errno);
 				return;
 			}
-			ntfsck_check_mft_record_unused(vol, mft_num);
 			ntfs_fsck_mftbmp_clear(vol, mft_num);
 			check_mftrec_in_use(vol, mft_num, 1);
 			clear_mft_cnt++;
+			fsck_err_fixed();
 		}
 		return;
 	}
@@ -3008,12 +3013,20 @@ err_check_inode:
 			goto retry_validate;
 	}
 
-	if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_CHECK_FAILURE, &pctx))
-		ntfsck_check_mft_record_unused(vol, mft_num);
-
-	ntfs_fsck_mftbmp_clear(vol, mft_num);
-	check_mftrec_in_use(vol, mft_num, 1);
-	clear_mft_cnt++;
+	fsck_err_found();
+	if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_CHECK_FAILURE, &pctx)) {
+		if (ntfsck_check_mft_record_unused(vol, mft_num))
+			return;
+		if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
+			ntfs_log_error("ntfs_bitmap_clear_bit failed, errno : %d\n",
+					errno);
+			return;
+		}
+		ntfs_fsck_mftbmp_clear(vol, mft_num);
+		check_mftrec_in_use(vol, mft_num, 1);
+		clear_mft_cnt++;
+		fsck_err_fixed();
+	}
 	return;
 }
 

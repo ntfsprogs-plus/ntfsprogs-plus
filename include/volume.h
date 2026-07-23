@@ -54,7 +54,6 @@ typedef struct _ntfs_volume ntfs_volume;
 
 extern int fsck_errors;
 extern int fsck_fixes;
-extern int parse_errors;
 
 /* It is called when found filesystem inconsistency */
 #define check_failed(FORMAT, ARGS...) \
@@ -91,15 +90,8 @@ extern int parse_errors;
 		ntfs_log_info("\n"); \
 	} while (0)
 
-/* It is called when each fsck step end */
-#define fsck_end_step() \
-	do { \
-		if ((fsck_errors - fsck_fixes) != parse_errors) \
-		parse_errors = (fsck_errors - fsck_fixes); \
-		if (parse_errors) \
-		ntfs_log_info("Parse #%d Errors remains: %d\n", \
-			parse_count - 1, parse_errors); \
-	} while (0)
+/* The following step header reports the cumulative error/fix totals. */
+#define fsck_end_step() do { } while (0)
 
 /**
  * enum ntfs_mount_flags -
@@ -367,6 +359,7 @@ struct _ntfs_volume {
 	u64 lost_found;		/* mft record number for lost_found directory */
 	u8 **fsck_lcn_bitmap;	/* lcn bitmap of fsck */
 	u32 *fsck_lcn_setcnt;	/* per-block count of set bits, for all-ones collapse */
+	u64 fsck_lcn_range_dup_count; /* duplicates found by generic range marking */
 	u8 *fsck_lcn_arena;	/* mmap'd scratch backing literal blocks (opt-in), else NULL */
 	s64 fsck_lcn_arena_size;	/* byte size of the mmap arena */
 	int fsck_lcn_arena_fd;	/* fd of the unlinked scratch file, or -1 */

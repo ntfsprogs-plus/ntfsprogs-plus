@@ -179,19 +179,52 @@ static u64 fixup_salvaged_records;
 /* One response controls all $FILE_NAME size repairs in this fsck run. */
 static BOOL fn_size_repair_decided;
 static BOOL fn_size_repair_approved;
-static BOOL fn_size_repair_retry;
 static u64 fn_allocated_size_mismatches;
 static u64 fn_data_size_mismatches;
 /* One response controls removal of every corrupted directory index entry. */
 static BOOL corrupt_index_repair_decided;
 static BOOL corrupt_index_repair_approved;
-static BOOL corrupt_index_repair_retry;
 static u64 corrupt_index_entries;
+static u64 stale_index_sequence_entries;
 /* One response controls all directory index bitmap content repairs. */
 static BOOL index_bitmap_repair_decided;
 static BOOL index_bitmap_repair_approved;
-static BOOL index_bitmap_repair_retry;
 static u64 index_bitmap_mismatches;
+/* One response controls restoration of missing $Extend/$Reparse entries. */
+static BOOL reparse_index_repair_decided;
+static BOOL reparse_index_repair_approved;
+static u64 missing_reparse_index_entries;
+/* Outcomes from the approved orphan relink operation. */
+static u64 orphan_parent_add_failures;
+static u64 orphan_parent_index_conflicts;
+static u64 orphan_lost_found_relinks;
+static u64 orphan_filename_removals;
+
+enum ntfsck_deferred_index_type {
+	NTFSCK_DEFER_INDEX_BITMAP,
+	NTFSCK_DEFER_CORRUPT_ENTRY,
+	NTFSCK_DEFER_FN_SIZE,
+};
+
+struct ntfsck_deferred_index {
+	struct ntfs_list_head list;
+	enum ntfsck_deferred_index_type type;
+	u64 parent_mft_no;
+	le64 indexed_file;
+	u64 allocated_size;
+	u64 data_size;
+	u32 data_len;
+	u8 data[];
+};
+
+struct ntfsck_deferred_reparse {
+	struct ntfs_list_head list;
+	u64 mft_no;
+	le32 reparse_tag;
+};
+
+NTFS_LIST_HEAD(ntfsck_deferred_index_repairs);
+NTFS_LIST_HEAD(ntfsck_deferred_reparse_repairs);
 
 struct ntfsls_dirent {
 	ntfs_volume *vol;
@@ -292,7 +325,14 @@ static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
 		FILE_NAME_ATTR *ie_fn, ntfs_attr_search_ctx *actx);
 static int ntfsck_check_directory(ntfs_inode *ni);
 static int ntfsck_check_file(ntfs_inode *ni);
-static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, BOOL *need_fix);
+static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
+		struct rl_size *rls, BOOL *need_fix, BOOL *dup_repaired);
+/* One response controls every duplicated-cluster runlist repair. */
+static BOOL cluster_dup_repair_decided;
+static BOOL cluster_dup_repair_approved;
+static BOOL cluster_dup_repair_retry;
+static u64 cluster_dup_affected_attrs;
+static u64 cluster_dup_clusters;
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx);
 static int ntfsck_check_orphan_inode(ntfs_inode *parent_ni, ntfs_inode *ni);
@@ -321,7 +361,7 @@ static int ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num);
 static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no);
 static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size, ntfs_attr_search_ctx *actx);
 static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
-		BOOL *need_fix, int set_bit);
+		BOOL *need_fix, int set_bit, BOOL *dup_repaired);
 static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
 		ntfs_attr_search_ctx *actx, struct rl_size *rls, int set_bit);
 static ntfs_inode *ntfsck_open_inode_after_raw_mft_check(ntfs_volume *vol,
@@ -1771,6 +1811,7 @@ static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
 		ntfs_attr_search_ctx *actx, struct rl_size *rls, int set_bit)
 {
 	BOOL need_fix = FALSE;
+	BOOL dup_repaired = FALSE;
 	problem_context_t pctx = {0, };
 
 	ntfs_volume *vol;
@@ -1784,7 +1825,8 @@ static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
 	ntfs_init_problem_ctx(&pctx, ni, na, actx, NULL, NULL, a, NULL);
 
 	/* check whole cluster runlist and set cluster bitmap of fsck */
-	if (ntfsck_check_attr_runlist(na, rls, &need_fix, set_bit)) {
+	if (ntfsck_check_attr_runlist(na, rls, &need_fix, set_bit,
+			&dup_repaired)) {
 		ntfs_log_error("Failed to get non-resident attribute(%d) "
 				"in directory(%"PRId64")", na->type, ni->mft_no);
 		return STATUS_ERROR;
@@ -1792,8 +1834,11 @@ static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
 
 	/* if need_fix is set to TRUE, apply modified runlist to cluster runs */
 	if (need_fix == TRUE) {
-		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_LOG_APPLY_RUNLIST_TO_DISK, &pctx)) {
+		if (!dup_repaired)
+			fsck_err_found();
+		if (dup_repaired ||
+				ntfs_fix_problem(vol, PR_LOG_APPLY_RUNLIST_TO_DISK,
+					&pctx)) {
 			/*
 			 * keep a valid runlist as long as possible.
 			 * if truncate zero, call with second parameter to 0
@@ -1867,7 +1912,8 @@ static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
  * @rls : structure for runlist length, it contains allocated size and
  *	  real allocated size. it may be NULL, don't return calculated size.
  */
-static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, BOOL *need_fix)
+static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
+		struct rl_size *rls, BOOL *need_fix, BOOL *dup_repaired)
 {
 	ntfs_volume *vol;
 	ntfs_inode *ni;
@@ -1877,7 +1923,6 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 	s64 rl_data_size = 0;	/* rl data size (real allocated size) */
 	s64 rsize;		/* a cluster run size */
 	int i = 0;
-	problem_context_t pctx = {0, };
 
 	if (!na || !na->ni || !na->rl)
 		return STATUS_ERROR;
@@ -1886,8 +1931,6 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 	rl = na->rl;
 
 	vol = ni->vol;
-
-	ntfs_init_problem_ctx(&pctx, ni, na, NULL, NULL, ni->mrec, NULL, NULL);
 
 	while (rl && rl[i].length) {
 		if (rl[i].lcn > LCN_HOLE) {
@@ -1941,8 +1984,16 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 	}
 
 	if (dup_rl) {
+		u64 duplicated = 0;
+
+		for (i = 0; dup_rl[i].length; i++)
+			duplicated += dup_rl[i].length;
+		fsck_err_found();
+		cluster_dup_affected_attrs++;
+		cluster_dup_clusters += duplicated;
 		/* Found cluster duplication */
-		if (ntfs_fix_problem(vol, PR_CLUSTER_DUPLICATION_FOUND, &pctx)) {
+		if (cluster_dup_repair_decided &&
+				cluster_dup_repair_approved) {
 			/*
 			 * fix cluster duplication in ntfs_fsck_repair_cluster_dup(),
 			 * but it is applied to disk in caller side.
@@ -1950,6 +2001,10 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 			ntfs_log_debug("dup_rl: duplicated runlists\n");
 			ntfs_debug_runlist_dump(dup_rl);
 			ntfs_fsck_repair_cluster_dup(na, dup_rl);
+			if (need_fix)
+				*need_fix = TRUE;
+			if (dup_repaired)
+				*dup_repaired = TRUE;
 
 #ifdef DEBUG
 			ntfs_log_info("Resolve cluster duplication of inode(%"
@@ -1963,8 +2018,6 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 #endif
 		}
 
-		if (need_fix)
-			*need_fix = TRUE;
 		ntfs_free(dup_rl);
 	}
 
@@ -2011,9 +2064,7 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 					le16_to_cpu(ni->mrec->sequence_number)) ||
 				(MREF(mft_no) != ni->mft_no)) {
 			/* found index and orphaned inode is different */
-			ntfs_log_error("mft number of inode(%"PRIu64
-					") and parent index(%"PRIu64") "
-					"are different\n", MREF(mft_no), ni->mft_no);
+			orphan_parent_index_conflicts++;
 			ntfs_index_ctx_put(ictx);
 			return STATUS_ERROR;
 		}
@@ -2587,8 +2638,7 @@ static int ntfsck_check_inode_fields(ntfs_inode *parent_ni,
 	idx_seq = MSEQNO_LE(ie->indexed_file);
 	ni_seq = le16_to_cpu(ni->mrec->sequence_number);
 	if (idx_seq && ni_seq != idx_seq) {
-		ntfs_log_error("Mismatch sequence number of index and inode(%"PRIu64")\n",
-				ni->mft_no);
+		stale_index_sequence_entries++;
 		return STATUS_ERROR;
 	}
 
@@ -2798,8 +2848,7 @@ stack_of:
 					continue; /* success adding to parent, go to next $FN */
 				}
 
-				ntfs_log_error("Failed to add inode(%"PRIu64") to parent(%"PRIu64")\n",
-						ni->mft_no, parent_ni->mft_no);
+				orphan_parent_add_failures++;
 				NInoClearDirty(parent_ni);
 				NInoFileNameClearDirty(parent_ni);
 				NInoAttrListClearDirty(parent_ni);
@@ -2817,13 +2866,13 @@ add_to_lostfound:
 					ni->mft_no, FILENAME_LOST_FOUND);
 			ret = ntfsck_add_inode_to_lostfound(ni, fn, ctx);
 			if (ret) {
-				ntfs_log_error("Failed to add inode(%"PRIu64") to %s\n",
-						ni->mft_no, FILENAME_LOST_FOUND);
+				orphan_filename_removals++;
 				ntfsck_remove_filename(ni, fn);
 				ret = STATUS_OK;
 			} else {
 				ret = STATUS_OK;
 				nlink++;
+				orphan_lost_found_relinks++;
 			}
 		} /* while (!ntfs_attr_lookup(AT_FILE_NAME, ... */
 
@@ -3211,6 +3260,60 @@ void ntfsck_debug_print_fn_attr(ntfs_attr_search_ctx *actx,
  * @ie : index entry of file (parent's index)
  * @ictx : index context for lookup, not for ni. It's context of ni's parent
  */
+static int ntfsck_defer_index_repair(enum ntfsck_deferred_index_type type,
+		u64 parent_mft_no, le64 indexed_file, const void *data,
+		u32 data_len, u64 allocated_size, u64 data_size)
+{
+	struct ntfsck_deferred_index *repair;
+
+	repair = malloc(sizeof(*repair) + data_len);
+	if (!repair)
+		return STATUS_ERROR;
+	repair->type = type;
+	repair->parent_mft_no = parent_mft_no;
+	repair->indexed_file = indexed_file;
+	repair->allocated_size = allocated_size;
+	repair->data_size = data_size;
+	repair->data_len = data_len;
+	if (data_len)
+		memcpy(repair->data, data, data_len);
+	ntfs_list_add_tail(&repair->list, &ntfsck_deferred_index_repairs);
+	return STATUS_OK;
+}
+
+static int ntfsck_defer_reparse_repair(ntfs_inode *ni, le32 reparse_tag)
+{
+	struct ntfsck_deferred_reparse *repair;
+
+	repair = malloc(sizeof(*repair));
+	if (!repair)
+		return STATUS_ERROR;
+	repair->mft_no = ni->mft_no;
+	repair->reparse_tag = reparse_tag;
+	ntfs_list_add_tail(&repair->list, &ntfsck_deferred_reparse_repairs);
+	return STATUS_OK;
+}
+
+static void ntfsck_clear_deferred_repairs(void)
+{
+	while (!ntfs_list_empty(&ntfsck_deferred_index_repairs)) {
+		struct ntfsck_deferred_index *repair;
+
+		repair = ntfs_list_entry(ntfsck_deferred_index_repairs.next,
+				struct ntfsck_deferred_index, list);
+		ntfs_list_del(&repair->list);
+		free(repair);
+	}
+	while (!ntfs_list_empty(&ntfsck_deferred_reparse_repairs)) {
+		struct ntfsck_deferred_reparse *repair;
+
+		repair = ntfs_list_entry(ntfsck_deferred_reparse_repairs.next,
+				struct ntfsck_deferred_reparse, list);
+		ntfs_list_del(&repair->list);
+		free(repair);
+	}
+}
+
 static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		ntfs_index_context *ictx)
 {
@@ -3406,6 +3509,11 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		fn_allocated_size_mismatches++;
 		aggregate_size_fix = TRUE;
 		need_fix = TRUE;
+		if (ntfsck_defer_index_repair(NTFSCK_DEFER_FN_SIZE,
+				ictx->ni->mft_no, ictx->entry->indexed_file, ie_fn,
+				le16_to_cpu(ictx->entry->key_length),
+				ni->allocated_size, ni->data_size))
+			ret = STATUS_ERROR;
 		goto fix_index;
 	}
 	/*
@@ -3417,6 +3525,11 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		fn_data_size_mismatches++;
 		aggregate_size_fix = TRUE;
 		need_fix = TRUE;
+		if (ntfsck_defer_index_repair(NTFSCK_DEFER_FN_SIZE,
+				ictx->ni->mft_no, ictx->entry->indexed_file, ie_fn,
+				le16_to_cpu(ictx->entry->key_length),
+				ni->allocated_size, ni->data_size))
+			ret = STATUS_ERROR;
 		goto fix_index;
 	}
 
@@ -3424,9 +3537,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	 * $FILE_NAME attrib when ntfs_inode_close() is called */
 fix_index:
 	if (need_fix) {
-		BOOL repair = aggregate_size_fix ?
-			(fn_size_repair_decided && fn_size_repair_approved) :
-			ntfs_ask_repair(vol);
+		BOOL repair = aggregate_size_fix ? FALSE : ntfs_ask_repair(vol);
 
 		if (repair) {
 			ntfs_inode_mark_dirty(ni);
@@ -4169,7 +4280,7 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
  *
  */
 static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
-		BOOL *need_fix, int set_bit)
+		BOOL *need_fix, int set_bit, BOOL *dup_repaired)
 {
 	runlist *rl = NULL;
 	int ret = STATUS_OK;
@@ -4196,7 +4307,7 @@ static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
 	ntfs_debug_runlist_dump(rl);
 #endif
 
-	ret = ntfsck_check_runlist(na, set_bit, rls, need_fix);
+	ret = ntfsck_check_runlist(na, set_bit, rls, need_fix, dup_repaired);
 	if (ret)
 		return STATUS_ERROR;
 
@@ -5394,11 +5505,8 @@ static int ntfsck_check_reparse(ntfs_inode *ni)
 	if (has_attr &&
 			ntfs_reparse_index_check(ni, reparse_tag, FALSE) == 1) {
 		fsck_err_found();
-		if (ntfs_fix_problem(ni->vol, PR_REPARSE_ENTRY_MISSING, &pctx)) {
-			if (ntfs_reparse_index_check(ni, reparse_tag,
-						TRUE) == 1)
-				fsck_err_fixed();
-		}
+		missing_reparse_index_entries++;
+		ntfsck_defer_reparse_repair(ni, reparse_tag);
 	}
 
 	return STATUS_OK;
@@ -6463,37 +6571,15 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			}
 		}
 	} else {
-		char *crtname;
-
 remove_index:
 		fsck_err_found();
 		corrupt_index_entries++;
-		if (corrupt_index_repair_decided &&
-				corrupt_index_repair_approved) {
-			crtname = ntfs_attr_name_get(ie_fn->file_name,
-					ie_fn->file_name_length);
-			ictx->entry = ie;
-			ret = ntfs_index_rm(ictx);
-			if (ret) {
-				ntfs_log_error("Failed to remove index entry of inode(%"PRIu64":%s)\n",
-						mft_no, crtname);
-			} else {
-				ntfs_log_verbose("Index entry of inode(%"PRIu64":%s) is deleted\n",
-						mft_no, crtname);
-				ret = STATUS_FIXED;
-				fsck_err_fixed();
-				if (ictx->actx)
-					ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
-			}
-			free(crtname);
-		} else {
-			/*
-			 * Removal declined (no-repair mode): the error is
-			 * counted, keep walking the remaining entries instead
-			 * of aborting the whole directory scan.
-			 */
+		if (ntfsck_defer_index_repair(NTFSCK_DEFER_CORRUPT_ENTRY,
+				ictx->ni->mft_no, ie->indexed_file, ie_fn,
+				le16_to_cpu(ie->key_length), 0, 0))
+			ret = STATUS_ERROR;
+		else
 			ret = STATUS_OK;
-		}
 	}
 
 err_out:
@@ -6635,15 +6721,9 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 #endif
 		fsck_err_found();
 		index_bitmap_mismatches++;
-		if (index_bitmap_repair_decided &&
-				index_bitmap_repair_approved) {
-			wcnt = ntfs_attr_pwrite(bm_na, 0, ibm_size, ni->fsck_ibm);
-			if (wcnt == ibm_size)
-				fsck_err_fixed();
-			else
-				ntfs_log_error("Can't write $BITMAP(%"PRId64") "
-						"of inode(%"PRIu64")\n", wcnt, ni->mft_no);
-		}
+		if (ntfsck_defer_index_repair(NTFSCK_DEFER_INDEX_BITMAP,
+				ni->mft_no, 0, ni->fsck_ibm, ibm_size, 0, 0))
+			ret = STATUS_ERROR;
 	}
 
 out:
@@ -9306,7 +9386,7 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 		}
 
 		/* Check cluster run of $DATA attribute */
-		if (ntfsck_check_runlist(vol->lcnbmp_na, 1, NULL, NULL)) {
+		if (ntfsck_check_runlist(vol->lcnbmp_na, 1, NULL, NULL, NULL)) {
 			ntfs_log_error("Failed to check and setbit runlist. "
 					"Leaving inconsistent metadata.\n");
 			return -EIO;
@@ -9911,8 +9991,9 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 	 * retain individual accounting for the actual work below.
 	 */
 	if (!ntfs_list_empty(&oc_list_head)) {
-		ntfs_log_error("Found %"PRIu64" orphaned file(s), try to add "
-				"index entries. Fix it? ", orphan_cnt);
+		ntfs_log_error("Found %"PRIu64" orphaned file(s), restore their "
+				"index entries to the original parents or lost+found. "
+				"Fix it? ", orphan_cnt);
 		repair_orphans = ntfs_ask_repair(vol);
 	}
 
@@ -9940,6 +10021,20 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 			ntfs_list_del(&entry->oc_list);
 			free(entry);
 		}
+	}
+	if (orphan_parent_add_failures) {
+		ntfs_log_error("Orphan recovery: %"PRIu64" parent add failure(s)",
+				orphan_parent_add_failures);
+		if (orphan_parent_index_conflicts)
+			ntfs_log_error(" (%"PRIu64" conflicting parent index "
+					"reference(s))",
+					orphan_parent_index_conflicts);
+		ntfs_log_error("; %"PRIu64" filename(s) moved to lost+found",
+				orphan_lost_found_relinks);
+		if (orphan_filename_removals)
+			ntfs_log_error(", %"PRIu64" unrelinkable filename(s) "
+					"removed", orphan_filename_removals);
+		ntfs_log_error(".\n");
 	}
 
 	/* Orphan recovery can create new bitmap changes after the first count. */
@@ -10630,6 +10725,190 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
  */
 #define NTFSCK_MAX_REPAIR_ROUNDS	8
 
+static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol)
+{
+	struct ntfs_list_head *pos;
+
+	/* Restore checked allocation bitmaps before removals mutate the trees. */
+	ntfs_list_for_each(pos, &ntfsck_deferred_index_repairs) {
+		struct ntfsck_deferred_index *repair;
+		ntfs_inode *ni;
+		ntfs_attr *na;
+		s64 written;
+
+		repair = ntfs_list_entry(pos, struct ntfsck_deferred_index, list);
+		if (repair->type != NTFSCK_DEFER_INDEX_BITMAP ||
+				!index_bitmap_repair_approved)
+			continue;
+		ni = ntfsck_open_inode(vol, repair->parent_mft_no);
+		if (!ni)
+			continue;
+		na = ntfs_attr_open(ni, AT_BITMAP, NTFS_INDEX_I30, 4);
+		if (!na) {
+			ntfsck_close_inode(ni);
+			continue;
+		}
+		written = ntfs_attr_pwrite(na, 0, repair->data_len,
+				repair->data);
+		ntfs_attr_close(na);
+		ntfsck_close_inode(ni);
+		if (written == repair->data_len)
+			fsck_err_fixed();
+		else
+			ntfs_log_error("Can't write $BITMAP of inode(%"PRIu64")\n",
+					repair->parent_mft_no);
+	}
+
+	ntfs_list_for_each(pos, &ntfsck_deferred_index_repairs) {
+		struct ntfsck_deferred_index *repair;
+		ntfs_inode *parent_ni;
+		ntfs_index_context *ictx;
+		BOOL fixed = FALSE;
+
+		repair = ntfs_list_entry(pos, struct ntfsck_deferred_index, list);
+		if (repair->type == NTFSCK_DEFER_INDEX_BITMAP)
+			continue;
+		if (repair->type == NTFSCK_DEFER_CORRUPT_ENTRY &&
+				!corrupt_index_repair_approved)
+			continue;
+		if (repair->type == NTFSCK_DEFER_FN_SIZE &&
+				!fn_size_repair_approved)
+			continue;
+
+		parent_ni = ntfsck_open_inode(vol, repair->parent_mft_no);
+		if (!parent_ni)
+			continue;
+		ictx = ntfs_index_ctx_get(parent_ni, NTFS_INDEX_I30, 4);
+		if (!ictx) {
+			ntfsck_close_inode(parent_ni);
+			continue;
+		}
+		if (!ntfs_index_lookup(repair->data, repair->data_len, ictx) &&
+				ictx->entry->indexed_file == repair->indexed_file) {
+			if (repair->type == NTFSCK_DEFER_CORRUPT_ENTRY) {
+				if (!ntfs_index_rm(ictx)) {
+					fixed = TRUE;
+					if (ictx->actx)
+						ntfs_inode_mark_dirty(
+								ictx->actx->ntfs_ino);
+				}
+			} else {
+				FILE_NAME_ATTR *ie_fn = &ictx->entry->key.file_name;
+				ntfs_inode *child_ni = NULL;
+				ntfs_attr_search_ctx *actx = NULL;
+				FILE_NAME_ATTR *fn = NULL;
+
+				child_ni = ntfsck_open_inode(vol,
+						MREF_LE(repair->indexed_file));
+				if (child_ni)
+					actx = ntfs_attr_get_search_ctx(child_ni, NULL);
+				if (actx)
+					fn = ntfsck_find_file_name_attr(child_ni,
+							(FILE_NAME_ATTR *)repair->data, actx);
+				if (fn) {
+					ie_fn->allocated_size =
+						cpu_to_sle64(repair->allocated_size);
+					ie_fn->data_size = cpu_to_sle64(repair->data_size);
+					fn->allocated_size = ie_fn->allocated_size;
+					fn->data_size = ie_fn->data_size;
+					if (!ntfsck_update_index_entry(ictx)) {
+						ntfs_inode_mark_dirty(child_ni);
+						fixed = TRUE;
+					}
+				}
+				if (actx)
+					ntfs_attr_put_search_ctx(actx);
+				if (child_ni)
+					ntfsck_close_inode(child_ni);
+			}
+		}
+		ntfs_index_ctx_put(ictx);
+		ntfsck_close_inode(parent_ni);
+		if (fixed)
+			fsck_err_fixed();
+		else
+			ntfs_log_error("Failed to apply deferred directory index "
+					"repair in parent(%"PRIu64")\n",
+					repair->parent_mft_no);
+	}
+}
+
+static void ntfsck_apply_deferred_reparse_repairs(ntfs_volume *vol)
+{
+	struct ntfs_list_head *pos;
+
+	if (!reparse_index_repair_approved)
+		return;
+	ntfs_list_for_each(pos, &ntfsck_deferred_reparse_repairs) {
+		struct ntfsck_deferred_reparse *repair;
+		ntfs_inode *ni;
+
+		repair = ntfs_list_entry(pos, struct ntfsck_deferred_reparse,
+				list);
+		ni = ntfsck_open_inode(vol, repair->mft_no);
+		if (!ni)
+			continue;
+		if (ntfs_reparse_index_check(ni, repair->reparse_tag, TRUE) == 1)
+			fsck_err_fixed();
+		else
+			ntfs_log_error("Failed to add $Reparse entry of inode(%"PRIu64
+					")\n", repair->mft_no);
+		ntfsck_close_inode(ni);
+	}
+}
+
+static void ntfsck_ask_index_repairs(ntfs_volume *vol)
+{
+	if (index_bitmap_mismatches) {
+		if (index_bitmap_repair_decided)
+			goto corrupt_entries;
+		ntfs_log_error("Directory index bitmap: %"PRIu64" mismatch(es) "
+				"were found", index_bitmap_mismatches);
+		ntfs_log_error(", apply the checked bitmaps to disk. Fix it? ");
+		index_bitmap_repair_approved = ntfs_ask_repair(vol);
+		index_bitmap_repair_decided = TRUE;
+	}
+corrupt_entries:
+	if (corrupt_index_entries) {
+		if (corrupt_index_repair_decided)
+			goto file_name_sizes;
+		ntfs_log_error("Directory index: %"PRIu64" corrupted entry(ies) "
+				"were found", corrupt_index_entries);
+		if (stale_index_sequence_entries)
+			ntfs_log_error(" (%"PRIu64" stale sequence-number "
+					"reference(s))",
+					stale_index_sequence_entries);
+		ntfs_log_error(", remove them from their parents. Fix it? ");
+		corrupt_index_repair_approved = ntfs_ask_repair(vol);
+		corrupt_index_repair_decided = TRUE;
+	}
+file_name_sizes:
+	if (fn_allocated_size_mismatches || fn_data_size_mismatches) {
+		if (fn_size_repair_decided)
+			return;
+		ntfs_log_error("FILE_NAME size: %"PRIu64" allocated-size and "
+				"%"PRIu64" data-size mismatch(es) were found",
+				fn_allocated_size_mismatches,
+				fn_data_size_mismatches);
+		ntfs_log_error(", update their directory index entries. "
+				"Fix it? ");
+		fn_size_repair_approved = ntfs_ask_repair(vol);
+		fn_size_repair_decided = TRUE;
+	}
+}
+
+static void ntfsck_ask_reparse_index_repairs(ntfs_volume *vol)
+{
+	if (!missing_reparse_index_entries || reparse_index_repair_decided)
+		return;
+
+	ntfs_log_error("$Extend/$Reparse index: %"PRIu64" missing entry(ies) "
+			"were found, add them to the index. Fix it? ",
+			missing_reparse_index_entries);
+	reparse_index_repair_approved = ntfs_ask_repair(vol);
+	reparse_index_repair_decided = TRUE;
+}
+
 /*
  * ntfsck_run_repair_passes - run the whole check/repair sequence once.
  *
@@ -10652,6 +10931,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 
 	if (orphan_changed)
 		*orphan_changed = FALSE;
+	ntfsck_clear_deferred_repairs();
 	free(fixup_candidate_bitmap);
 	fixup_candidate_bitmap = NULL;
 	fixup_candidate_bitmap_size = 0;
@@ -10660,7 +10940,15 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	fn_allocated_size_mismatches = 0;
 	fn_data_size_mismatches = 0;
 	corrupt_index_entries = 0;
+	stale_index_sequence_entries = 0;
 	index_bitmap_mismatches = 0;
+	missing_reparse_index_entries = 0;
+	cluster_dup_affected_attrs = 0;
+	cluster_dup_clusters = 0;
+	orphan_parent_add_failures = 0;
+	orphan_parent_index_conflicts = 0;
+	orphan_lost_found_relinks = 0;
+	orphan_filename_removals = 0;
 	saved_fixup_suppress = NVolFsckSuppressFixupWarn(vol);
 	NVolSetFsckSuppressFixupWarn(vol);
 
@@ -10714,6 +11002,8 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 		ret = -1;
 		goto out;
 	}
+	ntfsck_ask_index_repairs(vol);
+	ntfsck_apply_deferred_index_repairs(vol);
 
 	/*
 	 * Validate extent records from the reverse direction. This catches an
@@ -10756,46 +11046,36 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	 * did not.
 	 */
 	ntfsck_check_reparse_index(vol);
+	ntfsck_ask_reparse_index_repairs(vol);
+	ntfsck_apply_deferred_reparse_repairs(vol);
 
 out:
-	if (index_bitmap_mismatches) {
-		ntfs_log_error("Directory index bitmap: %"PRIu64" mismatch(es) "
-				"were found", index_bitmap_mismatches);
-		if (!index_bitmap_repair_decided) {
-			ntfs_log_error(", apply the checked bitmaps to disk. Fix it? ");
-			index_bitmap_repair_approved = ntfs_ask_repair(vol);
-			index_bitmap_repair_decided = TRUE;
-			index_bitmap_repair_retry =
-				index_bitmap_repair_approved;
-		} else
-			ntfs_log_error("; individual messages were suppressed.\n");
+	if ((cluster_dup_affected_attrs || vol->fsck_lcn_range_dup_count) &&
+			!cluster_dup_repair_decided) {
+		ntfs_log_error("Cluster duplication: ");
+		if (cluster_dup_affected_attrs)
+			ntfs_log_error("%"PRIu64" duplicated cluster(s) in %"PRIu64
+					" attribute(s)", cluster_dup_clusters,
+					cluster_dup_affected_attrs);
+		if (cluster_dup_affected_attrs && vol->fsck_lcn_range_dup_count)
+			ntfs_log_error(" and ");
+		if (vol->fsck_lcn_range_dup_count)
+			ntfs_log_error("%"PRIu64" cluster conflict(s) outside "
+					"attribute runlist scans",
+					vol->fsck_lcn_range_dup_count);
+		if (!cluster_dup_affected_attrs) {
+			ntfs_log_error(" were found; automatic runlist repair is "
+					"unavailable.\n");
+			cluster_dup_repair_decided = TRUE;
+			goto cluster_dup_done;
+		}
+		ntfs_log_error(" were found, repair and apply the affected "
+				"attribute runlists to disk. Fix it? ");
+		cluster_dup_repair_approved = ntfs_ask_repair(vol);
+		cluster_dup_repair_decided = TRUE;
+		cluster_dup_repair_retry = cluster_dup_repair_approved;
 	}
-	if (corrupt_index_entries) {
-		ntfs_log_error("Directory index: %"PRIu64" corrupted entry(ies) "
-				"were found", corrupt_index_entries);
-		if (!corrupt_index_repair_decided) {
-			ntfs_log_error(", remove them from their parents. Fix it? ");
-			corrupt_index_repair_approved = ntfs_ask_repair(vol);
-			corrupt_index_repair_decided = TRUE;
-			corrupt_index_repair_retry =
-				corrupt_index_repair_approved;
-		} else
-			ntfs_log_error("; individual messages were suppressed.\n");
-	}
-	if (fn_allocated_size_mismatches || fn_data_size_mismatches) {
-		ntfs_log_error("FILE_NAME size: %"PRIu64" allocated-size and "
-				"%"PRIu64" data-size mismatch(es) were found",
-				fn_allocated_size_mismatches,
-				fn_data_size_mismatches);
-		if (!fn_size_repair_decided) {
-			ntfs_log_error(", update their directory index entries. "
-					"Fix it? ");
-			fn_size_repair_approved = ntfs_ask_repair(vol);
-			fn_size_repair_decided = TRUE;
-			fn_size_repair_retry = fn_size_repair_approved;
-		} else
-			ntfs_log_error("; individual messages were suppressed.\n");
-	}
+cluster_dup_done:
 	if (fixup_salvage_candidates) {
 		ntfs_log_error("NTFS fixup: %"PRIu64" salvageable MFT record(s) "
 				"were found", fixup_salvage_candidates);
@@ -10810,6 +11090,7 @@ out:
 		else
 			ntfs_log_error("; repair was not approved.\n");
 	}
+		ntfsck_clear_deferred_repairs();
 	if (!saved_fixup_suppress)
 		NVolClearFsckSuppressFixupWarn(vol);
 	/* the volume is re-mounted between rounds; drop the cached $SII ctx */
@@ -11083,16 +11364,20 @@ conflict_option:
 		fixup_repair_retry = FALSE;
 		fn_size_repair_decided = FALSE;
 		fn_size_repair_approved = FALSE;
-		fn_size_repair_retry = FALSE;
 		corrupt_index_repair_decided = FALSE;
 		corrupt_index_repair_approved = FALSE;
-		corrupt_index_repair_retry = FALSE;
 		index_bitmap_repair_decided = FALSE;
 		index_bitmap_repair_approved = FALSE;
-		index_bitmap_repair_retry = FALSE;
+		reparse_index_repair_decided = FALSE;
+		reparse_index_repair_approved = FALSE;
+		cluster_dup_repair_decided = FALSE;
+		cluster_dup_repair_approved = FALSE;
+		cluster_dup_repair_retry = FALSE;
 		for (round = 0; ; round++) {
 			BOOL orphan_changed = FALSE;
+			u64 deferred_errors;
 
+			vol->fsck_lcn_range_dup_count = 0;
 			ntfsck_check_backup_boot(vol);
 
 			/* Open a crash-safe repair transaction before any write. */
@@ -11100,21 +11385,23 @@ conflict_option:
 
 			if (ntfsck_run_repair_passes(vol, &orphan_changed))
 				goto err_out;
-			if (fixup_repair_retry || fn_size_repair_retry ||
-					corrupt_index_repair_retry ||
-					index_bitmap_repair_retry) {
+			if (fixup_repair_retry || cluster_dup_repair_retry) {
 				/*
-				 * The retry counts and fixes these records together, so
-				 * exclude the preflight copies from whole-run totals.
+				 * MFT salvage is the one aggregate repair that still needs a raw reread
+				 * after remount. Do not include its preflight candidates in the whole-run
+				 * totals because the retry counts and fixes them together.
 				 */
-				if (fixup_salvage_candidates >= (u64)fsck_errors)
+				deferred_errors = 0;
+				if (fixup_repair_retry)
+					deferred_errors += fixup_salvage_candidates;
+				if (cluster_dup_repair_retry)
+					deferred_errors += cluster_dup_affected_attrs;
+				if (deferred_errors >= (u64)fsck_errors)
 					fsck_errors = 0;
 				else
-					fsck_errors -= fixup_salvage_candidates;
+					fsck_errors -= deferred_errors;
 				fixup_repair_retry = FALSE;
-				fn_size_repair_retry = FALSE;
-				corrupt_index_repair_retry = FALSE;
-				index_bitmap_repair_retry = FALSE;
+				cluster_dup_repair_retry = FALSE;
 				goto next_round;
 			}
 

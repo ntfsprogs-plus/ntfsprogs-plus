@@ -2708,9 +2708,7 @@ s64 ntfs_attr_mst_pread(ntfs_attr *na, const s64 pos, const s64 bk_cnt,
 		(!NVolNoFixupWarn(na->ni->vol) && !fsck_suppress);
 	for (end = (u8*)dst + br * bk_size; (u8*)dst < end; dst = (u8*)dst +
 			bk_size) {
-		if (ntfs_mst_post_read_fixup_warn((NTFS_RECORD*)dst, bk_size,
-					warn) && fsck_suppress)
-			na->ni->vol->fsck_mst_fixup_errors++;
+		ntfs_mst_post_read_fixup_warn((NTFS_RECORD*)dst, bk_size, warn);
 	}
 	/* Finally, return the number of blocks read. */
 	return br;

@@ -168,6 +168,14 @@ static BOOL walking_system_dir;
  * release records on that evidence.
  */
 static BOOL namespace_walk_failed;
+/* One response controls every salvageable MFT fixup in this fsck run. */
+static BOOL fixup_repair_decided;
+static BOOL fixup_repair_approved;
+static BOOL fixup_repair_retry;
+static u8 *fixup_candidate_bitmap;
+static size_t fixup_candidate_bitmap_size;
+static u64 fixup_salvage_candidates;
+static u64 fixup_salvaged_records;
 
 struct ntfsls_dirent {
 	ntfs_volume *vol;
@@ -813,17 +821,38 @@ static int ntfsck_repair_index_block(ntfs_index_context *ictx, VCN vcn,
  * fixes. A salvaged record is written straight back, which re-protects
  * it with the restored header.
  */
+static int ntfsck_note_fixup_candidate(u64 mft_no)
+{
+	size_t byte = mft_no >> 3;
+	u8 *bitmap;
+
+	if ((u64)byte != mft_no >> 3)
+		return STATUS_ERROR;
+	if (byte >= fixup_candidate_bitmap_size) {
+		bitmap = ntfs_realloc(fixup_candidate_bitmap, byte + 1);
+		if (!bitmap)
+			return STATUS_ERROR;
+		memset(bitmap + fixup_candidate_bitmap_size, 0,
+				byte + 1 - fixup_candidate_bitmap_size);
+		fixup_candidate_bitmap = bitmap;
+		fixup_candidate_bitmap_size = byte + 1;
+	}
+	if (fixup_candidate_bitmap[byte] & (1U << (mft_no & 7)))
+		return STATUS_OK;
+	fixup_candidate_bitmap[byte] |= 1U << (mft_no & 7);
+	fixup_salvage_candidates++;
+	fsck_err_found();
+	return STATUS_OK;
+}
+
 static int ntfsck_salvage_mft_record(ntfs_volume *vol, u64 mft_no,
 		MFT_RECORD *mrec)
 {
 	u16 expected_usa_ofs;
 	u16 expected_usa_count;
-	problem_code_t code;
-	problem_context_t pctx = {0, };
 
 	if (!NVolFsck(vol) || !vol->mft_na)
 		return STATUS_ERROR;
-
 	/* Refuse non-allocated records, as ntfs_mft_records_read() does. */
 	if ((s64)mft_no + 1 > vol->mft_na->initialized_size >>
 			vol->mft_record_size_bits)
@@ -856,7 +885,6 @@ static int ntfsck_salvage_mft_record(ntfs_volume *vol, u64 mft_no,
 					vol->mft_record_size, FALSE))
 			return STATUS_ERROR;
 
-		code = PR_MFT_USA_CORRUPTED;
 	} else if (mrec->magic == magic_BAAD) {
 		u16 *usa, *tail;
 		int i;
@@ -876,19 +904,25 @@ static int ntfsck_salvage_mft_record(ntfs_volume *vol, u64 mft_no,
 		}
 		mrec->magic = magic_FILE;
 
-		code = PR_MFT_BAAD_RECORD;
 	} else
 		return STATUS_ERROR;
 
-	pctx.inum = mft_no;
-	fsck_err_found();
-	if (!ntfs_fix_problem(vol, code, &pctx))
+	/*
+	 * Count each salvageable MFT record once, rather than counting every failed
+	 * MST-protected read. The latter includes repeated reads and records for
+	 * which no safe recovery exists, so it cannot drive a meaningful repair
+	 * question.
+	 */
+	if (ntfsck_note_fixup_candidate(mft_no))
+		return STATUS_ERROR;
+	if (!fixup_repair_decided || !fixup_repair_approved)
 		return STATUS_ERROR;
 
 	if (ntfs_mft_record_write(vol, mft_no, mrec))
 		return STATUS_ERROR;
 
 	fsck_err_fixed();
+	fixup_salvaged_records++;
 	return STATUS_OK;
 }
 
@@ -10476,7 +10510,11 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 
 	if (orphan_changed)
 		*orphan_changed = FALSE;
-	vol->fsck_mst_fixup_errors = 0;
+	free(fixup_candidate_bitmap);
+	fixup_candidate_bitmap = NULL;
+	fixup_candidate_bitmap_size = 0;
+	fixup_salvage_candidates = 0;
+	fixup_salvaged_records = 0;
 	saved_fixup_suppress = NVolFsckSuppressFixupWarn(vol);
 	NVolSetFsckSuppressFixupWarn(vol);
 
@@ -10574,11 +10612,20 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	ntfsck_check_reparse_index(vol);
 
 out:
-	if (vol->fsck_mst_fixup_errors)
-		ntfs_log_error("NTFS fixup: %"PRIu64" malformed record read(s) "
-				"were "
-				"found; individual fixup warnings were suppressed.\n",
-				vol->fsck_mst_fixup_errors);
+	if (fixup_salvage_candidates) {
+		ntfs_log_error("NTFS fixup: %"PRIu64" salvageable MFT record(s) "
+				"were found", fixup_salvage_candidates);
+		if (!fixup_repair_decided) {
+			ntfs_log_error(", recover them. Fix it? ");
+			fixup_repair_approved = ntfs_ask_repair(vol);
+			fixup_repair_decided = TRUE;
+			fixup_repair_retry = fixup_repair_approved;
+		} else if (fixup_repair_approved)
+			ntfs_log_error("; %"PRIu64" recovered using the previous "
+					"approval.\n", fixup_salvaged_records);
+		else
+			ntfs_log_error("; repair was not approved.\n");
+	}
 	if (!saved_fixup_suppress)
 		NVolClearFsckSuppressFixupWarn(vol);
 	/* the volume is re-mounted between rounds; drop the cached $SII ctx */
@@ -10847,6 +10894,9 @@ conflict_option:
 		int prev_fixes = -1;
 		int round;
 
+		fixup_repair_decided = FALSE;
+		fixup_repair_approved = FALSE;
+		fixup_repair_retry = FALSE;
 		for (round = 0; ; round++) {
 			BOOL orphan_changed = FALSE;
 
@@ -10857,6 +10907,18 @@ conflict_option:
 
 			if (ntfsck_run_repair_passes(vol, &orphan_changed))
 				goto err_out;
+			if (fixup_repair_retry) {
+				/*
+				 * The retry counts and fixes these records together, so
+				 * exclude the preflight copies from whole-run totals.
+				 */
+				if (fixup_salvage_candidates >= (u64)fsck_errors)
+					fsck_errors = 0;
+				else
+					fsck_errors -= fixup_salvage_candidates;
+				fixup_repair_retry = FALSE;
+				goto next_round;
+			}
 
 			/*
 			 * A round that repaired everything it found leaves
@@ -10888,6 +10950,7 @@ conflict_option:
 				break;			/* not converging: give up */
 			prev_fixes = fsck_fixes;
 
+	next_round:
 			ntfs_log_info("Repairs applied; re-checking the volume "
 					"(round %d)...\n", round + 2);
 

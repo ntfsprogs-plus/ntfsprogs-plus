@@ -365,7 +365,6 @@ struct _ntfs_volume {
 
 	/* TODO: separate fields related with 'fsck' from volume structure */
 	u64 lost_found;		/* mft record number for lost_found directory */
-	u64 fsck_mst_fixup_errors;	/* suppressed MST fixup failures */
 	u8 **fsck_lcn_bitmap;	/* lcn bitmap of fsck */
 	u32 *fsck_lcn_setcnt;	/* per-block count of set bits, for all-ones collapse */
 	u8 *fsck_lcn_arena;	/* mmap'd scratch backing literal blocks (opt-in), else NULL */

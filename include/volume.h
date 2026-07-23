@@ -180,6 +180,7 @@ typedef enum {
 	NV_FsYesRepair,		/* 1: Volume is for fsck */
 	NV_FsAskRepair,		/* 1: Volume is for fsck */
 	NV_Fsck,		/* 1: Volume is on fsck */
+	NV_FsckSuppressFixupWarn,	/* 1: Summarize fsck fixup warnings */
 } ntfs_volume_state_bits;
 
 #define test_nvol_flag(nv, flag)	test_bit(NV_##flag, (nv)->state)
@@ -241,6 +242,13 @@ typedef enum {
 #define NVolFsck(nv)			test_nvol_flag(nv, Fsck)
 #define NVolSetFsck(nv)			set_nvol_flag(nv, Fsck)
 #define NVolClearFsck(nv)		clear_nvol_flag(nv, Fsck)
+
+#define NVolFsckSuppressFixupWarn(nv) \
+	test_nvol_flag(nv, FsckSuppressFixupWarn)
+#define NVolSetFsckSuppressFixupWarn(nv) \
+	set_nvol_flag(nv, FsckSuppressFixupWarn)
+#define NVolClearFsckSuppressFixupWarn(nv) \
+	clear_nvol_flag(nv, FsckSuppressFixupWarn)
 
 #define NVolIsOnFsck(nv)		NVolFsck(nv)
 
@@ -357,6 +365,7 @@ struct _ntfs_volume {
 
 	/* TODO: separate fields related with 'fsck' from volume structure */
 	u64 lost_found;		/* mft record number for lost_found directory */
+	u64 fsck_mst_fixup_errors;	/* suppressed MST fixup failures */
 	u8 **fsck_lcn_bitmap;	/* lcn bitmap of fsck */
 	u32 *fsck_lcn_setcnt;	/* per-block count of set bits, for all-ones collapse */
 	u8 *fsck_lcn_arena;	/* mmap'd scratch backing literal blocks (opt-in), else NULL */

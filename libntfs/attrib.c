@@ -2687,6 +2687,7 @@ s64 ntfs_attr_mst_pread(ntfs_attr *na, const s64 pos, const s64 bk_cnt,
 	s64 br;
 	u8 *end;
 	BOOL warn;
+	BOOL fsck_suppress = FALSE;
 
 	ntfs_log_trace("Entering for inode 0x%llx, attr type 0x%x, pos 0x%llx.\n",
 			(unsigned long long)na->ni->mft_no, le32_to_cpu(na->type),
@@ -2700,11 +2701,17 @@ s64 ntfs_attr_mst_pread(ntfs_attr *na, const s64 pos, const s64 bk_cnt,
 	if (br <= 0)
 		return br;
 	br /= bk_size;
-	/* log errors unless silenced */
-	warn = !na->ni || !na->ni->vol || !NVolNoFixupWarn(na->ni->vol);
+	/* Log errors unless silenced or summarized by fsck. */
+	if (na->ni && na->ni->vol)
+		fsck_suppress = NVolFsckSuppressFixupWarn(na->ni->vol);
+	warn = !na->ni || !na->ni->vol ||
+		(!NVolNoFixupWarn(na->ni->vol) && !fsck_suppress);
 	for (end = (u8*)dst + br * bk_size; (u8*)dst < end; dst = (u8*)dst +
-			bk_size)
-		ntfs_mst_post_read_fixup_warn((NTFS_RECORD*)dst, bk_size, warn);
+			bk_size) {
+		if (ntfs_mst_post_read_fixup_warn((NTFS_RECORD*)dst, bk_size,
+					warn) && fsck_suppress)
+			na->ni->vol->fsck_mst_fixup_errors++;
+	}
 	/* Finally, return the number of blocks read. */
 	return br;
 }

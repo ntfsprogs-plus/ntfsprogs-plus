@@ -112,10 +112,12 @@ int ntfs_mst_post_read_fixup_warn(NTFS_RECORD *b, const u32 size,
 			 * Note that magic_BAAD is already converted to le32.
 			 */
 			errno = EIO;
-			ntfs_log_perror("Incomplete multi-sector transfer: "
-					"magic: 0x%08x  size: %d  usa_ofs: %d  usa_count:"
-					" %d  data: %d  usn: %d", le32_to_cpu(*(le32 *)b), size,
-					usa_ofs, usa_count, *data_pos, usn);
+			if (warn)
+				ntfs_log_perror("Incomplete multi-sector transfer: "
+						"magic: 0x%08x  size: %d  usa_ofs: %d  "
+						"usa_count: %d  data: %d  usn: %d",
+						le32_to_cpu(*(le32 *)b), size, usa_ofs,
+						usa_count, *data_pos, usn);
 			b->magic = magic_BAAD;
 			return -1;
 		}

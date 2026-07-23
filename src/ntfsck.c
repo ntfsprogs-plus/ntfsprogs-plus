@@ -190,6 +190,7 @@ struct orphan_mft {
 
 int parse_count = 1;
 s64 clear_mft_cnt;
+static u64 orphan_mft_open_failures;
 s64 total_valid_mft;
 s64 total_inuse_mft;	/* MFT records the bitmap marks in-use */
 s64 fsck_scan_eio;	/* MFT records that failed to read/open with EIO */
@@ -2929,6 +2930,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		}
 
 		fsck_err_found();
+		orphan_mft_open_failures++;
 		if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_OPEN_FAILURE, &pctx)) {
 			if (ntfsck_check_mft_record_unused(vol, mft_num))
 				return;
@@ -7786,6 +7788,7 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	problem_context_t pctx = {0, };
 
 	fsck_start_step("Scan orphaned MFTs candidiates...");
+	orphan_mft_open_failures = 0;
 
 	if (namespace_walk_failed) {
 		fsck_err_found();
@@ -7815,6 +7818,11 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 
 	if (clear_mft_cnt)
 		ntfs_log_info("Clear MFT bitmap count:%"PRId64"\n", clear_mft_cnt);
+	if (orphan_mft_open_failures &&
+			(NVolFsNoRepair(vol) || NVolFsAutoRepair(vol)))
+		ntfs_log_error("Orphan MFT scan: %"PRIu64" allocated record(s) "
+				"could not be opened; individual repair messages were "
+				"suppressed.\n", orphan_mft_open_failures);
 
 	fsck_end_step();
 }

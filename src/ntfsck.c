@@ -176,6 +176,12 @@ static u8 *fixup_candidate_bitmap;
 static size_t fixup_candidate_bitmap_size;
 static u64 fixup_salvage_candidates;
 static u64 fixup_salvaged_records;
+/* One response controls all $FILE_NAME size repairs in this fsck run. */
+static BOOL fn_size_repair_decided;
+static BOOL fn_size_repair_approved;
+static BOOL fn_size_repair_retry;
+static u64 fn_allocated_size_mismatches;
+static u64 fn_data_size_mismatches;
 
 struct ntfsls_dirent {
 	ntfs_volume *vol;
@@ -3204,6 +3210,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	char *filename = NULL;
 	int ret = STATUS_OK;
 	BOOL need_fix = FALSE;
+	BOOL aggregate_size_fix = FALSE;
 	FILE_NAME_ATTR *fn;
 	ntfs_attr_search_ctx *actx;
 	problem_context_t pctx = {0, };
@@ -3387,12 +3394,9 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 
 	/* check $FN size fields */
 	if (ni->allocated_size != sle64_to_cpu(ie_fn->allocated_size)) {
-		filename = ntfs_attr_name_get(ie_fn->file_name,
-				ie_fn->file_name_length);
-		pctx.filename = filename;
 		fsck_err_found();
-		ntfs_print_problem(vol, PR_MFT_ALLOCATED_SIZE_MISMATCH, &pctx);
-
+		fn_allocated_size_mismatches++;
+		aggregate_size_fix = TRUE;
 		need_fix = TRUE;
 		goto fix_index;
 	}
@@ -3401,12 +3405,9 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	 * It looks like that Windows does not check MFT/$FN's data size.
 	 */
 	if (ni->data_size != sle64_to_cpu(ie_fn->data_size)) {
-		filename = ntfs_attr_name_get(ie_fn->file_name,
-				ie_fn->file_name_length);
-		pctx.filename = filename;
 		fsck_err_found();
-		ntfs_print_problem(vol, PR_MFT_DATA_SIZE_MISMATCH, &pctx);
-
+		fn_data_size_mismatches++;
+		aggregate_size_fix = TRUE;
 		need_fix = TRUE;
 		goto fix_index;
 	}
@@ -3415,7 +3416,11 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	 * $FILE_NAME attrib when ntfs_inode_close() is called */
 fix_index:
 	if (need_fix) {
-		if (ntfs_ask_repair(vol)) {
+		BOOL repair = aggregate_size_fix ?
+			(fn_size_repair_decided && fn_size_repair_approved) :
+			ntfs_ask_repair(vol);
+
+		if (repair) {
 			ntfs_inode_mark_dirty(ni);
 			NInoFileNameSetDirty(ni);
 
@@ -10649,6 +10654,8 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	fixup_candidate_bitmap_size = 0;
 	fixup_salvage_candidates = 0;
 	fixup_salvaged_records = 0;
+	fn_allocated_size_mismatches = 0;
+	fn_data_size_mismatches = 0;
 	saved_fixup_suppress = NVolFsckSuppressFixupWarn(vol);
 	NVolSetFsckSuppressFixupWarn(vol);
 
@@ -10746,6 +10753,20 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	ntfsck_check_reparse_index(vol);
 
 out:
+	if (fn_allocated_size_mismatches || fn_data_size_mismatches) {
+		ntfs_log_error("FILE_NAME size: %"PRIu64" allocated-size and "
+				"%"PRIu64" data-size mismatch(es) were found",
+				fn_allocated_size_mismatches,
+				fn_data_size_mismatches);
+		if (!fn_size_repair_decided) {
+			ntfs_log_error(", update their directory index entries. "
+					"Fix it? ");
+			fn_size_repair_approved = ntfs_ask_repair(vol);
+			fn_size_repair_decided = TRUE;
+			fn_size_repair_retry = fn_size_repair_approved;
+		} else
+			ntfs_log_error("; individual messages were suppressed.\n");
+	}
 	if (fixup_salvage_candidates) {
 		ntfs_log_error("NTFS fixup: %"PRIu64" salvageable MFT record(s) "
 				"were found", fixup_salvage_candidates);
@@ -11031,6 +11052,9 @@ conflict_option:
 		fixup_repair_decided = FALSE;
 		fixup_repair_approved = FALSE;
 		fixup_repair_retry = FALSE;
+		fn_size_repair_decided = FALSE;
+		fn_size_repair_approved = FALSE;
+		fn_size_repair_retry = FALSE;
 		for (round = 0; ; round++) {
 			BOOL orphan_changed = FALSE;
 
@@ -11041,7 +11065,7 @@ conflict_option:
 
 			if (ntfsck_run_repair_passes(vol, &orphan_changed))
 				goto err_out;
-			if (fixup_repair_retry) {
+			if (fixup_repair_retry || fn_size_repair_retry) {
 				/*
 				 * The retry counts and fixes these records together, so
 				 * exclude the preflight copies from whole-run totals.
@@ -11051,6 +11075,7 @@ conflict_option:
 				else
 					fsck_errors -= fixup_salvage_candidates;
 				fixup_repair_retry = FALSE;
+				fn_size_repair_retry = FALSE;
 				goto next_round;
 			}
 

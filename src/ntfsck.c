@@ -9765,7 +9765,7 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 	struct orphan_mft *entry = NULL;
 	ntfs_inode *root_ni;
 	u64 cnt = 1;
-	problem_context_t pctx = {0, };
+	BOOL repair_orphans = FALSE;
 
 	fsck_start_step("Check orphaned mft...");
 
@@ -9790,15 +9790,25 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 	}
 	progress_update(&prog, cnt);
 
+	/*
+	 * Relinking every orphan uses the same recovery policy. Ask once for the
+	 * complete candidate set instead of requiring an answer per MFT record, then
+	 * retain individual accounting for the actual work below.
+	 */
+	if (!ntfs_list_empty(&oc_list_head)) {
+		ntfs_log_error("Found %"PRIu64" orphaned file(s), try to add "
+				"index entries. Fix it? ", orphan_cnt);
+		repair_orphans = ntfs_ask_repair(vol);
+	}
+
 	/* check orphaned mft */
 	while (!ntfs_list_empty(&oc_list_head)) {
 		entry = ntfs_list_entry(oc_list_head.next, struct orphan_mft, oc_list);
 
 		cnt++;
 
-		pctx.inum = entry->mft_no;
 		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_REPAIR, &pctx)) {
+		if (repair_orphans) {
 			if (ntfsck_add_index_entry_orphaned_file(vol, entry)) {
 				/*
 				 * error returned.

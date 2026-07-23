@@ -182,6 +182,11 @@ static BOOL fn_size_repair_approved;
 static BOOL fn_size_repair_retry;
 static u64 fn_allocated_size_mismatches;
 static u64 fn_data_size_mismatches;
+/* One response controls removal of every corrupted directory index entry. */
+static BOOL corrupt_index_repair_decided;
+static BOOL corrupt_index_repair_approved;
+static BOOL corrupt_index_repair_retry;
+static u64 corrupt_index_entries;
 
 struct ntfsls_dirent {
 	ntfs_volume *vol;
@@ -2493,8 +2498,6 @@ static int ntfsck_check_parent_mft_record(ntfs_inode *parent_ni,
 
 	fn = ntfsck_find_file_name_attr(ni, ie_fn, ctx);
 	if (!fn) {
-		ntfs_log_error("Failed to find filename in inode(%"PRIu64")\n",
-				ni->mft_no);
 		ntfs_attr_put_search_ctx(ctx);
 		return STATUS_ERROR;
 	}
@@ -6355,7 +6358,6 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	u64 mft_no;
 	int ret = STATUS_OK;
 	FILE_NAME_ATTR *ie_fn = &ie->key.file_name;
-	problem_context_t pctx = {0, };
 
 	if (!ie)
 		return STATUS_ERROR;
@@ -6365,8 +6367,6 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	if ((ntfsck_opened_ni_vol(MREF(mref)) == TRUE) || mft_no == FILE_root)
 		return STATUS_OK;
 
-	ntfs_init_problem_ctx(&pctx, NULL, NULL, NULL, ictx, NULL, NULL, ie_fn);
-	pctx.inum = mft_no;
 #ifdef DEBUG
 	char *filename;
 	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
@@ -6419,10 +6419,6 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		} else {
 			ret = ntfsck_check_inode(ni, ie, ictx);
 			if (ret == STATUS_NOT_FOUND) {
-				ntfs_log_error("Failed to check inode(%"PRIu64") "
-						"in parent(%"PRIu64") index.\n",
-						ni->mft_no, ictx->ni->mft_no);
-
 				NInoFileNameClearDirty(ni);
 				NInoAttrListClearDirty(ni);
 				NInoClearDirty(ni);
@@ -6464,13 +6460,13 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	} else {
 		char *crtname;
 
-		ntfs_log_error("Failed to open inode(%"PRIu64")\n", mft_no);
-
 remove_index:
-		crtname = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
 		fsck_err_found();
-		pctx.filename = crtname;
-		if (ntfs_fix_problem(vol, PR_IDX_ENTRY_CORRUPTED, &pctx)) {
+		corrupt_index_entries++;
+		if (corrupt_index_repair_decided &&
+				corrupt_index_repair_approved) {
+			crtname = ntfs_attr_name_get(ie_fn->file_name,
+					ie_fn->file_name_length);
 			ictx->entry = ie;
 			ret = ntfs_index_rm(ictx);
 			if (ret) {
@@ -6484,6 +6480,7 @@ remove_index:
 				if (ictx->actx)
 					ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
 			}
+			free(crtname);
 		} else {
 			/*
 			 * Removal declined (no-repair mode): the error is
@@ -6492,7 +6489,6 @@ remove_index:
 			 */
 			ret = STATUS_OK;
 		}
-		free(crtname);
 	}
 
 err_out:
@@ -10656,6 +10652,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	fixup_salvaged_records = 0;
 	fn_allocated_size_mismatches = 0;
 	fn_data_size_mismatches = 0;
+	corrupt_index_entries = 0;
 	saved_fixup_suppress = NVolFsckSuppressFixupWarn(vol);
 	NVolSetFsckSuppressFixupWarn(vol);
 
@@ -10753,6 +10750,18 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	ntfsck_check_reparse_index(vol);
 
 out:
+	if (corrupt_index_entries) {
+		ntfs_log_error("Directory index: %"PRIu64" corrupted entry(ies) "
+				"were found", corrupt_index_entries);
+		if (!corrupt_index_repair_decided) {
+			ntfs_log_error(", remove them from their parents. Fix it? ");
+			corrupt_index_repair_approved = ntfs_ask_repair(vol);
+			corrupt_index_repair_decided = TRUE;
+			corrupt_index_repair_retry =
+				corrupt_index_repair_approved;
+		} else
+			ntfs_log_error("; individual messages were suppressed.\n");
+	}
 	if (fn_allocated_size_mismatches || fn_data_size_mismatches) {
 		ntfs_log_error("FILE_NAME size: %"PRIu64" allocated-size and "
 				"%"PRIu64" data-size mismatch(es) were found",
@@ -11055,6 +11064,9 @@ conflict_option:
 		fn_size_repair_decided = FALSE;
 		fn_size_repair_approved = FALSE;
 		fn_size_repair_retry = FALSE;
+		corrupt_index_repair_decided = FALSE;
+		corrupt_index_repair_approved = FALSE;
+		corrupt_index_repair_retry = FALSE;
 		for (round = 0; ; round++) {
 			BOOL orphan_changed = FALSE;
 
@@ -11065,7 +11077,8 @@ conflict_option:
 
 			if (ntfsck_run_repair_passes(vol, &orphan_changed))
 				goto err_out;
-			if (fixup_repair_retry || fn_size_repair_retry) {
+			if (fixup_repair_retry || fn_size_repair_retry ||
+					corrupt_index_repair_retry) {
 				/*
 				 * The retry counts and fixes these records together, so
 				 * exclude the preflight copies from whole-run totals.
@@ -11076,6 +11089,7 @@ conflict_option:
 					fsck_errors -= fixup_salvage_candidates;
 				fixup_repair_retry = FALSE;
 				fn_size_repair_retry = FALSE;
+				corrupt_index_repair_retry = FALSE;
 				goto next_round;
 			}
 

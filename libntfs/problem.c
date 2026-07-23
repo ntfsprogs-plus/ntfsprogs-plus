@@ -213,7 +213,7 @@ static struct ntfs_problem problem_table[] = {
 	},
 	{ PR_ORPHANED_MFT_OPEN_FAILURE,
 		"Inode(@In) open failed. Clear MFT bitmap of inode",
-		PR_PREEN_NOMSG,
+		PR_PREEN_NOMSG | PR_NO_NOMSG,
 	},
 	{ PR_ORPHANED_MFT_CHECK_FAILURE,
 		"Inode(@In) check failed. Delete orphaned NFT candidiates",

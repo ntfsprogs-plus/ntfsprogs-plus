@@ -187,6 +187,11 @@ static BOOL corrupt_index_repair_decided;
 static BOOL corrupt_index_repair_approved;
 static BOOL corrupt_index_repair_retry;
 static u64 corrupt_index_entries;
+/* One response controls all directory index bitmap content repairs. */
+static BOOL index_bitmap_repair_decided;
+static BOOL index_bitmap_repair_approved;
+static BOOL index_bitmap_repair_retry;
+static u64 index_bitmap_mismatches;
 
 struct ntfsls_dirent {
 	ntfs_volume *vol;
@@ -6629,7 +6634,9 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 		}
 #endif
 		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_IDX_BITMAP_MISMATCH, &pctx)) {
+		index_bitmap_mismatches++;
+		if (index_bitmap_repair_decided &&
+				index_bitmap_repair_approved) {
 			wcnt = ntfs_attr_pwrite(bm_na, 0, ibm_size, ni->fsck_ibm);
 			if (wcnt == ibm_size)
 				fsck_err_fixed();
@@ -10653,6 +10660,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	fn_allocated_size_mismatches = 0;
 	fn_data_size_mismatches = 0;
 	corrupt_index_entries = 0;
+	index_bitmap_mismatches = 0;
 	saved_fixup_suppress = NVolFsckSuppressFixupWarn(vol);
 	NVolSetFsckSuppressFixupWarn(vol);
 
@@ -10750,6 +10758,18 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	ntfsck_check_reparse_index(vol);
 
 out:
+	if (index_bitmap_mismatches) {
+		ntfs_log_error("Directory index bitmap: %"PRIu64" mismatch(es) "
+				"were found", index_bitmap_mismatches);
+		if (!index_bitmap_repair_decided) {
+			ntfs_log_error(", apply the checked bitmaps to disk. Fix it? ");
+			index_bitmap_repair_approved = ntfs_ask_repair(vol);
+			index_bitmap_repair_decided = TRUE;
+			index_bitmap_repair_retry =
+				index_bitmap_repair_approved;
+		} else
+			ntfs_log_error("; individual messages were suppressed.\n");
+	}
 	if (corrupt_index_entries) {
 		ntfs_log_error("Directory index: %"PRIu64" corrupted entry(ies) "
 				"were found", corrupt_index_entries);
@@ -11067,6 +11087,9 @@ conflict_option:
 		corrupt_index_repair_decided = FALSE;
 		corrupt_index_repair_approved = FALSE;
 		corrupt_index_repair_retry = FALSE;
+		index_bitmap_repair_decided = FALSE;
+		index_bitmap_repair_approved = FALSE;
+		index_bitmap_repair_retry = FALSE;
 		for (round = 0; ; round++) {
 			BOOL orphan_changed = FALSE;
 
@@ -11078,7 +11101,8 @@ conflict_option:
 			if (ntfsck_run_repair_passes(vol, &orphan_changed))
 				goto err_out;
 			if (fixup_repair_retry || fn_size_repair_retry ||
-					corrupt_index_repair_retry) {
+					corrupt_index_repair_retry ||
+					index_bitmap_repair_retry) {
 				/*
 				 * The retry counts and fixes these records together, so
 				 * exclude the preflight copies from whole-run totals.
@@ -11090,6 +11114,7 @@ conflict_option:
 				fixup_repair_retry = FALSE;
 				fn_size_repair_retry = FALSE;
 				corrupt_index_repair_retry = FALSE;
+				index_bitmap_repair_retry = FALSE;
 				goto next_round;
 			}
 

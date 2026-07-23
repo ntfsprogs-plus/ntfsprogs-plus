@@ -9615,7 +9615,52 @@ static BOOL ntfsck_bitmap_consensus_block(ntfs_volume *vol, s64 to_free)
 	}
 	return FALSE;
 }
-static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func func, int wtype)
+static int ntfsck_count_bitmap_mismatches(ntfs_volume *vol, ntfs_attr *na,
+		get_bmp_func func, u64 *mismatches)
+{
+	s64 count, pos, total, remain;
+	s64 rcnt;
+	u8 *disk_bm;
+	u8 *fsck_bm;
+
+	if (!mismatches || (na != vol->lcnbmp_na && na != vol->mftbmp_na))
+		return STATUS_ERROR;
+
+	disk_bm = ntfs_calloc(NTFS_BUF_SIZE);
+	if (!disk_bm)
+		return STATUS_ERROR;
+
+	pos = 0;
+	count = NTFS_BUF_SIZE;
+	total = na->data_size;
+	remain = total;
+	if (total < count)
+		count = total;
+
+	while (remain) {
+		rcnt = ntfs_attr_pread(na, pos, count, disk_bm);
+		if (rcnt != count) {
+			ntfs_log_error("Couldn't get $Bitmap while counting mismatches\n");
+			free(disk_bm);
+			return STATUS_ERROR;
+		}
+
+		fsck_bm = func(vol, pos);
+		if (memcmp(fsck_bm, disk_bm, count))
+			(*mismatches)++;
+
+		pos += count;
+		remain -= count;
+		if (remain && remain < NTFS_BUF_SIZE)
+			count = remain;
+	}
+
+	free(disk_bm);
+	return STATUS_OK;
+}
+
+static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func func,
+		int wtype, BOOL repair_decided, BOOL repair_approved)
 {
 	s64 count, pos, total, remain;
 	s64 rcnt, wcnt;
@@ -9721,7 +9766,8 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 		if (wtype == FSCK_BMP_FINAL)
 			fsck_err_found();
 
-		if (ntfs_fix_problem(vol, na == vol->mftbmp_na ?
+		if (repair_decided ? repair_approved :
+				ntfs_fix_problem(vol, na == vol->mftbmp_na ?
 					PR_MFT_BITMAP_MISMATCH :
 					PR_CLUSTER_BITMAP_MISMATCH, &pctx)) {
 			if (wtype == FSCK_BMP_INITIAL)
@@ -9765,15 +9811,32 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 	struct orphan_mft *entry = NULL;
 	ntfs_inode *root_ni;
 	u64 cnt = 1;
+	u64 bitmap_mismatches = 0;
 	BOOL repair_orphans = FALSE;
+	BOOL bitmap_repair_decided = FALSE;
+	BOOL repair_bitmaps = FALSE;
 
 	fsck_start_step("Check orphaned mft...");
 
+	if (ntfsck_count_bitmap_mismatches(vol, vol->lcnbmp_na,
+			ntfs_fsck_find_lcnbmp_block, &bitmap_mismatches) ||
+		ntfsck_count_bitmap_mismatches(vol, vol->mftbmp_na,
+			ntfs_fsck_find_mftbmp_block, &bitmap_mismatches))
+		return STATUS_ERROR;
+	if (bitmap_mismatches) {
+		ntfs_log_error("Found %"PRIu64" inconsistent bitmap block(s). "
+				"Apply bitmap updates to disk? ", bitmap_mismatches);
+		repair_bitmaps = ntfs_ask_repair(vol);
+		bitmap_repair_decided = TRUE;
+	}
+
 	if (ntfsck_apply_bitmap(vol, vol->lcnbmp_na,
-			ntfs_fsck_find_lcnbmp_block, FSCK_BMP_INITIAL))
+			ntfs_fsck_find_lcnbmp_block, FSCK_BMP_INITIAL,
+			bitmap_repair_decided, repair_bitmaps))
 		return STATUS_ERROR;
 	if (ntfsck_apply_bitmap(vol, vol->mftbmp_na,
-			ntfs_fsck_find_mftbmp_block, FSCK_BMP_INITIAL))
+			ntfs_fsck_find_mftbmp_block, FSCK_BMP_INITIAL,
+			bitmap_repair_decided, repair_bitmaps))
 		return STATUS_ERROR;
 
 	progress_init(&prog, 0, orphan_cnt + 1, 1000, pb_flags);
@@ -9827,11 +9890,28 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 		}
 	}
 
+	/* Orphan recovery can create new bitmap changes after the first count. */
+	if (!bitmap_repair_decided) {
+		if (ntfsck_count_bitmap_mismatches(vol, vol->lcnbmp_na,
+				ntfs_fsck_find_lcnbmp_block, &bitmap_mismatches) ||
+				ntfsck_count_bitmap_mismatches(vol, vol->mftbmp_na,
+				ntfs_fsck_find_mftbmp_block, &bitmap_mismatches))
+			return STATUS_ERROR;
+		if (bitmap_mismatches) {
+			ntfs_log_error("Found %"PRIu64" inconsistent bitmap block(s). "
+					"Apply bitmap updates to disk? ", bitmap_mismatches);
+			repair_bitmaps = ntfs_ask_repair(vol);
+			bitmap_repair_decided = TRUE;
+		}
+	}
+
 	if (ntfsck_apply_bitmap(vol, vol->lcnbmp_na,
-			ntfs_fsck_find_lcnbmp_block, FSCK_BMP_FINAL))
+			ntfs_fsck_find_lcnbmp_block, FSCK_BMP_FINAL,
+			bitmap_repair_decided, repair_bitmaps))
 		return STATUS_ERROR;
 	if (ntfsck_apply_bitmap(vol, vol->mftbmp_na,
-			ntfs_fsck_find_mftbmp_block, FSCK_BMP_FINAL))
+			ntfs_fsck_find_mftbmp_block, FSCK_BMP_FINAL,
+			bitmap_repair_decided, repair_bitmaps))
 		return STATUS_ERROR;
 
 	fsck_end_step();

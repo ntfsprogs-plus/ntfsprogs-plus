@@ -189,12 +189,18 @@ struct rl_size {
 
 NTFS_LIST_HEAD(ntfs_dirs_list);
 NTFS_LIST_HEAD(oc_list_head); /* Orphaned mft records Candidate list */
+NTFS_LIST_HEAD(unopenable_mft_list);
 
 struct orphan_mft {
 	u64 mft_no;
 	struct ntfs_list_head oc_list;	/* Orphan Candidate list */
 	struct ntfs_list_head ot_list;	/* Orphan Tree list */
 } orphan_mft_t;
+
+struct unopenable_mft {
+	u64 mft_no;
+	struct ntfs_list_head list;
+};
 
 int parse_count = 1;
 s64 clear_mft_cnt;
@@ -2925,6 +2931,32 @@ static int ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 	return STATUS_OK;
 }
 
+static void ntfsck_clear_unopenable_mft_list(void)
+{
+	struct unopenable_mft *entry;
+
+	while (!ntfs_list_empty(&unopenable_mft_list)) {
+		entry = ntfs_list_entry(unopenable_mft_list.next,
+				struct unopenable_mft, list);
+		ntfs_list_del(&entry->list);
+		free(entry);
+	}
+}
+
+static void ntfsck_add_unopenable_mft(s64 mft_no)
+{
+	struct unopenable_mft *entry;
+
+	entry = malloc(sizeof(*entry));
+	if (!entry) {
+		ntfs_log_error("Could not remember unreadable MFT record %"PRId64
+				" for aggregate repair\n", mft_no);
+		return;
+	}
+	entry->mft_no = mft_no;
+	ntfs_list_add_tail(&entry->list, &unopenable_mft_list);
+}
+
 static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	ntfs_inode *ni = NULL;
@@ -2965,19 +2997,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 		fsck_err_found();
 		orphan_mft_open_failures++;
-		if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_OPEN_FAILURE, &pctx)) {
-			if (ntfsck_check_mft_record_unused(vol, mft_num))
-				return;
-			if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
-				ntfs_log_error("ntfs_bitmap_clear_bit failed, errno : %d\n",
-						errno);
-				return;
-			}
-			ntfs_fsck_mftbmp_clear(vol, mft_num);
-			check_mftrec_in_use(vol, mft_num, 1);
-			clear_mft_cnt++;
-			fsck_err_fixed();
-		}
+		ntfsck_add_unopenable_mft(mft_num);
 		return;
 	}
 
@@ -7819,9 +7839,12 @@ static int ntfsck_scan_index_entries(ntfs_volume *vol)
 static void ntfsck_check_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
+	struct unopenable_mft *entry;
 	problem_context_t pctx = {0, };
+	BOOL clear_unopenable_mft = FALSE;
 
 	fsck_start_step("Scan orphaned MFTs candidiates...");
+	ntfsck_clear_unopenable_mft_list();
 	orphan_mft_open_failures = 0;
 
 	if (namespace_walk_failed) {
@@ -7850,13 +7873,34 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 		progress_update(&prog, mft_num + 1);
 	}
 
+	if (orphan_mft_open_failures) {
+		ntfs_log_error("Orphan MFT scan: %"PRIu64" allocated record(s) "
+				"could not be opened, clear their MFT bitmap entries. "
+				"Fix it? ", orphan_mft_open_failures);
+		clear_unopenable_mft = ntfs_ask_repair(vol);
+	}
+
+	while (!ntfs_list_empty(&unopenable_mft_list)) {
+		entry = ntfs_list_entry(unopenable_mft_list.next,
+				struct unopenable_mft, list);
+		ntfs_list_del(&entry->list);
+		if (clear_unopenable_mft) {
+			if (!ntfsck_check_mft_record_unused(vol, entry->mft_no) &&
+					!ntfs_bitmap_clear_bit(vol->mftbmp_na,
+						entry->mft_no)) {
+				ntfs_fsck_mftbmp_clear(vol, entry->mft_no);
+				check_mftrec_in_use(vol, entry->mft_no, 1);
+				clear_mft_cnt++;
+				fsck_err_fixed();
+			} else
+				ntfs_log_error("Failed to clear MFT bitmap of inode "
+						"%"PRIu64"\n", entry->mft_no);
+		}
+		free(entry);
+	}
+
 	if (clear_mft_cnt)
 		ntfs_log_info("Clear MFT bitmap count:%"PRId64"\n", clear_mft_cnt);
-	if (orphan_mft_open_failures &&
-			(NVolFsNoRepair(vol) || NVolFsAutoRepair(vol)))
-		ntfs_log_error("Orphan MFT scan: %"PRIu64" allocated record(s) "
-				"could not be opened; individual repair messages were "
-				"suppressed.\n", orphan_mft_open_failures);
 
 	fsck_end_step();
 }

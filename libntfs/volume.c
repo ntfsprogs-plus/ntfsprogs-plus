@@ -87,7 +87,6 @@ static const char *fallback_readonly_msg =
 
 int fsck_errors;
 int fsck_fixes;
-int parse_errors;
 
 /**
  * ntfs_volume_alloc - Create an NTFS volume object and initialise it
@@ -217,6 +216,41 @@ static int ntfs_attr_setup_flag(ntfs_inode *ni)
  *
  * Return 0 on success and -1 on error with errno set to the error code.
  */
+static BOOL ntfs_valid_resident_file_name_attr(ntfs_volume *vol,
+		ntfs_attr_search_ctx *ctx)
+{
+	u8 *mrec_start, *mrec_end, *attr_start;
+	ATTR_RECORD *attr;
+	u32 attr_length, value_length;
+	u16 value_offset;
+
+	if (!vol || !ctx || !ctx->mrec || !ctx->attr)
+		return FALSE;
+	mrec_start = (u8 *)ctx->mrec;
+	mrec_end = mrec_start + vol->mft_record_size;
+	attr_start = (u8 *)ctx->attr;
+	if (attr_start < mrec_start ||
+			attr_start > mrec_end - offsetof(ATTR_RECORD, resident_end))
+		return FALSE;
+	attr = ctx->attr;
+	if (attr->non_resident)
+		return FALSE;
+	attr_length = le32_to_cpu(attr->length);
+	value_length = le32_to_cpu(attr->value_length);
+	value_offset = le16_to_cpu(attr->value_offset);
+	if (attr_length < offsetof(ATTR_RECORD, resident_end) ||
+			attr_length > (u32)(mrec_end - attr_start) ||
+			value_offset > attr_length ||
+			value_length > attr_length - value_offset ||
+			value_length < offsetof(FILE_NAME_ATTR, file_name))
+		return FALSE;
+	if (value_length < offsetof(FILE_NAME_ATTR, file_name) +
+			((FILE_NAME_ATTR *)(attr_start + value_offset))->file_name_length *
+			sizeof(ntfschar))
+		return FALSE;
+	return TRUE;
+}
+
 static int ntfs_mft_load(ntfs_volume *vol)
 {
 	VCN next_vcn, last_vcn, highest_vcn;
@@ -394,6 +428,11 @@ mft_has_no_attr_list:
 	}
 
 	/* Check if filename is "$MFT" */
+	if (!ntfs_valid_resident_file_name_attr(vol, ctx)) {
+		ntfs_log_error("Corrupt FILE_NAME in $MFT record\n");
+		errno = EIO;
+		goto error_exit;
+	}
 	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
 			le16_to_cpu(ctx->attr->value_offset));
 	filename = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
@@ -501,6 +540,11 @@ static int ntfs_mftmirr_load(ntfs_volume *vol)
 	}
 
 	/* Check if filename is "$MFTMirr" */
+	if (!ntfs_valid_resident_file_name_attr(vol, ctx)) {
+		ntfs_log_error("Corrupt FILE_NAME in $MFTMirr record\n");
+		errno = EIO;
+		goto error_exit;
+	}
 	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
 			le16_to_cpu(ctx->attr->value_offset));
 	filename = ntfs_attr_name_get(fn->file_name, fn->file_name_length);

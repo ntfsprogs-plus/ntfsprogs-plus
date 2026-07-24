@@ -201,6 +201,8 @@ static u64 orphan_parent_add_failures;
 static u64 orphan_parent_index_conflicts;
 static u64 orphan_lost_found_relinks;
 static u64 orphan_filename_removals;
+/* Set only when pass 5 changes namespace reachability. */
+static BOOL orphan_recovery_changed;
 
 enum ntfsck_deferred_index_type {
 	NTFSCK_DEFER_INDEX_BITMAP,
@@ -10062,6 +10064,7 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 				return STATUS_ERROR;
 			}
 			fsck_err_fixed();
+			orphan_recovery_changed = TRUE;
 			progress_update(&prog, cnt);
 		} else {
 			ntfs_list_del(&entry->oc_list);
@@ -10968,8 +10971,6 @@ static void ntfsck_ask_reparse_index_repairs(ntfs_volume *vol)
 static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 {
 	int ret = 0;
-	int orphan_fixes_before;
-	BOOL had_orphan_candidates;
 	BOOL saved_fixup_suppress;
 
 	if (orphan_changed)
@@ -10999,6 +11000,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	orphan_parent_index_conflicts = 0;
 	orphan_lost_found_relinks = 0;
 	orphan_filename_removals = 0;
+	orphan_recovery_changed = FALSE;
 	saved_fixup_suppress = NVolFsckSuppressFixupWarn(vol);
 	NVolSetFsckSuppressFixupWarn(vol);
 
@@ -11071,8 +11073,6 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	}
 
 	/* pass 5 */
-	orphan_fixes_before = fsck_fixes;
-	had_orphan_candidates = !ntfs_list_empty(&oc_list_head);
 	if (ntfsck_check_orphaned_mft(vol)) {
 		ret = -1;
 		goto out;
@@ -11083,12 +11083,12 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	 * when this round made no orphan changes; otherwise the mandatory
 	 * remount/recheck round rebuilds it from the repaired namespace first.
 	 */
-	if (!had_orphan_candidates && fsck_fixes == orphan_fixes_before) {
+	if (!orphan_recovery_changed) {
 		ntfsck_verify_file_name_index_links(vol);
 		ntfsck_verify_namespace_reachability(vol);
 	}
 	if (orphan_changed)
-		*orphan_changed = (fsck_fixes != orphan_fixes_before);
+		*orphan_changed = orphan_recovery_changed;
 
 	/*
 	 * After the orphan pass settled which records survive, sweep the

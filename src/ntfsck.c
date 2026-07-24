@@ -192,6 +192,12 @@ static u64 stale_index_sequence_entries;
 static BOOL index_bitmap_repair_decided;
 static BOOL index_bitmap_repair_approved;
 static u64 index_bitmap_mismatches;
+/* One response controls clearing all non-zero index-entry reserved fields. */
+static BOOL index_reserved_repair_decided;
+static BOOL index_reserved_repair_approved;
+static BOOL index_reserved_repair_apply_pass;
+static u64 index_reserved_entries;
+static u64 index_reserved_repairs_applied;
 /* One response controls restoration of missing $Extend/$Reparse entries. */
 static BOOL reparse_index_repair_decided;
 static BOOL reparse_index_repair_approved;
@@ -6536,7 +6542,9 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			 * second traversal stops at the root and never reaches mismatches in
 			 * nested directories.
 			 */
-			if (fn_size_repair_apply_pass && ntfsck_is_directory(ie_fn)) {
+			if ((fn_size_repair_apply_pass ||
+					index_reserved_repair_apply_pass) &&
+					ntfsck_is_directory(ie_fn)) {
 				dir = (struct dir *)calloc(1, sizeof(struct dir));
 				if (!dir) {
 					ntfs_log_error("Failed to allocate for subdir.\n");
@@ -6950,6 +6958,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	int ret = STATUS_OK;
 	int ie_ret;
 	BOOL ir_repaired = FALSE;
+	u64 reserved_entries = 0;
 	INDEX_ENTRY *prev_ie = NULL;
 	COLLATE collate;
 	problem_context_t pctx = {0, };
@@ -7076,12 +7085,13 @@ bad_root_subnode:
 		 * so clear it.
 		 */
 		if (ie->reserved) {
-			fsck_err_found();
-			if (ntfs_fix_problem(vol, PR_IE_RESERVED_NOT_ZERO,
-						&pctx)) {
+			if (!index_reserved_repair_apply_pass)
+				reserved_entries++;
+			else if (index_reserved_repair_approved) {
 				ie->reserved = 0;
 				ir_repaired = TRUE;
 				fsck_err_fixed();
+				index_reserved_repairs_applied++;
 			}
 		}
 
@@ -7261,13 +7271,13 @@ bad_root_subnode:
 
 			/* Zero reserved header field, as in the root above. */
 			if (ie->reserved) {
-				fsck_err_found();
-				if (ntfs_fix_problem(vol,
-							PR_IE_RESERVED_NOT_ZERO,
-							&pctx)) {
+				if (!index_reserved_repair_apply_pass)
+					reserved_entries++;
+				else if (index_reserved_repair_approved) {
 					ie->reserved = 0;
 					ib_repaired = TRUE;
 					fsck_err_fixed();
+					index_reserved_repairs_applied++;
 				}
 			}
 
@@ -7346,6 +7356,13 @@ bad_root_subnode:
 						") are out of order across "
 						"nodes\n", ni->mft_no);
 			goto initialize_index;
+		}
+	}
+	if (!index_reserved_repair_apply_pass) {
+		while (reserved_entries) {
+			reserved_entries--;
+			fsck_err_found();
+			index_reserved_entries++;
 		}
 	}
 
@@ -10923,19 +10940,28 @@ static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol)
 	 * again after the count pass fails on damaged directory B-trees even when
 	 * their sequential walk is still usable.
 	 */
-	if (fn_size_repair_approved &&
-			(fn_allocated_size_mismatches || fn_data_size_mismatches)) {
+	if ((fn_size_repair_approved &&
+			(fn_allocated_size_mismatches || fn_data_size_mismatches)) ||
+			(index_reserved_repair_approved && index_reserved_entries)) {
 		u64 expected = fn_allocated_size_mismatches +
 				fn_data_size_mismatches;
+		u64 expected_reserved = index_reserved_entries;
 
 		fn_size_repairs_applied = 0;
+		index_reserved_repairs_applied = 0;
 		fn_size_repair_apply_pass = TRUE;
+		index_reserved_repair_apply_pass = TRUE;
 		if (ntfsck_scan_index_entries_btree(vol))
-			ntfs_log_error("  * FILE_NAME size repair traversal failed.\n");
+			ntfs_log_error("  * Deferred directory index repair traversal "
+					"failed.\n");
 		fn_size_repair_apply_pass = FALSE;
+		index_reserved_repair_apply_pass = FALSE;
 		if (fn_size_repairs_applied < expected)
 			ntfs_log_error("  * FILE_NAME sizes not updated: %"PRIu64"\n",
 					expected - fn_size_repairs_applied);
+		if (index_reserved_repairs_applied < expected_reserved)
+			ntfs_log_error("  * Index reserved fields not cleared: %"PRIu64"\n",
+					expected_reserved - index_reserved_repairs_applied);
 	}
 }
 
@@ -10995,15 +11021,25 @@ corrupt_entries:
 file_name_sizes:
 	if (fn_allocated_size_mismatches || fn_data_size_mismatches) {
 		if (fn_size_repair_decided)
-			return;
-		ntfs_log_error("  * FILE_NAME size: %"PRIu64" allocated-size "
-				"mismatch(es).\n", fn_allocated_size_mismatches);
-		ntfs_log_error("    %"PRIu64" data-size mismatch(es) were found.\n",
-				fn_data_size_mismatches);
-		ntfs_log_error("    Update their directory index entries. "
-				"Fix it? ");
-		fn_size_repair_approved = ntfs_ask_repair(vol);
-		fn_size_repair_decided = TRUE;
+			goto index_reserved;
+		else {
+			ntfs_log_error("  * FILE_NAME size: %"PRIu64" allocated-size "
+					"mismatch(es).\n", fn_allocated_size_mismatches);
+			ntfs_log_error("    %"PRIu64" data-size mismatch(es) were found.\n",
+					fn_data_size_mismatches);
+			ntfs_log_error("    Update their directory index entries. "
+					"Fix it? ");
+			fn_size_repair_approved = ntfs_ask_repair(vol);
+			fn_size_repair_decided = TRUE;
+		}
+	}
+index_reserved:
+	if (index_reserved_entries && !index_reserved_repair_decided) {
+		ntfs_log_error("  * Index entry reserved field: %"PRIu64" non-zero "
+				"field(s) were found.\n", index_reserved_entries);
+		ntfs_log_error("    Clear them. Fix it? ");
+		index_reserved_repair_approved = ntfs_ask_repair(vol);
+		index_reserved_repair_decided = TRUE;
 	}
 }
 
@@ -11049,6 +11085,9 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	fn_allocated_size_mismatches = 0;
 	fn_data_size_mismatches = 0;
 	fn_size_repairs_applied = 0;
+	index_reserved_repair_apply_pass = FALSE;
+	index_reserved_entries = 0;
+	index_reserved_repairs_applied = 0;
 	corrupt_index_entries = 0;
 	stale_index_sequence_entries = 0;
 	index_bitmap_mismatches = 0;
@@ -11509,6 +11548,8 @@ conflict_option:
 		corrupt_index_repair_approved = FALSE;
 		index_bitmap_repair_decided = FALSE;
 		index_bitmap_repair_approved = FALSE;
+		index_reserved_repair_decided = FALSE;
+		index_reserved_repair_approved = FALSE;
 		reparse_index_repair_decided = FALSE;
 		reparse_index_repair_approved = FALSE;
 		cluster_dup_repair_decided = FALSE;

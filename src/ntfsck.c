@@ -2311,6 +2311,11 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 		free(tfn);
 		return STATUS_ERROR;
 	}
+	/*
+	 * The index entry above is built from tfn, but the orphan's resident
+	 * FILE_NAME is fn. Keep both parent references identical.
+	 */
+	fn->parent_directory = tfn->parent_directory;
 	free(tfn);
 
 	/*

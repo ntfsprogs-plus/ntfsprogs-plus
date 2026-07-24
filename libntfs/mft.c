@@ -426,14 +426,6 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 		 * +8 mean the attribute terminator.
 		 */
 		if (a->type == AT_END) {
-			if (is_ntfs_3x && is_fsck && !NVolFsNoRepair(vol) &&
-					(le32_to_cpu(m->mft_record_number) != MREF(mref))) {
-				fsck_err_found();
-				vol->fsck_mft_record_number_fix_count++;
-				m->mft_record_number = cpu_to_le32(MREF(mref));
-				fixed = TRUE;
-				fsck_err_fixed();
-			}
 			current_flags = le16_to_cpu(m->flags);
 			expected_flags = current_flags & le16_to_cpu(MFT_RECORD_IN_USE);
 			/* IS_4 and IS_VIEW_INDEX cannot be derived from attributes; carry as-is */

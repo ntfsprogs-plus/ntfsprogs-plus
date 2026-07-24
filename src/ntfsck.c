@@ -10768,6 +10768,64 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 }
 
 /*
+ * Correct the NTFS 3.1 record-number field after every pass has finished
+ * writing MFT records. Repairing it while an inode is opened can be undone
+ * later in the same run when another path closes an older copy of that MFT
+ * record.
+ */
+static void ntfsck_finalize_mft_record_numbers(ntfs_volume *vol)
+{
+	MFT_RECORD *mrec;
+	s64 mft_no;
+	s64 nr_mft_records;
+	s64 pos;
+	u64 failed = 0;
+	BOOL is_ntfs_3x;
+
+	is_ntfs_3x = vol->major_ver > 3 ||
+			(vol->major_ver == 3 && vol->minor_ver);
+	if (!is_ntfs_3x || NVolFsNoRepair(vol))
+		return;
+
+	mrec = ntfs_malloc(vol->mft_record_size);
+	if (!mrec) {
+		ntfs_log_error("Failed to allocate MFT record-number buffer.\n");
+		return;
+	}
+	nr_mft_records = vol->mft_na->initialized_size >>
+			vol->mft_record_size_bits;
+	for (mft_no = FILE_MFT; mft_no < nr_mft_records; mft_no++) {
+		if (check_mftrec_in_use(vol, mft_no, 0) <= 0)
+			continue;
+		if (ntfs_attr_mst_pread(vol->mft_na,
+				mft_no << vol->mft_record_size_bits, 1,
+				vol->mft_record_size, mrec) != 1 ||
+				!ntfs_is_file_record(mrec->magic))
+			continue;
+		if (le32_to_cpu(mrec->mft_record_number) == (u32)mft_no)
+			continue;
+
+		fsck_err_found();
+		mrec->mft_record_number = cpu_to_le32(mft_no);
+		pos = (mft_no << vol->mft_record_size_bits) +
+			offsetof(MFT_RECORD, mft_record_number);
+		if (ntfs_attr_pwrite(vol->mft_na, pos,
+					sizeof(mrec->mft_record_number),
+					&mrec->mft_record_number) !=
+				sizeof(mrec->mft_record_number)) {
+			failed++;
+			continue;
+		}
+		vol->fsck_mft_record_number_fix_count++;
+		fsck_err_fixed();
+	}
+	free(mrec);
+	if (failed)
+		ntfs_log_error("  * MFT record number: %"PRIu64" repair(s) could "
+				"not be written.\n", failed);
+}
+
+/*
  * Upper bound on repair rounds. Each round strictly reduces the number of
  * errors left (see the loop in main()), so a handful of rounds is plenty; the
  * cap only guards against a pathological volume that never settles.
@@ -11098,6 +11156,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	ntfsck_check_reparse_index(vol);
 	ntfsck_ask_reparse_index_repairs(vol);
 	ntfsck_apply_deferred_reparse_repairs(vol);
+	ntfsck_finalize_mft_record_numbers(vol);
 
 out:
 	if (vol->fsck_mft_record_number_fix_count) {

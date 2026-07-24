@@ -415,8 +415,11 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 				} else
 					goto err_out;
 			} else {
-				ntfs_log_error("Corrupted MFT record %llu\n",
-						(unsigned long long)MREF(mref));
+				if (is_fsck)
+					vol->fsck_corrupt_mft_record_count++;
+				else
+					ntfs_log_error("Corrupted MFT record %llu\n",
+							(unsigned long long)MREF(mref));
 				goto err_out;
 			}
 		}

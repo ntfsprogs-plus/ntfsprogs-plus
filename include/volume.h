@@ -366,6 +366,7 @@ struct _ntfs_volume {
 	u64 fsck_mft_next_attr_instance_fix_count; /* corrected MFT attribute instances */
 	u64 fsck_mft_in_use_flag_fix_count; /* restored MFT in-use flags */
 	u64 fsck_missing_standard_information_count; /* unreadable base records */
+	u64 fsck_corrupt_mft_record_count; /* structurally corrupt MFT records seen */
 	u8 *fsck_lcn_arena;	/* mmap'd scratch backing literal blocks (opt-in), else NULL */
 	s64 fsck_lcn_arena_size;	/* byte size of the mmap arena */
 	int fsck_lcn_arena_fd;	/* fd of the unlinked scratch file, or -1 */

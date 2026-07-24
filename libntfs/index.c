@@ -392,7 +392,9 @@ INDEX_ROOT *ntfs_ir_lookup(ntfs_inode *ni, ntfschar *name,
 
 	if (ntfs_attr_lookup(AT_INDEX_ROOT, name, name_len, CASE_SENSITIVE,
 				0, NULL, 0, *ctx)) {
-		ntfs_log_perror("Failed to lookup $INDEX_ROOT");
+		/* A missing index root is a normal probe failure for callers. */
+		if (errno != ENOENT)
+			ntfs_log_perror("Failed to lookup $INDEX_ROOT");
 		goto err_out;
 	}
 
@@ -1754,7 +1756,8 @@ int ntfs_ie_add(ntfs_index_context *icx, INDEX_ENTRY *ie)
 			goto err_out;
 		}
 		if (errno != ENOENT) {
-			ntfs_log_perror("Failed to find place for new entry");
+			/* The caller supplies the operation-specific failure summary. */
+			ntfs_log_debug("Failed to find place for new index entry\n");
 			goto err_out;
 		}
 

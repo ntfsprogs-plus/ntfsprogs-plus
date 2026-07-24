@@ -197,6 +197,7 @@ static BOOL reparse_index_repair_decided;
 static BOOL reparse_index_repair_approved;
 static u64 missing_reparse_index_entries;
 /* Outcomes from the approved orphan relink operation. */
+static u64 orphan_missing_parent_references;
 static u64 orphan_parent_add_failures;
 static u64 orphan_parent_index_conflicts;
 static u64 orphan_lost_found_relinks;
@@ -2795,9 +2796,7 @@ stack_of:
 					goto stack_of;
 				}
 
-				ntfs_log_error("Not found parent inode(%"PRIu64")"
-						"of inode(%"PRIu64") in orphaned list\n",
-						MREF(parent_no), ni->mft_no);
+				orphan_missing_parent_references++;
 				goto add_to_lostfound;
 			}
 
@@ -10071,9 +10070,16 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 			free(entry);
 		}
 	}
-	if (orphan_parent_add_failures) {
-		ntfs_log_error("Orphan recovery: %"PRIu64" parent add failure(s)",
-				orphan_parent_add_failures);
+	if (orphan_missing_parent_references || orphan_parent_add_failures) {
+		ntfs_log_error("Orphan recovery:");
+		if (orphan_missing_parent_references)
+			ntfs_log_error(" %"PRIu64" missing parent reference(s)",
+					orphan_missing_parent_references);
+		if (orphan_missing_parent_references && orphan_parent_add_failures)
+			ntfs_log_error(",");
+		if (orphan_parent_add_failures)
+			ntfs_log_error(" %"PRIu64" parent add failure(s)",
+					orphan_parent_add_failures);
 		if (orphan_parent_index_conflicts)
 			ntfs_log_error(" (%"PRIu64" conflicting parent index "
 					"reference(s))",
@@ -11054,6 +11060,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	vol->fsck_mft_in_use_flag_fix_count = 0;
 	vol->fsck_missing_standard_information_count = 0;
 	clear_mft_cnt = 0;
+	orphan_missing_parent_references = 0;
 	orphan_parent_add_failures = 0;
 	orphan_parent_index_conflicts = 0;
 	orphan_lost_found_relinks = 0;

@@ -10991,6 +10991,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	missing_reparse_index_entries = 0;
 	cluster_dup_affected_attrs = 0;
 	cluster_dup_clusters = 0;
+	vol->fsck_mft_record_number_fix_count = 0;
 	clear_mft_cnt = 0;
 	orphan_parent_add_failures = 0;
 	orphan_parent_index_conflicts = 0;
@@ -11097,6 +11098,10 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	ntfsck_apply_deferred_reparse_repairs(vol);
 
 out:
+	if (vol->fsck_mft_record_number_fix_count) {
+		ntfs_log_error("  * MFT record number: %"PRIu64" corrupted record(s) "
+				"were fixed.\n", vol->fsck_mft_record_number_fix_count);
+	}
 	if ((cluster_dup_affected_attrs || vol->fsck_lcn_range_dup_count) &&
 			!cluster_dup_repair_decided) {
 		ntfs_log_error("  * Cluster duplication:\n");

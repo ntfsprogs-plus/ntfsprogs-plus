@@ -429,10 +429,7 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 			if (is_ntfs_3x && is_fsck && !NVolFsNoRepair(vol) &&
 					(le32_to_cpu(m->mft_record_number) != MREF(mref))) {
 				fsck_err_found();
-				ntfs_log_error("Inode(%llu): MFT record number is corrupted (%u <> %u). Fixed.\n",
-						(unsigned long long)MREF(mref),
-						(unsigned int)le32_to_cpu(m->mft_record_number),
-						(unsigned int)MREF(mref));
+				vol->fsck_mft_record_number_fix_count++;
 				m->mft_record_number = cpu_to_le32(MREF(mref));
 				fixed = TRUE;
 				fsck_err_fixed();

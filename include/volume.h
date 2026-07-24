@@ -362,6 +362,7 @@ struct _ntfs_volume {
 	u8 **fsck_lcn_bitmap;	/* lcn bitmap of fsck */
 	u32 *fsck_lcn_setcnt;	/* per-block count of set bits, for all-ones collapse */
 	u64 fsck_lcn_range_dup_count; /* duplicates found by generic range marking */
+	u64 fsck_mft_record_number_fix_count; /* corrected MFT record numbers */
 	u8 *fsck_lcn_arena;	/* mmap'd scratch backing literal blocks (opt-in), else NULL */
 	s64 fsck_lcn_arena_size;	/* byte size of the mmap arena */
 	int fsck_lcn_arena_fd;	/* fd of the unlinked scratch file, or -1 */

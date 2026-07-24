@@ -179,8 +179,10 @@ static u64 fixup_salvaged_records;
 /* One response controls all $FILE_NAME size repairs in this fsck run. */
 static BOOL fn_size_repair_decided;
 static BOOL fn_size_repair_approved;
+static BOOL fn_size_repair_apply_pass;
 static u64 fn_allocated_size_mismatches;
 static u64 fn_data_size_mismatches;
+static u64 fn_size_repairs_applied;
 /* One response controls removal of every corrupted directory index entry. */
 static BOOL corrupt_index_repair_decided;
 static BOOL corrupt_index_repair_approved;
@@ -203,7 +205,6 @@ static u64 orphan_filename_removals;
 enum ntfsck_deferred_index_type {
 	NTFSCK_DEFER_INDEX_BITMAP,
 	NTFSCK_DEFER_CORRUPT_ENTRY,
-	NTFSCK_DEFER_FN_SIZE,
 };
 
 struct ntfsck_deferred_index {
@@ -3505,15 +3506,12 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 
 	/* check $FN size fields */
 	if (ni->allocated_size != sle64_to_cpu(ie_fn->allocated_size)) {
-		fsck_err_found();
-		fn_allocated_size_mismatches++;
+		if (!fn_size_repair_apply_pass) {
+			fsck_err_found();
+			fn_allocated_size_mismatches++;
+		}
 		aggregate_size_fix = TRUE;
 		need_fix = TRUE;
-		if (ntfsck_defer_index_repair(NTFSCK_DEFER_FN_SIZE,
-				ictx->ni->mft_no, ictx->entry->indexed_file, ie_fn,
-				le16_to_cpu(ictx->entry->key_length),
-				ni->allocated_size, ni->data_size))
-			ret = STATUS_ERROR;
 		goto fix_index;
 	}
 	/*
@@ -3521,15 +3519,12 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	 * It looks like that Windows does not check MFT/$FN's data size.
 	 */
 	if (ni->data_size != sle64_to_cpu(ie_fn->data_size)) {
-		fsck_err_found();
-		fn_data_size_mismatches++;
+		if (!fn_size_repair_apply_pass) {
+			fsck_err_found();
+			fn_data_size_mismatches++;
+		}
 		aggregate_size_fix = TRUE;
 		need_fix = TRUE;
-		if (ntfsck_defer_index_repair(NTFSCK_DEFER_FN_SIZE,
-				ictx->ni->mft_no, ictx->entry->indexed_file, ie_fn,
-				le16_to_cpu(ictx->entry->key_length),
-				ni->allocated_size, ni->data_size))
-			ret = STATUS_ERROR;
 		goto fix_index;
 	}
 
@@ -3537,17 +3532,24 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	 * $FILE_NAME attrib when ntfs_inode_close() is called */
 fix_index:
 	if (need_fix) {
-		BOOL repair = aggregate_size_fix ? FALSE : ntfs_ask_repair(vol);
+		BOOL repair = aggregate_size_fix ?
+			(fn_size_repair_apply_pass && fn_size_repair_approved) :
+			ntfs_ask_repair(vol);
 
 		if (repair) {
 			ntfs_inode_mark_dirty(ni);
 			NInoFileNameSetDirty(ni);
 
 			ie_fn->allocated_size = cpu_to_sle64(ni->allocated_size);
+			fn->allocated_size = ie_fn->allocated_size;
 			ie_fn->data_size = cpu_to_sle64(ni->data_size);
+			fn->data_size = ie_fn->data_size;
 
-			if (!ntfsck_update_index_entry(ictx))
+			if (!ntfsck_update_index_entry(ictx)) {
 				fsck_err_fixed();
+				if (aggregate_size_fix)
+					fn_size_repairs_applied++;
+			}
 		}
 	}
 
@@ -6509,6 +6511,27 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			if (ntfsck_check_file_name_attr(ni, ie_fn, ictx) < 0) {
 				ntfsck_close_inode(ni);
 				goto remove_index;
+			}
+			/*
+			 * The aggregate FILE_NAME repair pass reuses the bitmap built by the
+			 * counting pass. A checked directory must still be queued, otherwise this
+			 * second traversal stops at the root and never reaches mismatches in
+			 * nested directories.
+			 */
+			if (fn_size_repair_apply_pass && ntfsck_is_directory(ie_fn)) {
+				dir = (struct dir *)calloc(1, sizeof(struct dir));
+				if (!dir) {
+					ntfs_log_error("Failed to allocate for subdir.\n");
+					ntfsck_close_inode(ni);
+					ret = STATUS_ERROR;
+					goto err_out;
+				}
+				dir->mft_no = ni->mft_no;
+				dir->system = (utils_is_system_metadata(ni) == 1) ||
+						((walking_system_dir ||
+						  (utils_is_system_metadata(ictx->ni) == 1)) &&
+						 (ictx->ni->mft_no != FILE_root));
+				ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
 			}
 			ntfsck_close_inode(ni);
 			return STATUS_OK;
@@ -10734,6 +10757,7 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol)
 {
 	struct ntfs_list_head *pos;
+	u64 failed_corrupt_entries = 0;
 
 	/* Restore checked allocation bitmaps before removals mutate the trees. */
 	ntfs_list_for_each(pos, &ntfsck_deferred_index_repairs) {
@@ -10774,58 +10798,26 @@ static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol)
 		repair = ntfs_list_entry(pos, struct ntfsck_deferred_index, list);
 		if (repair->type == NTFSCK_DEFER_INDEX_BITMAP)
 			continue;
-		if (repair->type == NTFSCK_DEFER_CORRUPT_ENTRY &&
-				!corrupt_index_repair_approved)
-			continue;
-		if (repair->type == NTFSCK_DEFER_FN_SIZE &&
-				!fn_size_repair_approved)
+		if (!corrupt_index_repair_approved)
 			continue;
 
 		parent_ni = ntfsck_open_inode(vol, repair->parent_mft_no);
-		if (!parent_ni)
+		if (!parent_ni) {
+			failed_corrupt_entries++;
 			continue;
+		}
 		ictx = ntfs_index_ctx_get(parent_ni, NTFS_INDEX_I30, 4);
 		if (!ictx) {
 			ntfsck_close_inode(parent_ni);
+			failed_corrupt_entries++;
 			continue;
 		}
 		if (!ntfs_index_lookup(repair->data, repair->data_len, ictx) &&
 				ictx->entry->indexed_file == repair->indexed_file) {
-			if (repair->type == NTFSCK_DEFER_CORRUPT_ENTRY) {
-				if (!ntfs_index_rm(ictx)) {
-					fixed = TRUE;
-					if (ictx->actx)
-						ntfs_inode_mark_dirty(
-								ictx->actx->ntfs_ino);
-				}
-			} else {
-				FILE_NAME_ATTR *ie_fn = &ictx->entry->key.file_name;
-				ntfs_inode *child_ni = NULL;
-				ntfs_attr_search_ctx *actx = NULL;
-				FILE_NAME_ATTR *fn = NULL;
-
-				child_ni = ntfsck_open_inode(vol,
-						MREF_LE(repair->indexed_file));
-				if (child_ni)
-					actx = ntfs_attr_get_search_ctx(child_ni, NULL);
-				if (actx)
-					fn = ntfsck_find_file_name_attr(child_ni,
-							(FILE_NAME_ATTR *)repair->data, actx);
-				if (fn) {
-					ie_fn->allocated_size =
-						cpu_to_sle64(repair->allocated_size);
-					ie_fn->data_size = cpu_to_sle64(repair->data_size);
-					fn->allocated_size = ie_fn->allocated_size;
-					fn->data_size = ie_fn->data_size;
-					if (!ntfsck_update_index_entry(ictx)) {
-						ntfs_inode_mark_dirty(child_ni);
-						fixed = TRUE;
-					}
-				}
-				if (actx)
-					ntfs_attr_put_search_ctx(actx);
-				if (child_ni)
-					ntfsck_close_inode(child_ni);
+			if (!ntfs_index_rm(ictx)) {
+				fixed = TRUE;
+				if (ictx->actx)
+					ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
 			}
 		}
 		ntfs_index_ctx_put(ictx);
@@ -10833,9 +10825,33 @@ static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol)
 		if (fixed)
 			fsck_err_fixed();
 		else
-			ntfs_log_error("Failed to apply deferred directory index "
-					"repair in parent(%"PRIu64")\n",
-					repair->parent_mft_no);
+			failed_corrupt_entries++;
+	}
+	if (failed_corrupt_entries) {
+		ntfs_log_error("  * Deferred directory index repairs could not be "
+				"applied.\n");
+		ntfs_log_error("    Corrupted entries not removed: %"PRIu64"\n",
+				failed_corrupt_entries);
+	}
+
+	/*
+	 * Size repairs must use the live traversal context. Looking each key up
+	 * again after the count pass fails on damaged directory B-trees even when
+	 * their sequential walk is still usable.
+	 */
+	if (fn_size_repair_approved &&
+			(fn_allocated_size_mismatches || fn_data_size_mismatches)) {
+		u64 expected = fn_allocated_size_mismatches +
+				fn_data_size_mismatches;
+
+		fn_size_repairs_applied = 0;
+		fn_size_repair_apply_pass = TRUE;
+		if (ntfsck_scan_index_entries_btree(vol))
+			ntfs_log_error("  * FILE_NAME size repair traversal failed.\n");
+		fn_size_repair_apply_pass = FALSE;
+		if (fn_size_repairs_applied < expected)
+			ntfs_log_error("  * FILE_NAME sizes not updated: %"PRIu64"\n",
+					expected - fn_size_repairs_applied);
 	}
 }
 
@@ -10947,8 +10963,10 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	fixup_candidate_bitmap_size = 0;
 	fixup_salvage_candidates = 0;
 	fixup_salvaged_records = 0;
+	fn_size_repair_apply_pass = FALSE;
 	fn_allocated_size_mismatches = 0;
 	fn_data_size_mismatches = 0;
+	fn_size_repairs_applied = 0;
 	corrupt_index_entries = 0;
 	stale_index_sequence_entries = 0;
 	index_bitmap_mismatches = 0;

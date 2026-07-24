@@ -258,6 +258,18 @@ struct orphan_mft {
 	struct ntfs_list_head ot_list;	/* Orphan Tree list */
 } orphan_mft_t;
 
+static void ntfsck_clear_orphan_list(void)
+{
+	struct orphan_mft *entry;
+
+	while (!ntfs_list_empty(&oc_list_head)) {
+		entry = ntfs_list_entry(oc_list_head.next,
+				struct orphan_mft, oc_list);
+		ntfs_list_del(&entry->oc_list);
+		free(entry);
+	}
+}
+
 struct unopenable_mft {
 	u64 mft_no;
 	struct ntfs_list_head list;
@@ -9998,10 +10010,12 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 	struct orphan_mft *entry = NULL;
 	ntfs_inode *root_ni;
 	u64 cnt = 1;
+	u64 orphan_mft_no;
 	u64 bitmap_mismatches = 0;
 	BOOL repair_orphans = FALSE;
 	BOOL bitmap_repair_decided = FALSE;
 	BOOL repair_bitmaps = FALSE;
+	int ret = STATUS_OK;
 
 	fsck_start_step("Check orphaned mft.");
 
@@ -10064,15 +10078,18 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 
 		fsck_err_found();
 		if (repair_orphans) {
+			orphan_mft_no = entry->mft_no;
 			if (ntfsck_add_index_entry_orphaned_file(vol, entry)) {
 				/*
-				 * error returned.
-				 * inode is already freed and closed in that function,
+				 * The helper has moved and released this entry. Continue draining the
+				 * candidate list so no stale candidates survive into another repair pass,
+				 * but preserve the failed status.
 				 */
 				ntfs_log_error("failed to add entry(%"PRIu64
 						") orphaned file\n",
-						entry->mft_no);
-				return STATUS_ERROR;
+						orphan_mft_no);
+				ret = STATUS_ERROR;
+				continue;
 			}
 			fsck_err_fixed();
 			orphan_recovery_changed = TRUE;
@@ -10129,7 +10146,7 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 			bitmap_repair_decided, repair_bitmaps))
 		return STATUS_ERROR;
 
-	return STATUS_OK;
+	return ret;
 }
 
 static int _ntfsck_check_backup_boot(ntfs_volume *vol, s64 sector, u8 *buf)
@@ -11101,6 +11118,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	orphan_lost_found_relinks = 0;
 	orphan_filename_removals = 0;
 	orphan_recovery_changed = FALSE;
+	ntfsck_clear_orphan_list();
 	orphan_cnt = 0;
 	corrupt_nonresident_runlists = 0;
 	saved_fixup_suppress = NVolFsckSuppressFixupWarn(vol);

@@ -2195,8 +2195,6 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	err = ntfs_index_add_filename(parent_ni, tfn, MK_MREF(ni->mft_no,
 				le16_to_cpu(ni->mrec->sequence_number)));
 	if (err) {
-		ntfs_log_error("Failed to add index(%"PRIu64") to parent(%"PRIu64") "
-				"err(%d)\n", ni->mft_no, parent_ni->mft_no, err);
 		err = -EIO;
 		free(tfn);
 		/* if parent_ni != lost+found, then add inode to lostfound */

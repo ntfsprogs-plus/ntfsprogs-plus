@@ -6589,9 +6589,8 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 				ntfsck_close_inode(ni);
 				goto remove_index;
 			} else if (ret) {
-				ntfs_log_error("Failed to validate inode(%"PRIu64") "
-						"from parent(%"PRIu64") without deleting its "
-						"index entry.\n",
+				ntfs_log_debug("Failed to validate inode(%"PRIu64") "
+						"from parent(%"PRIu64").\n",
 						ni->mft_no, ictx->ni->mft_no);
 				ntfsck_close_inode(ni);
 				goto remove_index;

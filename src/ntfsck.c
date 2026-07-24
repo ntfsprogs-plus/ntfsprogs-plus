@@ -1010,8 +1010,7 @@ static ntfs_inode *ntfsck_open_inode_after_raw_mft_check(ntfs_volume *vol,
 		dirty = ntfsck_repair_raw_index_root_fields(vol, mft_no, mrec);
 		if (expect_in_use && NVolFsck(vol) && !NVolFsNoRepair(vol) &&
 				!(mrec->flags & MFT_RECORD_IN_USE)) {
-			ntfs_log_error("Inode(%llu): MFT in-use flag is cleared but the MFT bitmap marks it allocated. Fixed.\n",
-					(unsigned long long)mft_no);
+			vol->fsck_mft_in_use_flag_fix_count++;
 			mrec->flags |= MFT_RECORD_IN_USE;
 			dirty = TRUE;
 		}
@@ -10992,6 +10991,9 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	cluster_dup_affected_attrs = 0;
 	cluster_dup_clusters = 0;
 	vol->fsck_mft_record_number_fix_count = 0;
+	vol->fsck_mft_next_attr_instance_fix_count = 0;
+	vol->fsck_mft_in_use_flag_fix_count = 0;
+	vol->fsck_missing_standard_information_count = 0;
 	clear_mft_cnt = 0;
 	orphan_parent_add_failures = 0;
 	orphan_parent_index_conflicts = 0;
@@ -11101,6 +11103,21 @@ out:
 	if (vol->fsck_mft_record_number_fix_count) {
 		ntfs_log_error("  * MFT record number: %"PRIu64" corrupted record(s) "
 				"were fixed.\n", vol->fsck_mft_record_number_fix_count);
+	}
+	if (vol->fsck_mft_next_attr_instance_fix_count) {
+		ntfs_log_error("  * MFT next attribute instance: %"PRIu64" corrupted "
+				"record(s) were fixed.\n",
+				vol->fsck_mft_next_attr_instance_fix_count);
+	}
+	if (vol->fsck_mft_in_use_flag_fix_count) {
+		ntfs_log_error("  * MFT in-use flag: %"PRIu64" record(s) were restored "
+				"from the MFT bitmap.\n",
+				vol->fsck_mft_in_use_flag_fix_count);
+	}
+	if (vol->fsck_missing_standard_information_count) {
+		ntfs_log_error("  * STANDARD_INFORMATION: %"PRIu64" base record(s) "
+				"are missing the attribute.\n",
+				vol->fsck_missing_standard_information_count);
 	}
 	if ((cluster_dup_affected_attrs || vol->fsck_lcn_range_dup_count) &&
 			!cluster_dup_repair_decided) {

@@ -469,10 +469,7 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 					(le16_to_cpu(m->next_attr_instance) <=
 					 max_attr_instance)) {
 				fsck_err_found();
-				ntfs_log_error("Inode(%llu): MFT next attribute instance is corrupted (%u <> %u). Fixed.\n",
-						(unsigned long long)MREF(mref),
-						(unsigned int)le16_to_cpu(m->next_attr_instance),
-						(unsigned int)expected_next_attr_instance);
+				vol->fsck_mft_next_attr_instance_fix_count++;
 				m->next_attr_instance =
 						cpu_to_le16(expected_next_attr_instance);
 				fixed = TRUE;

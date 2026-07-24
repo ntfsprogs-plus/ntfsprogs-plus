@@ -188,6 +188,10 @@ static BOOL corrupt_index_repair_decided;
 static BOOL corrupt_index_repair_approved;
 static u64 corrupt_index_entries;
 static u64 stale_index_sequence_entries;
+static u64 corrupt_index_unopenable_inodes;
+static u64 corrupt_index_reference_failures;
+static u64 corrupt_index_inode_validation_failures;
+static u64 corrupt_index_sync_failures;
 /* One response controls all directory index bitmap content repairs. */
 static BOOL index_bitmap_repair_decided;
 static BOOL index_bitmap_repair_approved;
@@ -6604,12 +6608,14 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 
 			/* Check file type */
 			if (ntfsck_check_file_type(ni, ictx, ie_fn) < 0) {
+				corrupt_index_reference_failures++;
 				ntfsck_close_inode(ni);
 				goto remove_index;
 			}
 
 			/* check $FILE_NAME */
 			if (ntfsck_check_file_name_attr(ni, ie_fn, ictx) < 0) {
+				corrupt_index_reference_failures++;
 				ntfsck_close_inode(ni);
 				goto remove_index;
 			}
@@ -6658,6 +6664,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		} else {
 			ret = ntfsck_check_inode(ni, ie, ictx);
 			if (ret == STATUS_NOT_FOUND) {
+				corrupt_index_inode_validation_failures++;
 				NInoFileNameClearDirty(ni);
 				NInoAttrListClearDirty(ni);
 				NInoClearDirty(ni);
@@ -6666,6 +6673,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 				ntfsck_close_inode(ni);
 				goto remove_index;
 			} else if (ret) {
+				corrupt_index_inode_validation_failures++;
 				ntfs_log_debug("Failed to validate inode(%"PRIu64") "
 						"from parent(%"PRIu64").\n",
 						ni->mft_no, ictx->ni->mft_no);
@@ -6690,12 +6698,14 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		} else {
 			ret = ntfsck_close_inode_in_dir(ni, ictx->ni);
 			if (ret) {
+				corrupt_index_sync_failures++;
 				ntfs_log_error("Failed to close inode(%"PRIu64")\n",
 						ni->mft_no);
 				goto remove_index;
 			}
 		}
 	} else {
+		corrupt_index_unopenable_inodes++;
 remove_index:
 		fsck_err_found();
 		corrupt_index_entries++;
@@ -11087,6 +11097,22 @@ corrupt_entries:
 			goto file_name_sizes;
 		ntfs_log_error("  * Directory index: %"PRIu64" corrupted entry(ies)\n",
 				corrupt_index_entries);
+		if (corrupt_index_unopenable_inodes)
+			ntfs_log_error("    %"PRIu64" entry(ies) reference an inode "
+					"that could not be opened.\n",
+					corrupt_index_unopenable_inodes);
+		if (corrupt_index_reference_failures)
+			ntfs_log_error("    %"PRIu64" entry(ies) disagree with their "
+					"inode or $FILE_NAME reference.\n",
+					corrupt_index_reference_failures);
+		if (corrupt_index_inode_validation_failures)
+			ntfs_log_error("    %"PRIu64" entry(ies) point to an inode "
+					"which failed validation.\n",
+					corrupt_index_inode_validation_failures);
+		if (corrupt_index_sync_failures)
+			ntfs_log_error("    %"PRIu64" entry(ies) could not be "
+					"synchronized after validation.\n",
+					corrupt_index_sync_failures);
 		if (stale_index_sequence_entries) {
 			ntfs_log_error("    (%"PRIu64" stale sequence-number "
 					"reference(s))\n",
@@ -11171,6 +11197,10 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	index_reserved_repairs_applied = 0;
 	corrupt_index_entries = 0;
 	stale_index_sequence_entries = 0;
+	corrupt_index_unopenable_inodes = 0;
+	corrupt_index_reference_failures = 0;
+	corrupt_index_inode_validation_failures = 0;
+	corrupt_index_sync_failures = 0;
 	index_bitmap_mismatches = 0;
 	missing_reparse_index_entries = 0;
 	cluster_dup_affected_attrs = 0;

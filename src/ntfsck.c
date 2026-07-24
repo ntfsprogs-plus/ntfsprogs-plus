@@ -2309,7 +2309,12 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	}
 	free(tfn);
 
-	NInoFileNameSetDirty(ctx->ntfs_ino);
+	/*
+	 * The copied FILE_NAME was inserted into the parent index above. Its parent
+	 * reference and all duplicated metadata already match this inode, so a later
+	 * generic FILE_NAME sync would only look the same entry up again.
+	 */
+	NInoFileNameClearDirty(ctx->ntfs_ino);
 	ntfs_inode_mark_dirty(ctx->ntfs_ino);
 	ntfs_inode_mark_dirty(ni);
 

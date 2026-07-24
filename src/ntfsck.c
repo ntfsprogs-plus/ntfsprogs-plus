@@ -7916,7 +7916,7 @@ static int ntfsck_scan_index_entries(ntfs_volume *vol)
 {
 	int ret;
 
-	fsck_start_step("Check index entries in volume...");
+	fsck_start_step("Check index entries in volume.");
 
 	ret = ntfsck_scan_index_entries_btree(vol);
 
@@ -7931,7 +7931,7 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	problem_context_t pctx = {0, };
 	BOOL clear_unopenable_mft = FALSE;
 
-	fsck_start_step("Scan orphaned MFTs candidiates...");
+	fsck_start_step("Scan orphaned MFTs candidiates.");
 	ntfsck_clear_unopenable_mft_list();
 	orphan_mft_open_failures = 0;
 
@@ -7960,11 +7960,13 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 		ntfsck_verify_mft_record(vol, mft_num);
 		progress_update(&prog, mft_num + 1);
 	}
+	fsck_end_step();
 
 	if (orphan_mft_open_failures) {
-		ntfs_log_error("Orphan MFT scan: %"PRIu64" allocated record(s) "
-				"could not be opened, clear their MFT bitmap entries. "
-				"Fix it? ", orphan_mft_open_failures);
+		ntfs_log_error("  * Orphan MFT scan: %"PRIu64" allocated record(s)\n",
+				orphan_mft_open_failures);
+		ntfs_log_error("    could not be opened.\n");
+		ntfs_log_error("    Clear their MFT bitmap entries. Fix it? ");
 		clear_unopenable_mft = ntfs_ask_repair(vol);
 	}
 
@@ -7989,8 +7991,6 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 
 	if (clear_mft_cnt)
 		ntfs_log_info("Clear MFT bitmap count:%"PRId64"\n", clear_mft_cnt);
-
-	fsck_end_step();
 }
 
 /*
@@ -8609,7 +8609,7 @@ static int ntfsck_replay_log(ntfs_volume *vol)
 {
 	problem_context_t pctx = {0, };
 
-	fsck_start_step("Reset logfile...");
+	fsck_start_step("Reset logfile.");
 
 	/*
 	 * ntfsck cannot replay the journal, so a dirty $LogFile is emptied. A
@@ -8633,6 +8633,7 @@ static int ntfsck_replay_log(ntfs_volume *vol)
 		ntfs_log_info("Resetting $LogFile\n");
 		if (ntfs_logfile_reset(vol)) {
 			check_failed("ntfs logfile reset failed, errno : %d\n", errno);
+				fsck_end_step();
 			return STATUS_ERROR;
 		}
 		logfile_was_reset = TRUE;
@@ -9448,13 +9449,14 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	int is_used;
 	BOOL trivial;	/* represent system file is trivial or not */
 
-	fsck_start_step("Check system files...");
+	fsck_start_step("Check system files.");
 
 	progress_init(&prog, 0, FILE_first_user, 1, pb_flags);
 
 	root_ni = ntfsck_check_root_inode(vol);
 	if (!root_ni) {
 		ntfs_log_error("Couldn't open the root directory.\n");
+		fsck_end_step();
 		return ret;
 	}
 
@@ -9948,16 +9950,20 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 	BOOL bitmap_repair_decided = FALSE;
 	BOOL repair_bitmaps = FALSE;
 
-	fsck_start_step("Check orphaned mft...");
+	fsck_start_step("Check orphaned mft.");
 
 	if (ntfsck_count_bitmap_mismatches(vol, vol->lcnbmp_na,
 			ntfs_fsck_find_lcnbmp_block, &bitmap_mismatches) ||
 		ntfsck_count_bitmap_mismatches(vol, vol->mftbmp_na,
-			ntfs_fsck_find_mftbmp_block, &bitmap_mismatches))
+			ntfs_fsck_find_mftbmp_block, &bitmap_mismatches)) {
+		fsck_end_step();
 		return STATUS_ERROR;
+	}
+	fsck_end_step();
 	if (bitmap_mismatches) {
-		ntfs_log_error("Found %"PRIu64" inconsistent bitmap block(s). "
-				"Apply bitmap updates to disk? ", bitmap_mismatches);
+		ntfs_log_error("  * Found %"PRIu64" inconsistent bitmap block(s).\n",
+				bitmap_mismatches);
+		ntfs_log_error("    Apply bitmap updates to disk? ");
 		repair_bitmaps = ntfs_ask_repair(vol);
 		bitmap_repair_decided = TRUE;
 	}
@@ -9991,9 +9997,9 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 	 * retain individual accounting for the actual work below.
 	 */
 	if (!ntfs_list_empty(&oc_list_head)) {
-		ntfs_log_error("Found %"PRIu64" orphaned file(s), restore their "
-				"index entries to the original parents or lost+found. "
-				"Fix it? ", orphan_cnt);
+		ntfs_log_error("  * Found %"PRIu64" orphaned file(s).\n", orphan_cnt);
+		ntfs_log_error("    Restore their index entries to the original "
+				"parents or lost+found. Fix it? ");
 		repair_orphans = ntfs_ask_repair(vol);
 	}
 
@@ -10045,8 +10051,9 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 				ntfs_fsck_find_mftbmp_block, &bitmap_mismatches))
 			return STATUS_ERROR;
 		if (bitmap_mismatches) {
-			ntfs_log_error("Found %"PRIu64" inconsistent bitmap block(s). "
-					"Apply bitmap updates to disk? ", bitmap_mismatches);
+			ntfs_log_error("  * Found %"PRIu64" inconsistent bitmap block(s).\n",
+					bitmap_mismatches);
+			ntfs_log_error("    Apply bitmap updates to disk? ");
 			repair_bitmaps = ntfs_ask_repair(vol);
 			bitmap_repair_decided = TRUE;
 		}
@@ -10061,7 +10068,6 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 			bitmap_repair_decided, repair_bitmaps))
 		return STATUS_ERROR;
 
-	fsck_end_step();
 	return STATUS_OK;
 }
 
@@ -10694,7 +10700,7 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 	s64 mft_num, nr_mft_records;
 	problem_context_t pctx = {0, };
 
-	fsck_start_step("Scan mft entries in volume...");
+	fsck_start_step("Scan mft entries in volume.");
 
 	// For each mft record, verify that it contains a valid file record.
 	nr_mft_records = vol->mft_na->initialized_size >>
@@ -10862,9 +10868,9 @@ static void ntfsck_ask_index_repairs(ntfs_volume *vol)
 	if (index_bitmap_mismatches) {
 		if (index_bitmap_repair_decided)
 			goto corrupt_entries;
-		ntfs_log_error("Directory index bitmap: %"PRIu64" mismatch(es) "
-				"were found", index_bitmap_mismatches);
-		ntfs_log_error(", apply the checked bitmaps to disk. Fix it? ");
+		ntfs_log_error("  * Directory index bitmap: %"PRIu64" mismatch(es) "
+				"were found.\n", index_bitmap_mismatches);
+		ntfs_log_error("    Apply the checked bitmaps to disk. Fix it? ");
 		index_bitmap_repair_approved = ntfs_ask_repair(vol);
 		index_bitmap_repair_decided = TRUE;
 	}
@@ -10872,13 +10878,17 @@ corrupt_entries:
 	if (corrupt_index_entries) {
 		if (corrupt_index_repair_decided)
 			goto file_name_sizes;
-		ntfs_log_error("Directory index: %"PRIu64" corrupted entry(ies) "
-				"were found", corrupt_index_entries);
-		if (stale_index_sequence_entries)
-			ntfs_log_error(" (%"PRIu64" stale sequence-number "
-					"reference(s))",
+		ntfs_log_error("  * Directory index: %"PRIu64" corrupted entry(ies)\n",
+				corrupt_index_entries);
+		if (stale_index_sequence_entries) {
+			ntfs_log_error("    (%"PRIu64" stale sequence-number "
+					"reference(s))\n",
 					stale_index_sequence_entries);
-		ntfs_log_error(", remove them from their parents. Fix it? ");
+			ntfs_log_error("    were found. ");
+		} else
+			ntfs_log_error("    were found. ");
+		ntfs_log_error("Remove them from their parents. "
+				"Fix it? ");
 		corrupt_index_repair_approved = ntfs_ask_repair(vol);
 		corrupt_index_repair_decided = TRUE;
 	}
@@ -10886,11 +10896,11 @@ file_name_sizes:
 	if (fn_allocated_size_mismatches || fn_data_size_mismatches) {
 		if (fn_size_repair_decided)
 			return;
-		ntfs_log_error("FILE_NAME size: %"PRIu64" allocated-size and "
-				"%"PRIu64" data-size mismatch(es) were found",
-				fn_allocated_size_mismatches,
+		ntfs_log_error("  * FILE_NAME size: %"PRIu64" allocated-size "
+				"mismatch(es).\n", fn_allocated_size_mismatches);
+		ntfs_log_error("    %"PRIu64" data-size mismatch(es) were found.\n",
 				fn_data_size_mismatches);
-		ntfs_log_error(", update their directory index entries. "
+		ntfs_log_error("    Update their directory index entries. "
 				"Fix it? ");
 		fn_size_repair_approved = ntfs_ask_repair(vol);
 		fn_size_repair_decided = TRUE;
@@ -10902,9 +10912,9 @@ static void ntfsck_ask_reparse_index_repairs(ntfs_volume *vol)
 	if (!missing_reparse_index_entries || reparse_index_repair_decided)
 		return;
 
-	ntfs_log_error("$Extend/$Reparse index: %"PRIu64" missing entry(ies) "
-			"were found, add them to the index. Fix it? ",
+	ntfs_log_error("  * $Extend/$Reparse index: %"PRIu64" missing entry(ies)\n",
 			missing_reparse_index_entries);
+	ntfs_log_error("    were found. Add them to the index. Fix it? ");
 	reparse_index_repair_approved = ntfs_ask_repair(vol);
 	reparse_index_repair_decided = TRUE;
 }
@@ -10945,6 +10955,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	missing_reparse_index_entries = 0;
 	cluster_dup_affected_attrs = 0;
 	cluster_dup_clusters = 0;
+	clear_mft_cnt = 0;
 	orphan_parent_add_failures = 0;
 	orphan_parent_index_conflicts = 0;
 	orphan_lost_found_relinks = 0;
@@ -11052,25 +11063,25 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 out:
 	if ((cluster_dup_affected_attrs || vol->fsck_lcn_range_dup_count) &&
 			!cluster_dup_repair_decided) {
-		ntfs_log_error("Cluster duplication: ");
-		if (cluster_dup_affected_attrs)
-			ntfs_log_error("%"PRIu64" duplicated cluster(s) in %"PRIu64
-					" attribute(s)", cluster_dup_clusters,
+		ntfs_log_error("  * Cluster duplication:\n");
+		if (cluster_dup_affected_attrs) {
+			ntfs_log_error("    Duplicated clusters: %"PRIu64"\n",
+					cluster_dup_clusters);
+			ntfs_log_error("    Affected attributes: %"PRIu64"\n",
 					cluster_dup_affected_attrs);
-		if (cluster_dup_affected_attrs && vol->fsck_lcn_range_dup_count)
-			ntfs_log_error(" and ");
-		if (vol->fsck_lcn_range_dup_count)
-			ntfs_log_error("%"PRIu64" cluster conflict(s) outside "
-					"attribute runlist scans",
-					vol->fsck_lcn_range_dup_count);
+		}
+		if (vol->fsck_lcn_range_dup_count) {
+			ntfs_log_error("    Cluster conflicts outside runlist scans: %"PRIu64
+					"\n", vol->fsck_lcn_range_dup_count);
+		}
 		if (!cluster_dup_affected_attrs) {
-			ntfs_log_error(" were found; automatic runlist repair is "
-					"unavailable.\n");
+			ntfs_log_error("    Automatic runlist repair is unavailable.\n");
 			cluster_dup_repair_decided = TRUE;
 			goto cluster_dup_done;
 		}
-		ntfs_log_error(" were found, repair and apply the affected "
-				"attribute runlists to disk. Fix it? ");
+		ntfs_log_error("    Repair and apply the affected attribute runlists "
+				"to disk.\n");
+		ntfs_log_error("    Fix it? ");
 		cluster_dup_repair_approved = ntfs_ask_repair(vol);
 		cluster_dup_repair_decided = TRUE;
 		cluster_dup_repair_retry = cluster_dup_repair_approved;
@@ -11124,7 +11135,8 @@ int main(int argc, char **argv)
 
 	ntfs_log_set_levels(NTFS_LOG_LEVEL_INFO);
 	ntfs_log_clear_levels(NTFS_LOG_LEVEL_TRACE|NTFS_LOG_LEVEL_ENTER|NTFS_LOG_LEVEL_LEAVE);
-	pb_flags = NTFS_PROGBAR;
+	/* Parse headers carry the final completion status; suppress transient bars. */
+	pb_flags = 0;
 	option.verbose = 0;
 	opterr = 0;
 	option.flags = NTFS_MNT_FSCK | NTFS_MNT_IGNORE_HIBERFILE;

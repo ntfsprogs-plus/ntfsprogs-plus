@@ -87,11 +87,13 @@ extern int fsck_fixes;
 		if (fsck_errors) \
 		ntfs_log_info(" (left:%d, errors:%d, fixed:%d)", \
 			fsck_errors - fsck_fixes, fsck_errors, fsck_fixes); \
-		ntfs_log_info("\n"); \
 	} while (0)
 
-/* The following step header reports the cumulative error/fix totals. */
-#define fsck_end_step() do { } while (0)
+/* Complete the Parse header without leaving transient percentages. */
+#define fsck_end_step() \
+	do { \
+		ntfs_log_info(" 100%% completed\n"); \
+	} while (0)
 
 /**
  * enum ntfs_mount_flags -

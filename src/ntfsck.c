@@ -210,6 +210,8 @@ static u64 orphan_lost_found_relinks;
 static u64 orphan_filename_removals;
 /* Set only when pass 5 changes namespace reachability. */
 static BOOL orphan_recovery_changed;
+/* Non-resident attributes whose mapping pairs require truncation. */
+static u64 corrupt_nonresident_runlists;
 
 enum ntfsck_deferred_index_type {
 	NTFSCK_DEFER_INDEX_BITMAP,
@@ -4007,10 +4009,6 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 		last_vcn = ntfsck_runlist_end_vcn(rl);
 
 	if (highest_vcn != last_vcn - 1) {
-		ntfs_log_error("highest_vcn and last_vcn of attr(%x) "
-				"of inode(%"PRIu64") : highest_vcn(0x%"PRIx64") "
-				"last_vcn(0x%"PRIx64")\n",
-				na->type, na->ni->mft_no, highest_vcn, last_vcn);
 		*need_fix = TRUE;
 	}
 
@@ -4322,9 +4320,7 @@ static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
 	}
 
 	if (*need_fix == TRUE) {
-		ntfs_log_error("Non-resident cluster run of inode(%"PRId64")(%02x:%"PRIu64") "
-				"corrupted. rl_size(%"PRIx64":%"PRIx64"). Truncate it\n",
-				na->ni->mft_no, na->type, na->data_size, rls->alloc_size, rls->real_size);
+		corrupt_nonresident_runlists++;
 	}
 
 #if UNUSED
@@ -11105,6 +11101,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	orphan_lost_found_relinks = 0;
 	orphan_filename_removals = 0;
 	orphan_recovery_changed = FALSE;
+	corrupt_nonresident_runlists = 0;
 	saved_fixup_suppress = NVolFsckSuppressFixupWarn(vol);
 	NVolSetFsckSuppressFixupWarn(vol);
 
@@ -11205,6 +11202,11 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	ntfsck_finalize_mft_record_numbers(vol);
 
 out:
+	if (corrupt_nonresident_runlists) {
+		ntfs_log_error("  * Non-resident cluster run: %"PRIu64" corrupted "
+				"attribute(s) were found.\n",
+				corrupt_nonresident_runlists);
+	}
 	if (vol->fsck_corrupt_mft_record_count) {
 		ntfs_log_error("  * Corrupted MFT records: %"PRIu64" occurrence(s) "
 				"were found.\n", vol->fsck_corrupt_mft_record_count);

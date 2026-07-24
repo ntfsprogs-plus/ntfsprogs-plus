@@ -11101,6 +11101,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	orphan_lost_found_relinks = 0;
 	orphan_filename_removals = 0;
 	orphan_recovery_changed = FALSE;
+	orphan_cnt = 0;
 	corrupt_nonresident_runlists = 0;
 	saved_fixup_suppress = NVolFsckSuppressFixupWarn(vol);
 	NVolSetFsckSuppressFixupWarn(vol);
@@ -11538,6 +11539,8 @@ conflict_option:
 		int max_rounds = ntfsck_repair_enabled() ?
 				NTFSCK_MAX_REPAIR_ROUNDS : 1;
 		int prev_fixes = -1;
+		u64 prev_orphan_candidates = 0;
+		BOOL have_prev_orphan_candidates = FALSE;
 		int round;
 
 		fixup_repair_decided = FALSE;
@@ -11568,6 +11571,18 @@ conflict_option:
 
 			if (ntfsck_run_repair_passes(vol, &orphan_changed))
 				goto err_out;
+			if (orphan_changed) {
+				if (have_prev_orphan_candidates &&
+						orphan_cnt >= prev_orphan_candidates) {
+					ntfs_log_error("Orphan recovery did not converge: "
+							"%"PRIu64" candidate(s) remain after "
+							"the previous repair round.\n", orphan_cnt);
+					fsck_err_found();
+					break;
+				}
+				prev_orphan_candidates = orphan_cnt;
+				have_prev_orphan_candidates = TRUE;
+			}
 			if (fixup_repair_retry || cluster_dup_repair_retry) {
 				/*
 				 * MFT salvage is the one aggregate repair that still needs a raw reread

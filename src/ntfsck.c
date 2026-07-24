@@ -2449,6 +2449,8 @@ static int ntfsck_add_nameless_inode_to_lostfound(ntfs_inode *ni,
 	new_fn->allocated_size = cpu_to_sle64(ni->allocated_size);
 	new_fn->data_size = cpu_to_sle64(ni->data_size);
 	new_fn->file_attributes = ni->flags & FILE_ATTR_VALID_FLAGS;
+	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)
+		new_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
 	new_fn->file_name_length = ucs_namelen;
 	new_fn->file_name_type = FILE_NAME_WIN32;
 	memcpy(new_fn->file_name, ucs_name, ucs_namelen * sizeof(ntfschar));
@@ -3658,8 +3660,26 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		/* mft record flags is set to directory */
 		if (ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4)) {
 			if (!(ie_flags & FILE_ATTR_I30_INDEX_PRESENT)) {
+				ntfs_attr_search_ctx *actx;
+				FILE_NAME_ATTR *fn;
+
 				ie_flags |= FILE_ATTR_I30_INDEX_PRESENT;
 				ie_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
+				/*
+				 * An index entry is only a copy of the MFT $FILE_NAME. Update both
+				 * copies, otherwise a recovered directory passes this check but chkdsk
+				 * subsequently removes the mismatched index entry and re-links it.
+				 */
+				actx = ntfs_attr_get_search_ctx(ni, NULL);
+				if (actx) {
+					fn = ntfsck_find_file_name_attr(ni, ie_fn, actx);
+					if (fn) {
+						fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
+						ntfs_inode_mark_dirty(ni);
+						NInoFileNameSetDirty(ni);
+					}
+					ntfs_attr_put_search_ctx(actx);
+				}
 
 				fsck_err_found();
 				if (ntfs_fix_problem(vol, PR_DIR_FLAG_MISMATCH_IDX_FN, &pctx)) {

@@ -2655,24 +2655,13 @@ static int ntfsck_check_parent_mft_record(ntfs_inode *parent_ni,
 		return STATUS_ERROR;
 	}
 
-	if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn) &&
-			MSEQNO_LE(fn->parent_directory)) {
-		ntfs_log_error("Seuqnece number of parent(%"PRIu64")"
-				"and parent directory in $FN of inode(%"PRIu64") is not same\n",
-				parent_ni->mft_no, MREF_LE(fn->parent_directory));
-		ntfs_attr_put_search_ctx(ctx);
-		return STATUS_ERROR;
-	}
-
 	/*
-	 * A zero sequence number in a parent reference disables every stale
-	 * reference check, and it can only have been minted while the parent record
-	 * itself had sequence number zero. The parent binding by mft number is
-	 * already verified above, so refresh both copies of the reference from the
-	 * parent record.
+	 * The directory MFT number and name have both been verified above. A changed
+	 * sequence number therefore identifies a stale reference to the same
+	 * directory, not a different file.
 	 */
-	if (!MSEQNO_LE(fn->parent_directory) ||
-			!MSEQNO_LE(ie_fn->parent_directory)) {
+	if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn) ||
+			ntfsck_cmp_parent_mft_sequence(parent_ni, ie_fn)) {
 		u16 pdir_seq = le16_to_cpu(parent_ni->mrec->sequence_number);
 		problem_context_t pctx = {0, };
 
@@ -3699,8 +3688,9 @@ static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
 		ntfs_attr_name_free(&filename);
 #endif
 
-		/* Ignore hard links from other directories */
-		if (fn->parent_directory != ie_fn->parent_directory) {
+		/* Ignore hard links from other directories. */
+		if (MREF_LE(fn->parent_directory) !=
+				MREF_LE(ie_fn->parent_directory)) {
 			ntfs_log_debug("MFT record numbers don't match "
 					"(%llu != %llu)\n",
 					(unsigned long long)MREF_LE(ie_fn->parent_directory),

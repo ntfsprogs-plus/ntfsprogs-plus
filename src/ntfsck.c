@@ -2896,31 +2896,12 @@ stack_of:
 					goto add_to_lostfound;
 				}
 
-				if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn) &&
-						!MSEQNO_LE(fn->parent_directory)) {
-					/*
-					 * A zero sequence in the parent
-					 * reference was minted while the
-					 * parent record had sequence number
-					 * zero: refresh it instead of
-					 * dropping a healthy $FILE_NAME.
-					 */
+				if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn)) {
+					/* Refresh stale parent references before relinking. */
 					fn->parent_directory =
 						MK_LE_MREF(parent_ni->mft_no,
 						le16_to_cpu(parent_ni->mrec->sequence_number));
 					ntfs_inode_mark_dirty(ctx->ntfs_ino);
-				} else if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn)) {
-					/* do not add inode to parent */
-					ntfs_log_debug("Different sequence number of parent(%"PRIu64
-							") and inode(%"PRIu64")\n",
-							parent_ni->mft_no, ni->mft_no);
-					ntfs_attr_record_rm(ctx);
-					NInoClearDirty(parent_ni);
-					NInoFileNameClearDirty(parent_ni);
-					NInoAttrListClearDirty(parent_ni);
-					ntfsck_close_inode(parent_ni);
-					parent_ni = NULL;
-					continue;
 				}
 			}
 

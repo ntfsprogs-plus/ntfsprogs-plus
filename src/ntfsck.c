@@ -8120,11 +8120,18 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 		free(entry);
 	}
 
-	if (clear_mft_cnt)
-		ntfs_log_info("Clear MFT bitmap count:%"PRId64"\n", clear_mft_cnt);
-	if (vol->fsck_mft_not_in_use_flag_fix_count)
-		ntfs_log_info("MFT records marked not in use count:%"PRIu64"\n",
-				vol->fsck_mft_not_in_use_flag_fix_count);
+	if (clear_mft_cnt && clear_mft_cnt ==
+			(s64)vol->fsck_mft_not_in_use_flag_fix_count) {
+		ntfs_log_info("MFT records cleared from allocation: %"PRIu64"\n",
+				(u64)clear_mft_cnt);
+	} else {
+		if (clear_mft_cnt)
+			ntfs_log_info("MFT bitmap entries cleared: %"PRIu64"\n",
+					(u64)clear_mft_cnt);
+		if (vol->fsck_mft_not_in_use_flag_fix_count)
+			ntfs_log_info("MFT records marked not in use: %"PRIu64"\n",
+					vol->fsck_mft_not_in_use_flag_fix_count);
+	}
 }
 
 /*

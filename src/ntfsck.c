@@ -2233,8 +2233,15 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 		 * as success -- reporting failure here sends the caller down the lost+found
 		 * path, which drops the $FILE_NAME when that add also fails.
 		 */
-		if (errno == EEXIST)
+		if (errno == EEXIST) {
+			fn->parent_directory = MK_LE_MREF(parent_ni->mft_no,
+					le16_to_cpu(parent_ni->mrec->sequence_number));
+			NInoFileNameSetDirty(ctx->ntfs_ino);
+			ntfs_inode_mark_dirty(ctx->ntfs_ino);
+			ntfs_inode_mark_dirty(ni);
+			ntfsck_set_mft_record_bitmap(ni, TRUE);
 			return STATUS_OK;
+		}
 		err = -EIO;
 		return STATUS_ERROR;
 	}
@@ -2765,12 +2772,12 @@ static int ntfsck_check_orphan_inode_fields(ntfs_inode *parent_ni, ntfs_inode *n
 	return STATUS_OK;
 }
 
-static int ntfsck_remove_filename(ntfs_inode *ni, FILE_NAME_ATTR *fn)
+static int ntfsck_remove_filename(ntfs_inode *ni, ntfs_attr_search_ctx *ctx)
 {
 	int ret = STATUS_OK;
 	int nlink = 0;
 
-	ret = ntfs_attr_remove(ni, AT_FILE_NAME, fn->file_name, fn->file_name_length);
+	ret = ntfs_attr_record_rm(ctx);
 	if (ret)
 		return STATUS_ERROR;
 
@@ -2928,7 +2935,7 @@ add_to_lostfound:
 			ret = ntfsck_add_inode_to_lostfound(ni, fn, ctx);
 			if (ret) {
 				orphan_filename_removals++;
-				ntfsck_remove_filename(ni, fn);
+				ntfsck_remove_filename(ni, ctx);
 				ret = STATUS_OK;
 			} else {
 				ret = STATUS_OK;
@@ -7967,7 +7974,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		while ((next = ntfs_index_next(next, ictx)) != NULL) {
 check_index:
 			if (!ntfs_fsck_mftbmp_get(vol,
-						MREF(le64_to_cpu(next->indexed_file))))
+					MREF(le64_to_cpu(next->indexed_file))))
 				progress_update(&prog, ++checked_cnt);
 
 			ret = ntfsck_check_index(vol, next, ictx);
@@ -10853,71 +10860,14 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 }
 
 /*
- * Correct the NTFS 3.1 record-number field after every pass has finished
- * writing MFT records. Repairing it while an inode is opened can be undone
- * later in the same run when another path closes an older copy of that MFT
- * record.
- */
-static void ntfsck_finalize_mft_record_numbers(ntfs_volume *vol)
-{
-	MFT_RECORD *mrec;
-	s64 mft_no;
-	s64 nr_mft_records;
-	s64 pos;
-	u64 failed = 0;
-	BOOL is_ntfs_3x;
-
-	is_ntfs_3x = vol->major_ver > 3 ||
-			(vol->major_ver == 3 && vol->minor_ver);
-	if (!is_ntfs_3x || NVolFsNoRepair(vol))
-		return;
-
-	mrec = ntfs_malloc(vol->mft_record_size);
-	if (!mrec) {
-		ntfs_log_error("Failed to allocate MFT record-number buffer.\n");
-		return;
-	}
-	nr_mft_records = vol->mft_na->initialized_size >>
-			vol->mft_record_size_bits;
-	for (mft_no = FILE_MFT; mft_no < nr_mft_records; mft_no++) {
-		if (check_mftrec_in_use(vol, mft_no, 0) <= 0)
-			continue;
-		if (ntfs_attr_mst_pread(vol->mft_na,
-				mft_no << vol->mft_record_size_bits, 1,
-				vol->mft_record_size, mrec) != 1 ||
-				!ntfs_is_file_record(mrec->magic))
-			continue;
-		if (le32_to_cpu(mrec->mft_record_number) == (u32)mft_no)
-			continue;
-
-		fsck_err_found();
-		mrec->mft_record_number = cpu_to_le32(mft_no);
-		pos = (mft_no << vol->mft_record_size_bits) +
-			offsetof(MFT_RECORD, mft_record_number);
-		if (ntfs_attr_pwrite(vol->mft_na, pos,
-					sizeof(mrec->mft_record_number),
-					&mrec->mft_record_number) !=
-				sizeof(mrec->mft_record_number)) {
-			failed++;
-			continue;
-		}
-		vol->fsck_mft_record_number_fix_count++;
-		fsck_err_fixed();
-	}
-	free(mrec);
-	if (failed)
-		ntfs_log_error("  * MFT record number: %"PRIu64" repair(s) could "
-				"not be written.\n", failed);
-}
-
-/*
  * Upper bound on repair rounds. Each round strictly reduces the number of
  * errors left (see the loop in main()), so a handful of rounds is plenty; the
  * cap only guards against a pathological volume that never settles.
  */
 #define NTFSCK_MAX_REPAIR_ROUNDS	8
 
-static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol)
+static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol,
+		BOOL corrupt_only)
 {
 	struct ntfs_list_head *pos;
 	u64 failed_corrupt_entries = 0;
@@ -10930,6 +10880,8 @@ static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol)
 		s64 written;
 
 		repair = ntfs_list_entry(pos, struct ntfsck_deferred_index, list);
+		if (corrupt_only)
+			continue;
 		if (repair->type != NTFSCK_DEFER_INDEX_BITMAP ||
 				!index_bitmap_repair_approved)
 			continue;
@@ -10959,6 +10911,9 @@ static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol)
 		BOOL fixed = FALSE;
 
 		repair = ntfs_list_entry(pos, struct ntfsck_deferred_index, list);
+		if (corrupt_only !=
+				(repair->type == NTFSCK_DEFER_CORRUPT_ENTRY))
+			continue;
 		if (repair->type == NTFSCK_DEFER_INDEX_BITMAP)
 			continue;
 		if (!corrupt_index_repair_approved)
@@ -10966,6 +10921,11 @@ static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol)
 
 		parent_ni = ntfsck_open_inode(vol, repair->parent_mft_no);
 		if (!parent_ni) {
+			failed_corrupt_entries++;
+			continue;
+		}
+		if (ntfs_inode_attach_all_extents(parent_ni)) {
+			ntfsck_close_inode(parent_ni);
 			failed_corrupt_entries++;
 			continue;
 		}
@@ -10979,8 +10939,8 @@ static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol)
 				ictx->entry->indexed_file == repair->indexed_file) {
 			if (!ntfs_index_rm(ictx)) {
 				fixed = TRUE;
-				if (ictx->actx)
-					ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
+				ntfs_inode_mark_dirty(parent_ni);
+				ntfs_index_entry_mark_dirty(ictx);
 			}
 		}
 		ntfs_index_ctx_put(ictx);
@@ -11002,9 +10962,10 @@ static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol)
 	 * again after the count pass fails on damaged directory B-trees even when
 	 * their sequential walk is still usable.
 	 */
-	if ((fn_size_repair_approved &&
-			(fn_allocated_size_mismatches || fn_data_size_mismatches)) ||
-			(index_reserved_repair_approved && index_reserved_entries)) {
+	if (!corrupt_only &&
+			((fn_size_repair_approved &&
+				(fn_allocated_size_mismatches || fn_data_size_mismatches)) ||
+			 (index_reserved_repair_approved && index_reserved_entries))) {
 		u64 expected = fn_allocated_size_mismatches +
 				fn_data_size_mismatches;
 		u64 expected_reserved = index_reserved_entries;
@@ -11176,7 +11137,6 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	missing_reparse_index_entries = 0;
 	cluster_dup_affected_attrs = 0;
 	cluster_dup_clusters = 0;
-	vol->fsck_mft_record_number_fix_count = 0;
 	vol->fsck_mft_next_attr_instance_fix_count = 0;
 	vol->fsck_mft_in_use_flag_fix_count = 0;
 	vol->fsck_missing_standard_information_count = 0;
@@ -11246,7 +11206,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 		goto out;
 	}
 	ntfsck_ask_index_repairs(vol);
-	ntfsck_apply_deferred_index_repairs(vol);
+	ntfsck_apply_deferred_index_repairs(vol, TRUE);
 
 	/*
 	 * Validate extent records from the reverse direction. This catches an
@@ -11268,6 +11228,8 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 		ret = -1;
 		goto out;
 	}
+	/* Apply non-corrupt deferred index repairs after orphan recovery. */
+	ntfsck_apply_deferred_index_repairs(vol, FALSE);
 
 	/*
 	 * The pass-3 reachability bitmap predates orphan recovery. Validate it only
@@ -11289,7 +11251,6 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	ntfsck_check_reparse_index(vol);
 	ntfsck_ask_reparse_index_repairs(vol);
 	ntfsck_apply_deferred_reparse_repairs(vol);
-	ntfsck_finalize_mft_record_numbers(vol);
 
 out:
 	if (corrupt_nonresident_runlists) {
@@ -11300,10 +11261,6 @@ out:
 	if (vol->fsck_corrupt_mft_record_count) {
 		ntfs_log_error("  * Corrupted MFT records: %"PRIu64" occurrence(s) "
 				"were found.\n", vol->fsck_corrupt_mft_record_count);
-	}
-	if (vol->fsck_mft_record_number_fix_count) {
-		ntfs_log_error("  * MFT record number: %"PRIu64" corrupted record(s) "
-				"were fixed.\n", vol->fsck_mft_record_number_fix_count);
 	}
 	if (vol->fsck_mft_next_attr_instance_fix_count) {
 		ntfs_log_error("  * MFT next attribute instance: %"PRIu64" corrupted "

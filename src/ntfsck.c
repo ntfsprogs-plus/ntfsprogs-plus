@@ -206,6 +206,9 @@ static u64 index_reserved_repairs_applied;
 static BOOL reparse_index_repair_decided;
 static BOOL reparse_index_repair_approved;
 static u64 missing_reparse_index_entries;
+/* One response controls removal of stale $Extend/$Reparse entries. */
+static BOOL stale_reparse_repair_decided;
+static BOOL stale_reparse_repair_approved;
 /* Outcomes from the approved orphan relink operation. */
 static u64 orphan_missing_parent_references;
 static u64 orphan_parent_add_failures;
@@ -5845,10 +5848,18 @@ static void ntfsck_check_reparse_index(ntfs_volume *vol)
 		ie = ntfs_index_next(ie, xr);
 	}
 
+	if (nr_stale && !stale_reparse_repair_decided) {
+		ntfs_log_error("  * $Extend/$Reparse index: %d stale entry(ies)\n",
+				nr_stale);
+		ntfs_log_error("    Remove stale entries. Fix it? ");
+		stale_reparse_repair_approved = ntfs_ask_repair(vol);
+		stale_reparse_repair_decided = TRUE;
+	}
+
 	for (i = 0; i < nr_stale; i++) {
 		pctx.inum = MREF(le64_to_cpu(stale[i].file_id));
 		fsck_err_found();
-		if (!ntfs_fix_problem(vol, PR_REPARSE_ENTRY_STALE, &pctx))
+		if (!stale_reparse_repair_approved)
 			continue;
 		ntfs_index_ctx_reinit(xr);
 		if (!ntfs_index_lookup(&stale[i], sizeof(stale[i]), xr) &&
@@ -11604,6 +11615,8 @@ conflict_option:
 		index_reserved_repair_approved = FALSE;
 		reparse_index_repair_decided = FALSE;
 		reparse_index_repair_approved = FALSE;
+		stale_reparse_repair_decided = FALSE;
+		stale_reparse_repair_approved = FALSE;
 		cluster_dup_repair_decided = FALSE;
 		cluster_dup_repair_approved = FALSE;
 		cluster_dup_repair_retry = FALSE;

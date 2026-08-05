@@ -4,6 +4,8 @@
 #include <strings.h>
 #include "problem.h"
 
+BOOL fsck_step_header_open;
+
 static struct ntfs_problem problem_table[] = {
 	/* Pre-scan MFT */
 	{ PR_PRE_SCAN_MFT,
@@ -509,6 +511,14 @@ static void print_message(problem_context_t *pctx, const char *message)
 		print_param_message(pctx, message);
 }
 
+static void start_problem_message(void)
+{
+	if (fsck_step_header_open) {
+		fputc('\n', stderr);
+		fsck_step_header_open = FALSE;
+	}
+}
+
 BOOL ntfs_ask_repair(const ntfs_volume *vol)
 {
 	BOOL repair = FALSE;
@@ -563,6 +573,7 @@ void ntfs_print_problem(ntfs_volume *vol, problem_code_t code, problem_context_t
 		return;
 
 	message = p->desc;
+	start_problem_message();
 	print_message(pctx, message);
 	fprintf(stderr, "\n");
 	fflush(stderr);
@@ -615,6 +626,7 @@ BOOL ntfs_fix_problem(ntfs_volume *vol, problem_code_t code, problem_context_t *
 		pctx->err_code = code;
 
 	message = p->desc;
+	start_problem_message();
 	print_message(pctx, message);
 	fprintf(stderr, " Fix it? ");
 	fflush(stderr);

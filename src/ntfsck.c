@@ -3044,9 +3044,6 @@ static int ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 		return STATUS_OK;
 	}
 
-	ntfs_log_error("Record(%"PRId64") used. "
-			"Mark the mft record as not in use.\n",
-			mft_num);
 	mrec_temp_buf->flags &= ~MFT_RECORD_IN_USE;
 	seq_no = le16_to_cpu(mrec_temp_buf->sequence_number);
 	if (seq_no == 0xffff)
@@ -3059,6 +3056,7 @@ static int ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 				mft_num);
 		return STATUS_ERROR;
 	}
+	vol->fsck_mft_not_in_use_flag_fix_count++;
 	return STATUS_OK;
 }
 
@@ -8113,6 +8111,9 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 
 	if (clear_mft_cnt)
 		ntfs_log_info("Clear MFT bitmap count:%"PRId64"\n", clear_mft_cnt);
+	if (vol->fsck_mft_not_in_use_flag_fix_count)
+		ntfs_log_info("MFT records marked not in use count:%"PRIu64"\n",
+				vol->fsck_mft_not_in_use_flag_fix_count);
 }
 
 /*
@@ -11139,6 +11140,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	cluster_dup_clusters = 0;
 	vol->fsck_mft_next_attr_instance_fix_count = 0;
 	vol->fsck_mft_in_use_flag_fix_count = 0;
+	vol->fsck_mft_not_in_use_flag_fix_count = 0;
 	vol->fsck_missing_standard_information_count = 0;
 	vol->fsck_corrupt_mft_record_count = 0;
 	clear_mft_cnt = 0;

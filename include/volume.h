@@ -365,6 +365,7 @@ struct _ntfs_volume {
 	u64 fsck_lcn_range_dup_count; /* duplicates found by generic range marking */
 	u64 fsck_mft_next_attr_instance_fix_count; /* corrected MFT attribute instances */
 	u64 fsck_mft_in_use_flag_fix_count; /* restored MFT in-use flags */
+	u64 fsck_mft_not_in_use_flag_fix_count; /* cleared MFT in-use flags */
 	u64 fsck_missing_standard_information_count; /* unreadable base records */
 	u64 fsck_corrupt_mft_record_count; /* structurally corrupt MFT records seen */
 	u8 *fsck_lcn_arena;	/* mmap'd scratch backing literal blocks (opt-in), else NULL */

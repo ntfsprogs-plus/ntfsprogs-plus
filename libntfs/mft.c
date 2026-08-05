@@ -549,9 +549,12 @@ int ntfs_file_record_read(ntfs_volume *vol, const MFT_REF mref,
 	/* should check first before calling ntfs_mft_record_check(),
 	 * whether sequence numbers are matched */
 	if (MSEQNO(mref) && MSEQNO(mref) != le16_to_cpu(m->sequence_number)) {
-		ntfs_log_error("Record %llu has wrong SeqNo (%d <> %d)\n",
-				(unsigned long long)MREF(mref), MSEQNO(mref),
-				le16_to_cpu(m->sequence_number));
+		if (NVolFsck(vol))
+			vol->fsck_mft_seqno_mismatch_count++;
+		else
+			ntfs_log_error("Record %llu has wrong SeqNo (%d <> %d)\n",
+					(unsigned long long)MREF(mref), MSEQNO(mref),
+					le16_to_cpu(m->sequence_number));
 		errno = EIO;
 		goto err_out;
 	}

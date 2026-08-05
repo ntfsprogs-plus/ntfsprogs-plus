@@ -11154,6 +11154,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	vol->fsck_mft_not_in_use_flag_fix_count = 0;
 	vol->fsck_missing_standard_information_count = 0;
 	vol->fsck_corrupt_mft_record_count = 0;
+	vol->fsck_mft_seqno_mismatch_count = 0;
 	clear_mft_cnt = 0;
 	orphan_missing_parent_references = 0;
 	orphan_parent_add_failures = 0;
@@ -11275,6 +11276,9 @@ out:
 		ntfs_log_error("  * Corrupted MFT records: %"PRIu64" occurrence(s) "
 				"were found.\n", vol->fsck_corrupt_mft_record_count);
 	}
+	if (vol->fsck_mft_seqno_mismatch_count)
+		ntfs_log_error("  * MFT SeqNo mismatches: %"PRIu64".\n",
+				vol->fsck_mft_seqno_mismatch_count);
 	if (vol->fsck_mft_next_attr_instance_fix_count) {
 		ntfs_log_error("  * MFT next attribute instance: %"PRIu64" corrupted "
 				"record(s) were fixed.\n",

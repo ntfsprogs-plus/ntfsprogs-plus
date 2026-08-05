@@ -275,8 +275,6 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 	BOOL biu_needs_fix = FALSE;
 	BOOL can_derive_directory = FALSE;
 	BOOL is_fsck = NVolFsck(vol);
-	BOOL is_ntfs_3x = vol->major_ver > 3 ||
-			(vol->major_ver == 3 && vol->minor_ver);
 	BOOL saw_attr = FALSE;
 	BOOL saw_i30_index = FALSE;
 	BOOL saw_unnamed_data = FALSE;
@@ -415,11 +413,8 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 				} else
 					goto err_out;
 			} else {
-				if (is_fsck)
-					vol->fsck_corrupt_mft_record_count++;
-				else
-					ntfs_log_error("Corrupted MFT record %llu\n",
-							(unsigned long long)MREF(mref));
+							ntfs_log_error("Corrupted MFT record %llu\n",
+									(unsigned long long)MREF(mref));
 				goto err_out;
 			}
 		}
@@ -464,7 +459,10 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 					(le16_to_cpu(m->next_attr_instance) <=
 					 max_attr_instance)) {
 				fsck_err_found();
-				vol->fsck_mft_next_attr_instance_fix_count++;
+					ntfs_log_error("Inode(%llu): MFT next attribute instance is corrupted (%u <> %u). Fixed.\n",
+							(unsigned long long)MREF(mref),
+							(unsigned int)le16_to_cpu(m->next_attr_instance),
+							(unsigned int)expected_next_attr_instance);
 				m->next_attr_instance =
 						cpu_to_le16(expected_next_attr_instance);
 				fixed = TRUE;

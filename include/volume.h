@@ -87,6 +87,7 @@ extern int fsck_fixes;
 		if (fsck_errors) \
 		ntfs_log_info(" (left:%d, errors:%d, fixed:%d)", \
 			fsck_errors - fsck_fixes, fsck_errors, fsck_fixes); \
+		ntfs_log_info("\n"); \
 	} while (0)
 
 /* Complete the Parse header without leaving transient percentages. */

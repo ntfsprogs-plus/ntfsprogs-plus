@@ -270,6 +270,16 @@ struct ntfsck_rebuilt_index {
 	u64 mft_no;
 };
 
+struct ntfsck_cluster_dup_attr {
+	struct ntfs_list_head list;
+	u64 mft_no;
+	ATTR_TYPES type;
+	u32 name_len;
+	ntfschar name[];
+};
+
+NTFS_LIST_HEAD(ntfsck_cluster_dup_attrs);
+
 static void ntfsck_clear_orphan_list(void)
 {
 	struct orphan_mft *entry;
@@ -294,6 +304,50 @@ static void ntfsck_clear_rebuilt_indexes(void)
 		ntfs_list_del(&entry->list);
 		free(entry);
 	}
+}
+
+static void ntfsck_clear_cluster_dup_attrs(void)
+{
+	while (!ntfs_list_empty(&ntfsck_cluster_dup_attrs)) {
+		struct ntfsck_cluster_dup_attr *entry;
+
+		entry = ntfs_list_entry(ntfsck_cluster_dup_attrs.next,
+				struct ntfsck_cluster_dup_attr, list);
+		ntfs_list_del(&entry->list);
+		free(entry);
+	}
+}
+
+static int ntfsck_note_cluster_dup_attr(ntfs_attr *na)
+{
+	struct ntfsck_cluster_dup_attr *entry;
+	struct ntfs_list_head *pos;
+	size_t name_size;
+
+	if (!na || !na->ni)
+		return STATUS_ERROR;
+
+	ntfs_list_for_each(pos, &ntfsck_cluster_dup_attrs) {
+		entry = ntfs_list_entry(pos, struct ntfsck_cluster_dup_attr, list);
+		if (entry->mft_no == na->ni->mft_no &&
+				entry->type == na->type &&
+				entry->name_len == na->name_len &&
+				(!na->name_len || !memcmp(entry->name, na->name,
+						na->name_len * sizeof(ntfschar))))
+			return STATUS_OK;
+	}
+
+	name_size = na->name_len * sizeof(ntfschar);
+	entry = malloc(sizeof(*entry) + name_size);
+	if (!entry)
+		return STATUS_ERROR;
+	entry->mft_no = na->ni->mft_no;
+	entry->type = na->type;
+	entry->name_len = na->name_len;
+	if (name_size)
+		memcpy(entry->name, na->name, name_size);
+	ntfs_list_add_tail(&entry->list, &ntfsck_cluster_dup_attrs);
+	return STATUS_OK;
 }
 
 static void ntfsck_note_rebuilt_index(u64 mft_no)
@@ -416,6 +470,8 @@ static BOOL cluster_dup_repair_approved;
 static BOOL cluster_dup_repair_retry;
 static u64 cluster_dup_affected_attrs;
 static u64 cluster_dup_clusters;
+static BOOL cluster_dup_attr_list_incomplete;
+static int ntfsck_repair_cluster_dup_attrs(ntfs_volume *vol);
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx);
 static int ntfsck_check_orphan_inode(ntfs_inode *parent_ni, ntfs_inode *ni);
@@ -1959,6 +2015,55 @@ static void ntfsck_set_attr_lcnbmp(ntfs_attr *na)
 	ntfs_attr_put_search_ctx(actx);
 }
 
+static int ntfsck_repair_cluster_dup_attrs(ntfs_volume *vol)
+{
+	struct ntfs_list_head *pos;
+	int ret = STATUS_OK;
+
+	if (cluster_dup_attr_list_incomplete)
+		return STATUS_ERROR;
+
+	ntfs_list_for_each(pos, &ntfsck_cluster_dup_attrs) {
+		struct ntfsck_cluster_dup_attr *entry;
+		ntfs_attr_search_ctx *actx;
+		ntfs_inode *ni;
+		ntfs_attr *na;
+		struct rl_size rls = {0, };
+
+		entry = ntfs_list_entry(pos, struct ntfsck_cluster_dup_attr, list);
+		ni = ntfsck_open_inode(vol, entry->mft_no);
+		if (!ni) {
+			ret = STATUS_ERROR;
+			continue;
+		}
+		if (ni->attr_list && ntfs_inode_attach_all_extents(ni)) {
+			ntfsck_close_inode(ni);
+			ret = STATUS_ERROR;
+			continue;
+		}
+		na = ntfs_attr_open(ni, entry->type, entry->name,
+				entry->name_len);
+		if (!na) {
+			ntfsck_close_inode(ni);
+			ret = STATUS_ERROR;
+			continue;
+		}
+		actx = ntfs_attr_get_search_ctx(ni, NULL);
+		if (!actx || ntfs_attr_lookup(entry->type, entry->name,
+				entry->name_len, 0, 0, NULL, 0, actx) ||
+				!actx->attr || !actx->attr->non_resident ||
+				__ntfsck_check_non_resident_attr(na, actx, &rls, 1))
+			ret = STATUS_ERROR;
+		if (actx)
+			ntfs_attr_put_search_ctx(actx);
+		ntfs_attr_close(na);
+		if (ntfsck_close_inode(ni))
+			ret = STATUS_ERROR;
+	}
+
+	return ret;
+}
+
 static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
 {
 	ntfs_attr_search_ctx *actx;
@@ -2070,6 +2175,8 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
 
 		for (i = 0; dup_rl[i].length; i++)
 			duplicated += dup_rl[i].length;
+		if (ntfsck_note_cluster_dup_attr(na))
+			cluster_dup_attr_list_incomplete = TRUE;
 		fsck_err_found();
 		cluster_dup_affected_attrs++;
 		cluster_dup_clusters += duplicated;
@@ -11113,6 +11220,34 @@ static void ntfsck_ask_reparse_index_repairs(ntfs_volume *vol)
 	reparse_index_repair_decided = TRUE;
 }
 
+static void ntfsck_ask_cluster_dup_repairs(ntfs_volume *vol)
+{
+	if (!(cluster_dup_affected_attrs || vol->fsck_lcn_range_dup_count) ||
+			cluster_dup_repair_decided)
+		return;
+
+	ntfs_log_error("  * Cluster duplication:\n");
+	if (cluster_dup_affected_attrs) {
+		ntfs_log_error("    Duplicated clusters: %"PRIu64"\n",
+				cluster_dup_clusters);
+		ntfs_log_error("    Affected attributes: %"PRIu64"\n",
+				cluster_dup_affected_attrs);
+	}
+	if (vol->fsck_lcn_range_dup_count)
+		ntfs_log_error("    Cluster conflicts outside runlist scans: %"PRIu64
+				"\n", vol->fsck_lcn_range_dup_count);
+	if (!cluster_dup_affected_attrs) {
+		ntfs_log_error("    Automatic runlist repair is unavailable.\n");
+		cluster_dup_repair_decided = TRUE;
+		return;
+	}
+	ntfs_log_error("    Repair and apply the affected attribute runlists to disk.\n");
+	ntfs_log_error("    Fix it? ");
+	cluster_dup_repair_approved = ntfs_ask_repair(vol);
+	cluster_dup_repair_decided = TRUE;
+	cluster_dup_repair_retry = cluster_dup_repair_approved;
+}
+
 /*
  * ntfsck_run_repair_passes - run the whole check/repair sequence once.
  *
@@ -11156,6 +11291,8 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	missing_reparse_index_entries = 0;
 	cluster_dup_affected_attrs = 0;
 	cluster_dup_clusters = 0;
+	cluster_dup_attr_list_incomplete = FALSE;
+	ntfsck_clear_cluster_dup_attrs();
 	vol->fsck_mft_next_attr_instance_fix_count = 0;
 	vol->fsck_mft_in_use_flag_fix_count = 0;
 	vol->fsck_mft_not_in_use_flag_fix_count = 0;
@@ -11227,7 +11364,19 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 		goto out;
 	}
 	ntfsck_ask_index_repairs(vol);
-	ntfsck_apply_deferred_index_repairs(vol, TRUE);
+	/*
+	 * Repair duplicated index-allocation clusters before any deferred index
+	 * removal can mutate a block shared by two directory inodes.
+	 */
+	ntfsck_ask_cluster_dup_repairs(vol);
+	if (cluster_dup_repair_approved && cluster_dup_affected_attrs) {
+		if (ntfsck_repair_cluster_dup_attrs(vol)) {
+			ntfs_log_error("Failed to separate duplicated cluster runlists.\n");
+			ret = -1;
+			goto out;
+		}
+		cluster_dup_repair_retry = FALSE;
+	}
 
 	/*
 	 * Validate extent records from the reverse direction. This catches an
@@ -11243,6 +11392,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 		ret = -1;
 		goto out;
 	}
+	ntfsck_apply_deferred_index_repairs(vol, TRUE);
 
 	/* pass 5 */
 	if (ntfsck_check_orphaned_mft(vol)) {
@@ -11301,32 +11451,6 @@ out:
 				"are missing the attribute.\n",
 				vol->fsck_missing_standard_information_count);
 	}
-	if ((cluster_dup_affected_attrs || vol->fsck_lcn_range_dup_count) &&
-			!cluster_dup_repair_decided) {
-		ntfs_log_error("  * Cluster duplication:\n");
-		if (cluster_dup_affected_attrs) {
-			ntfs_log_error("    Duplicated clusters: %"PRIu64"\n",
-					cluster_dup_clusters);
-			ntfs_log_error("    Affected attributes: %"PRIu64"\n",
-					cluster_dup_affected_attrs);
-		}
-		if (vol->fsck_lcn_range_dup_count) {
-			ntfs_log_error("    Cluster conflicts outside runlist scans: %"PRIu64
-					"\n", vol->fsck_lcn_range_dup_count);
-		}
-		if (!cluster_dup_affected_attrs) {
-			ntfs_log_error("    Automatic runlist repair is unavailable.\n");
-			cluster_dup_repair_decided = TRUE;
-			goto cluster_dup_done;
-		}
-		ntfs_log_error("    Repair and apply the affected attribute runlists "
-				"to disk.\n");
-		ntfs_log_error("    Fix it? ");
-		cluster_dup_repair_approved = ntfs_ask_repair(vol);
-		cluster_dup_repair_decided = TRUE;
-		cluster_dup_repair_retry = cluster_dup_repair_approved;
-	}
-cluster_dup_done:
 	if (fixup_salvage_candidates) {
 		ntfs_log_error("NTFS fixup: %"PRIu64" salvageable MFT record(s) "
 				"were found", fixup_salvage_candidates);
@@ -11342,6 +11466,7 @@ cluster_dup_done:
 			ntfs_log_error("; repair was not approved.\n");
 	}
 		ntfsck_clear_deferred_repairs();
+	ntfsck_clear_cluster_dup_attrs();
 	if (!saved_fixup_suppress)
 		NVolClearFsckSuppressFixupWarn(vol);
 	/* the volume is re-mounted between rounds; drop the cached $SII ctx */

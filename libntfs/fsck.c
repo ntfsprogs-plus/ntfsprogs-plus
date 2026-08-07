@@ -554,6 +554,7 @@ runlist *ntfs_fsck_make_dup_runlist(runlist *orig_dup_rl, runlist *new_dup_rl)
 	runlist *dup_rl;
 	int orig_size;
 	int i;
+	size_t new_size;
 
 	ntfs_log_debug("make dup runlist orig_dup_rl dump\n");
 	if (!orig_dup_rl) {
@@ -580,7 +581,27 @@ runlist *ntfs_fsck_make_dup_runlist(runlist *orig_dup_rl, runlist *new_dup_rl)
 
 	ntfs_log_debug("orig_dup_rl\n");
 	ntfs_debug_runlist_dump(orig_dup_rl);
-	dup_rl = ntfs_rl_replace(orig_dup_rl, orig_size, new_dup_rl, 1, orig_size - 1);
+	if (orig_size > 1 &&
+			orig_dup_rl[orig_size - 2].vcn +
+			orig_dup_rl[orig_size - 2].length == new_dup_rl->vcn &&
+			orig_dup_rl[orig_size - 2].lcn +
+			orig_dup_rl[orig_size - 2].length == new_dup_rl->lcn) {
+		orig_dup_rl[orig_size - 2].length += new_dup_rl->length;
+		orig_dup_rl[orig_size - 1].vcn =
+				orig_dup_rl[orig_size - 2].vcn +
+				orig_dup_rl[orig_size - 2].length;
+		dup_rl = orig_dup_rl;
+	} else {
+		new_size = (size_t)(orig_size + 1) * sizeof(*dup_rl);
+		new_size = (new_size + 0xfff) & ~(size_t)0xfff;
+		dup_rl = realloc(orig_dup_rl, new_size);
+		if (!dup_rl)
+			return NULL;
+		dup_rl[orig_size - 1] = *new_dup_rl;
+		dup_rl[orig_size].vcn = new_dup_rl->vcn + new_dup_rl->length;
+		dup_rl[orig_size].lcn = LCN_ENOENT;
+		dup_rl[orig_size].length = 0;
+	}
 
 	ntfs_log_debug("appended dup_rl\n");
 	ntfs_debug_runlist_dump(dup_rl);

@@ -2376,6 +2376,7 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 		ntfs_attr_close(ia_na);
 
 		ntfsck_initialize_index_attr(ni);
+		ntfs_attr_reinit_search_ctx(ctx);
 
 		tfn->allocated_size = 0;
 		tfn->data_size = 0;
@@ -2890,6 +2891,7 @@ static int ntfsck_remove_filename(ntfs_inode *ni, ntfs_attr_search_ctx *ctx)
 	ret = ntfs_attr_record_rm(ctx);
 	if (ret)
 		return STATUS_ERROR;
+	ntfs_attr_reinit_search_ctx(ctx);
 
 	nlink = le16_to_cpu(ni->mrec->link_count);
 

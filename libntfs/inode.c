@@ -545,8 +545,9 @@ int ntfs_inode_close(ntfs_inode *ni)
 
 	if (ni) {
 		debug_double_inode(ni->mft_no,0);
-		/* do not cache system files : could lead to double entries */
+		/* do not cache extents or system files */
 		if (ni->vol && ni->vol->nidata_cache &&
+				ni->nr_extents != -1 &&
 				((ni->mft_no == FILE_root) ||
 				 (!utils_is_metadata(ni)))) {
 			/* If we have dirty metadata, write it out. */

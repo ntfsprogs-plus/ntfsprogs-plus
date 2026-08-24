@@ -249,7 +249,7 @@ static struct ntfs_problem problem_table[] = {
 		"Inode(@In): Index entry carries sequence number zero, rebind it to the MFT record.",
 	},
 	{ PR_FN_PARENT_SEQNO_ZERO,
-		"Inode(@In): Parent reference of $FILE_NAME carries sequence number zero, update it.",
+		"Inode(@In): Parent reference of $FILE_NAME carries a stale sequence number, update it.",
 	},
 	{ PR_MFT_BITMAP_SIZE_MISMATCH,
 		"$MFT/$BITMAP size(@Ad) doesn't cover all mft records, expected at least(@Sd). Extend it.",

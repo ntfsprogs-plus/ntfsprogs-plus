@@ -2997,9 +2997,10 @@ static int ntfs_attr_find(const ATTR_TYPES type, const ntfschar *name,
 		}
 	}
 	errno = EIO;
-	ntfs_log_perror("%s: Corrupt inode (%lld:%d)", __FUNCTION__,
-			ctx->ntfs_ino ? (long long)ctx->ntfs_ino->mft_no : -1,
-			type);
+	if (!ctx->ntfs_ino || !NVolFsck(ctx->ntfs_ino->vol))
+		ntfs_log_perror("%s: Corrupt inode (%lld:%d)", __FUNCTION__,
+				ctx->ntfs_ino ? (long long)ctx->ntfs_ino->mft_no : -1,
+				type);
 	return -1;
 }
 

@@ -183,6 +183,12 @@ static BOOL fn_size_repair_apply_pass;
 static u64 fn_allocated_size_mismatches;
 static u64 fn_data_size_mismatches;
 static u64 fn_size_repairs_applied;
+/* One response controls all $FILE_NAME parent sequence repairs. */
+static BOOL fn_parent_seqno_repair_decided;
+static BOOL fn_parent_seqno_repair_approved;
+static BOOL fn_parent_seqno_repair_apply_pass;
+static u64 fn_parent_seqno_mismatches;
+static u64 fn_parent_seqno_repairs_applied;
 /* One response controls removal of every corrupted directory index entry. */
 static BOOL corrupt_index_repair_decided;
 static BOOL corrupt_index_repair_approved;
@@ -228,6 +234,7 @@ enum ntfsck_deferred_index_type {
 struct ntfsck_deferred_index {
 	struct ntfs_list_head list;
 	enum ntfsck_deferred_index_type type;
+	BOOL parent_seqno_mismatch;
 	u64 parent_mft_no;
 	le64 indexed_file;
 	u64 allocated_size;
@@ -460,6 +467,8 @@ static const struct option opts[] = {
 
 static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
 		FILE_NAME_ATTR *ie_fn, ntfs_attr_search_ctx *actx);
+static int ntfsck_cmp_parent_mft_sequence(ntfs_inode *parent_ni,
+		FILE_NAME_ATTR *fn);
 static int ntfsck_check_directory(ntfs_inode *ni);
 static int ntfsck_check_file(ntfs_inode *ni);
 static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
@@ -2775,14 +2784,16 @@ static int ntfsck_check_parent_mft_record(ntfs_inode *parent_ni,
 	 */
 	if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn) ||
 			ntfsck_cmp_parent_mft_sequence(parent_ni, ie_fn)) {
-		u16 pdir_seq = le16_to_cpu(parent_ni->mrec->sequence_number);
-		problem_context_t pctx = {0, };
+		if (!fn_parent_seqno_repair_apply_pass) {
+			fn_parent_seqno_mismatches++;
+			fsck_err_found();
+		}
+		if (fn_parent_seqno_repair_apply_pass &&
+				fn_parent_seqno_repair_approved) {
+			u16 pdir_seq = le16_to_cpu(parent_ni->mrec->sequence_number);
 
-		ntfs_init_problem_ctx(&pctx, ni, NULL, ctx, ictx, ni->mrec,
-				NULL, fn);
-		fsck_err_found();
-		if (ntfs_fix_problem(ni->vol, PR_FN_PARENT_SEQNO_ZERO, &pctx) &&
-				pdir_seq) {
+			if (!pdir_seq)
+				goto out;
 			fn->parent_directory =
 				MK_LE_MREF(parent_ni->mft_no, pdir_seq);
 			ie_fn->parent_directory = fn->parent_directory;
@@ -2791,11 +2802,14 @@ static int ntfsck_check_parent_mft_record(ntfs_inode *parent_ni,
 			 * The index walk reloads ictx->ib without flushing
 			 * a dirty block, so write the entry out right away.
 			 */
-			if (!ntfsck_update_index_entry(ictx))
+			if (!ntfsck_update_index_entry(ictx)) {
 				fsck_err_fixed();
+				fn_parent_seqno_repairs_applied++;
+			}
 		}
 	}
 
+out:
 	ntfs_attr_put_search_ctx(ctx);
 	return STATUS_OK;
 }
@@ -3440,7 +3454,8 @@ void ntfsck_debug_print_fn_attr(ntfs_attr_search_ctx *actx,
  */
 static int ntfsck_defer_index_repair(enum ntfsck_deferred_index_type type,
 		u64 parent_mft_no, le64 indexed_file, const void *data,
-		u32 data_len, u64 allocated_size, u64 data_size)
+		u32 data_len, u64 allocated_size, u64 data_size,
+		BOOL parent_seqno_mismatch)
 {
 	struct ntfsck_deferred_index *repair;
 
@@ -3448,6 +3463,7 @@ static int ntfsck_defer_index_repair(enum ntfsck_deferred_index_type type,
 	if (!repair)
 		return STATUS_ERROR;
 	repair->type = type;
+	repair->parent_seqno_mismatch = parent_seqno_mismatch;
 	repair->parent_mft_no = parent_mft_no;
 	repair->indexed_file = indexed_file;
 	repair->allocated_size = allocated_size;
@@ -6702,6 +6718,13 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		if (ntfs_fsck_mftbmp_get(vol, ni->mft_no)) {
 			is_mft_checked = TRUE;
 
+			/* Check every index entry, including additional hard links. */
+			if (ntfsck_check_parent_mft_record(ictx->ni, ni, ie, ictx)) {
+				corrupt_index_reference_failures++;
+				ntfsck_close_inode(ni);
+				goto remove_index;
+			}
+
 			/* Check file type */
 			if (ntfsck_check_file_type(ni, ictx, ie_fn) < 0) {
 				corrupt_index_reference_failures++;
@@ -6721,7 +6744,8 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			 * second traversal stops at the root and never reaches mismatches in
 			 * nested directories.
 			 */
-			if ((fn_size_repair_apply_pass ||
+			if ((fn_parent_seqno_repair_apply_pass ||
+					fn_size_repair_apply_pass ||
 					index_reserved_repair_apply_pass) &&
 					ntfsck_is_directory(ie_fn)) {
 				dir = (struct dir *)calloc(1, sizeof(struct dir));
@@ -6807,7 +6831,8 @@ remove_index:
 		corrupt_index_entries++;
 		if (ntfsck_defer_index_repair(NTFSCK_DEFER_CORRUPT_ENTRY,
 				ictx->ni->mft_no, ie->indexed_file, ie_fn,
-				le16_to_cpu(ie->key_length), 0, 0))
+				le16_to_cpu(ie->key_length), 0, 0,
+				ntfsck_cmp_parent_mft_sequence(ictx->ni, ie_fn)))
 			ret = STATUS_ERROR;
 		else
 			ret = STATUS_OK;
@@ -6953,7 +6978,7 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 		fsck_err_found();
 		index_bitmap_mismatches++;
 		if (ntfsck_defer_index_repair(NTFSCK_DEFER_INDEX_BITMAP,
-				ni->mft_no, 0, ni->fsck_ibm, ibm_size, 0, 0))
+				ni->mft_no, 0, ni->fsck_ibm, ibm_size, 0, 0, FALSE))
 			ret = STATUS_ERROR;
 	}
 
@@ -11073,9 +11098,15 @@ static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol,
 		}
 		ntfs_index_ctx_put(ictx);
 		ntfsck_close_inode(parent_ni);
-		if (fixed)
+		if (fixed) {
 			fsck_err_fixed();
-		else
+			if (repair->parent_seqno_mismatch &&
+					fn_parent_seqno_repairs_applied <
+					fn_parent_seqno_mismatches) {
+				fsck_err_fixed();
+				fn_parent_seqno_repairs_applied++;
+			}
+		} else
 			failed_corrupt_entries++;
 	}
 	if (failed_corrupt_entries) {
@@ -11093,19 +11124,24 @@ static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol,
 	if (!corrupt_only &&
 			((fn_size_repair_approved &&
 				(fn_allocated_size_mismatches || fn_data_size_mismatches)) ||
+			 (fn_parent_seqno_repair_approved &&
+				fn_parent_seqno_mismatches) ||
 			 (index_reserved_repair_approved && index_reserved_entries))) {
 		u64 expected = fn_allocated_size_mismatches +
 				fn_data_size_mismatches;
+		u64 expected_parent_seqno = fn_parent_seqno_mismatches;
 		u64 expected_reserved = index_reserved_entries;
 
 		fn_size_repairs_applied = 0;
 		index_reserved_repairs_applied = 0;
 		fn_size_repair_apply_pass = TRUE;
+		fn_parent_seqno_repair_apply_pass = TRUE;
 		index_reserved_repair_apply_pass = TRUE;
 		if (ntfsck_scan_index_entries_btree(vol))
 			ntfs_log_error("  * Deferred directory index repair traversal "
 					"failed.\n");
 		fn_size_repair_apply_pass = FALSE;
+		fn_parent_seqno_repair_apply_pass = FALSE;
 		index_reserved_repair_apply_pass = FALSE;
 		if (fn_size_repairs_applied < expected)
 			ntfs_log_error("  * FILE_NAME sizes not updated: %"PRIu64"\n",
@@ -11113,6 +11149,9 @@ static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol,
 		if (index_reserved_repairs_applied < expected_reserved)
 			ntfs_log_error("  * Index reserved fields not cleared: %"PRIu64"\n",
 					expected_reserved - index_reserved_repairs_applied);
+		if (fn_parent_seqno_repairs_applied < expected_parent_seqno)
+			ntfs_log_error("  * FILE_NAME parent references not updated: %"PRIu64"\n",
+					expected_parent_seqno - fn_parent_seqno_repairs_applied);
 	}
 }
 
@@ -11208,6 +11247,14 @@ index_reserved:
 		index_reserved_repair_approved = ntfs_ask_repair(vol);
 		index_reserved_repair_decided = TRUE;
 	}
+	if (fn_parent_seqno_mismatches && !fn_parent_seqno_repair_decided) {
+		ntfs_log_error("  * FILE_NAME parent sequence: %"PRIu64
+				" mismatch(es) were found.\n",
+				fn_parent_seqno_mismatches);
+		ntfs_log_error("    Update their parent references. Fix it? ");
+		fn_parent_seqno_repair_approved = ntfs_ask_repair(vol);
+		fn_parent_seqno_repair_decided = TRUE;
+	}
 }
 
 static void ntfsck_ask_reparse_index_repairs(ntfs_volume *vol)
@@ -11280,6 +11327,9 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	fn_allocated_size_mismatches = 0;
 	fn_data_size_mismatches = 0;
 	fn_size_repairs_applied = 0;
+	fn_parent_seqno_repair_apply_pass = FALSE;
+	fn_parent_seqno_mismatches = 0;
+	fn_parent_seqno_repairs_applied = 0;
 	index_reserved_repair_apply_pass = FALSE;
 	index_reserved_entries = 0;
 	index_reserved_repairs_applied = 0;
@@ -11745,6 +11795,8 @@ conflict_option:
 		fixup_repair_retry = FALSE;
 		fn_size_repair_decided = FALSE;
 		fn_size_repair_approved = FALSE;
+		fn_parent_seqno_repair_decided = FALSE;
+		fn_parent_seqno_repair_approved = FALSE;
 		corrupt_index_repair_decided = FALSE;
 		corrupt_index_repair_approved = FALSE;
 		index_bitmap_repair_decided = FALSE;

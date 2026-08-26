@@ -1,7 +1,7 @@
 .\" Copyright (c) 2005\-2006 Szabolcs Szakacsits.
 .\" This file may be copied under the terms of the GNU Public License.
 .\"
-.TH NTFSCMP 8 "April 2006" "ntfs-3g @VERSION@"
+.TH NTFSCMP 8 "April 2006" "ntfsprogs-plus @VERSION@"
 .SH NAME
 ntfscmp \- compare two NTFS filesystems and tell the differences
 .SH SYNOPSIS
@@ -54,7 +54,7 @@ The exit code is 0 on success, non\-zero otherwise.
 No problem is known. If you would find otherwise then please send
 your report to the development team:
 .nh
-ntfs\-3g\-devel@lists.sf.net
+ntfs@lists.linux.dev
 .hy
 .SH AUTHOR
 .B ntfscmp
@@ -63,11 +63,11 @@ It was ported to ntfs-3g by Erik Larsson.
 .SH AVAILABILITY
 .B ntfscmp
 is part of the
-.B ntfs-3g
+.B ntfsprogs-plus
 package and is available from:
 .br
 .nh
-https://github.com/tuxera/ntfs-3g/wiki/
+https://github.com/ntfsprogs-plus/ntfsprogs-plus
 .hy
 .SH SEE ALSO
 .BR ntfsinfo (8),

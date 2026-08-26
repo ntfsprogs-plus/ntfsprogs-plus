@@ -631,44 +631,6 @@ u64 ntfs_inode_lookup_by_mbsname(ntfs_inode *dir_ni, const char *name)
 	return (inum);
 }
 
-/*
- *		Update a cache lookup record when a name has been defined
- *
- *	The UTF-8 name is required
- */
-
-void ntfs_inode_update_mbsname(ntfs_inode *dir_ni, const char *name, u64 inum)
-{
-#if CACHE_LOOKUP_SIZE
-	struct CACHED_LOOKUP item;
-	struct CACHED_LOOKUP *cached;
-	char *cached_name;
-
-	if (dir_ni->vol->lookup_cache) {
-		if (!NVolCaseSensitive(dir_ni->vol)) {
-			cached_name = ntfs_uppercase_mbs(name,
-					dir_ni->vol->upcase, dir_ni->vol->upcase_len);
-			item.name = cached_name;
-		} else {
-			cached_name = (char*)NULL;
-			item.name = name;
-		}
-		if (item.name) {
-			item.namesize = strlen(item.name) + 1;
-			item.parent = dir_ni->mft_no;
-			item.inum = inum;
-			cached = (struct CACHED_LOOKUP*)ntfs_enter_cache(
-					dir_ni->vol->lookup_cache,
-					GENERIC(&item), lookup_cache_compare);
-			if (cached)
-				cached->inum = inum;
-			if (cached_name)
-				free(cached_name);
-		}
-	}
-#endif
-}
-
 /**
  * ntfs_pathname_to_inode - Find the inode which represents the given pathname
  * @vol:       An ntfs volume obtained from ntfs_mount
@@ -1850,29 +1812,6 @@ ntfs_inode *ntfs_create(ntfs_inode *dir_ni, le32 securid, const ntfschar *name,
 	return __ntfs_create(dir_ni, securid, name, name_len, type, 0, NULL, 0);
 }
 
-ntfs_inode *ntfs_create_device(ntfs_inode *dir_ni, le32 securid,
-		const ntfschar *name, u8 name_len, mode_t type, dev_t dev)
-{
-	if (type != S_IFCHR && type != S_IFBLK) {
-		ntfs_log_error("Invalid arguments.\n");
-		return NULL;
-	}
-	return __ntfs_create(dir_ni, securid, name, name_len, type, dev, NULL, 0);
-}
-
-ntfs_inode *ntfs_create_symlink(ntfs_inode *dir_ni, le32 securid,
-		const ntfschar *name, u8 name_len, const ntfschar *target,
-		int target_len)
-{
-	if (!target || !target_len) {
-		ntfs_log_error("%s: Invalid argument (%p, %d)\n", __FUNCTION__,
-				target, target_len);
-		return NULL;
-	}
-	return __ntfs_create(dir_ni, securid, name, name_len, S_IFLNK, 0,
-			target, target_len);
-}
-
 int ntfs_check_empty_dir(ntfs_inode *ni)
 {
 	ntfs_attr *na;
@@ -2869,83 +2808,4 @@ int ntfs_remove_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni)
 		ntfs_inode_close(dir_ni);
 	}
 	return (res);
-}
-
-/*
- *		Increment the count of subdirectories
- *		(excluding entries with a short name)
- */
-
-static int nlink_increment(void *nlink_ptr,
-		const ntfschar *name __attribute__((unused)),
-		const int len __attribute__((unused)),
-		const int type,
-		const s64 pos __attribute__((unused)),
-		const MFT_REF mref __attribute__((unused)),
-		const unsigned int dt_type)
-{
-	if ((dt_type == NTFS_DT_DIR) && (type != FILE_NAME_DOS))
-		(*((int*)nlink_ptr))++;
-	return (0);
-}
-
-/*
- *		Compute the number of hard links according to Posix
- *	For a directory count the subdirectories whose name is not
- *		a short one, but count "." and ".."
- *	Otherwise count the names, excluding the short ones.
- *
- *	if there is an error, a null count is returned.
- */
-
-int ntfs_dir_link_cnt(ntfs_inode *ni)
-{
-	ntfs_attr_search_ctx *actx;
-	FILE_NAME_ATTR *fn;
-	s64 pos;
-	int err = 0;
-	int nlink = 0;
-
-	if (!ni) {
-		ntfs_log_error("Invalid argument.\n");
-		errno = EINVAL;
-		goto err_out;
-	}
-	if (ni->nr_extents == -1)
-		ni = ni->base_ni;
-	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
-		/*
-		 * Directory : scan the directory and count
-		 * subdirectories whose name is not DOS-only.
-		 * The directory names are ignored, but "." and ".."
-		 * are taken into account.
-		 */
-		pos = 0;
-		err = ntfs_readdir(ni, &pos, &nlink, nlink_increment);
-		if (err)
-			nlink = 0;
-	} else {
-		/*
-		 * Non-directory : search for FILE_NAME attributes,
-		 * and count those which are not DOS-only ones.
-		 */
-		actx = ntfs_attr_get_search_ctx(ni, NULL);
-		if (!actx)
-			goto err_out;
-		while (!(err = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
-						CASE_SENSITIVE, 0, NULL, 0, actx))) {
-			fn = (FILE_NAME_ATTR*)((u8*)actx->attr +
-					le16_to_cpu(actx->attr->value_offset));
-			if (fn->file_name_type != FILE_NAME_DOS)
-				nlink++;
-		}
-		if (err && (errno != ENOENT))
-			nlink = 0;
-		ntfs_attr_put_search_ctx(actx);
-	}
-	if (!nlink)
-		ntfs_log_perror("Failed to compute nlink of inode %lld",
-				(long long)ni->mft_no);
-err_out :
-	return (nlink);
 }

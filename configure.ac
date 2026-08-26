@@ -26,9 +26,8 @@
 
 # Autoconf
 AC_PREREQ([2.59])
-AC_INIT([ntfsprogs-plus],[1.0.0],[linkinjeon@kernel.org])
+AC_INIT([ntfsprogs-plus],[1.0.0],[ntfs@lists.linux.dev])
 AC_CONFIG_SRCDIR([config.h.in])
-LIBNTFS_VERSION="90"
 
 # Environment
 AC_CANONICAL_HOST
@@ -85,9 +84,23 @@ AC_ARG_ENABLE(
 
 AC_ARG_ENABLE(
 	[library],
-	[AS_HELP_STRING([--disable-library],[do not install libntfs but link it into ntfs])],
+	[AS_HELP_STRING([--enable-library],[install libntfs as a shared library instead of linking it statically into the tools])],
 	,
-	[enable_library="yes"]
+	[enable_library="no"]
+)
+
+AC_ARG_ENABLE(
+	[extras],
+	[AS_HELP_STRING([--enable-extras],[build the extra ntfsprogs utilities (e.g. ntfswipe)])],
+	,
+	[enable_extras="no"]
+)
+
+AC_ARG_ENABLE(
+	[quarantined],
+	[AS_HELP_STRING([--enable-quarantined],[build the quarantined ntfsprogs utilities (e.g. ntfsmove); requires --enable-extras])],
+	,
+	[enable_quarantined="no"]
 )
 
 AC_ARG_ENABLE(
@@ -95,13 +108,6 @@ AC_ARG_ENABLE(
 	[AS_HELP_STRING([--disable-mtab],[disable and ignore usage of /etc/mtab])],
 	,
 	[enable_mtab="yes"]
-)
-
-AC_ARG_ENABLE(
-	[posix-acls],
-	[AS_HELP_STRING([--enable-posix-acls],[enable POSIX ACL support])],
-	,
-	[enable_posix_acls="no"]
 )
 
 AC_ARG_ENABLE(
@@ -432,16 +438,6 @@ AC_CHECK_FUNCS([ \
 ])
 AC_SYS_LARGEFILE
 
-# The dlopen API might be in libc or in libdl.  Check libc first, then
-# fall back to libdl.
-LIBDL=""
-if test "x${disable_plugins}" = "xno"; then
-	AC_CHECK_LIB(c, dlopen, ,
-		[AC_CHECK_LIB(dl, dlopen, [LIBDL="-ldl"],
-			[AC_MSG_ERROR(["Unable to find libdl (required for external plugin support)"])])])
-fi
-AC_SUBST([LIBDL])
-
 if test "$GCC" = "yes" ; then
 	# We add -Wall to enable some compiler warnings.
 	CFLAGS="${CFLAGS} -Wall -Wno-address-of-packed-member"
@@ -472,15 +468,12 @@ test "${enable_device_default_io_ops}" = "no" && AC_DEFINE(
 )
 
 test "${enable_mtab}" = "no" && AC_DEFINE([IGNORE_MTAB], [1], [Don't update /etc/mtab])
-test "${enable_posix_acls}" != "no" && AC_DEFINE([POSIXACLS], [1], [POSIX ACL support])
 test "${enable_xattr_mappings}" != "no" && AC_DEFINE([XATTR_MAPPINGS], [1], [system extended attributes mappings])
-test "${disable_plugins}" != "no" && AC_DEFINE([DISABLE_PLUGINS], [1], [Define to 1 for disabling reparse plugins])
 
 test "${enable_really_static}" = "yes" && enable_library="no"
 test "${enable_library}" = "no" && enable_ldconfig="no"
 
 if test "x${DISTCHECK_HACK}" != "x"; then
-	enable_mount_helper="no"
 	enable_ldconfig="no"
 fi
 
@@ -505,7 +498,6 @@ AC_SUBST([ntfsincludedir])
 AC_SUBST([rootbindir])
 AC_SUBST([rootsbindir])
 AC_SUBST([rootlibdir])
-AC_SUBST([LIBNTFS_VERSION])
 AC_SUBST([MKNTFS_CPPFLAGS])
 AC_SUBST([MKNTFS_LIBS])
 AC_SUBST([LIBNTFS_CPPFLAGS])
@@ -520,7 +512,6 @@ AM_CONDITIONAL([REALLYSTATIC], [test "${enable_really_static}" = "yes"])
 AM_CONDITIONAL([INSTALL_LIBRARY], [test "${enable_library}" = "yes"])
 AM_CONDITIONAL([ENABLE_EXTRAS], [test "${enable_extras}" = "yes"])
 AM_CONDITIONAL([ENABLE_QUARANTINED], [test "${enable_quarantined}" = "yes"])
-AM_CONDITIONAL([DISABLE_PLUGINS], [test "${disable_plugins}" != "no"])
 
 # workaround for <autoconf-2.60
 if test -z "${docdir}"; then
@@ -539,14 +530,21 @@ AC_CONFIG_FILES([
 	include/Makefile
 	libntfs/Makefile
 	src/Makefile
-	src/mkntfs.8
-	src/ntfsclone.8
-	src/ntfscluster.8
-	src/ntfsresize.8
-	src/ntfsinfo.8
-	src/ntfslabel.8
-	src/ntfsprogs-plus.8
-	src/ntfsck.8
+	manpages/Makefile
+	manpages/mkntfs.8
+	manpages/ntfsclone.8
+	manpages/ntfscluster.8
+	manpages/ntfsresize.8
+	manpages/ntfsinfo.8
+	manpages/ntfslabel.8
+	manpages/ntfsprogs-plus.8
+	manpages/ntfsck.8
+	manpages/ntfsls.8
+	manpages/ntfscat.8
+	manpages/ntfscmp.8
+	manpages/ntfswipe.8
+	manpages/ntfsundelete.8
+	manpages/ntfscp.8
 ])
 AC_OUTPUT
 

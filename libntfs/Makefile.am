@@ -11,7 +11,7 @@ endif
 libntfs_la_CFLAGS  = $(AM_CFLAGS)
 libntfs_la_CPPFLAGS= $(AM_CPPFLAGS) $(LIBNTFS_CPPFLAGS) -I$(top_srcdir)/include
 libntfs_la_LIBADD  = $(LIBNTFS_LIBS)
-libntfs_la_LDFLAGS = -version-info $(LIBNTFS_VERSION) -no-undefined
+libntfs_la_LDFLAGS = -no-undefined
 
 libntfs_la_SOURCES =	\
 	acls.c 		\
@@ -31,7 +31,6 @@ libntfs_la_SOURCES =	\
 	fsck.c		\
 	index.c 	\
 	inode.c 	\
-	ioctl.c 	\
 	lcnalloc.c 	\
 	lib_utils.c	\
 	logfile.c 	\

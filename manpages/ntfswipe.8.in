@@ -1,7 +1,7 @@
 .\" Copyright (c) 2014 Jean-Pierre Andre
 .\" This file may be copied under the terms of the GNU Public License.
 .\"
-.TH NTFSWIPE 8 "June 2014" "ntfs-3g @VERSION@"
+.TH NTFSWIPE 8 "June 2014" "ntfsprogs-plus @VERSION@"
 .SH NAME
 ntfswipe \- overwrite unused space on an NTFS volume
 .SH SYNOPSIS
@@ -113,7 +113,7 @@ If you find a bug please send an email describing the problem to the
 development team:
 .br
 .nh
-ntfs\-3g\-devel@lists.sf.net
+ntfs@lists.linux.dev
 .hy
 .SH AUTHORS
 .B ntfswipe
@@ -122,13 +122,13 @@ It was ported to ntfs-3g by Erik Larsson.
 .SH AVAILABILITY
 .B ntfswipe
 is part of the
-.B ntfs-3g
+.B ntfsprogs-plus
 package and is available from:
 .br
 .nh
-https://github.com/tuxera/ntfs-3g/wiki/
+https://github.com/ntfsprogs-plus/ntfsprogs-plus
 .hy
 .SH SEE ALSO
-.BR ntfs-3g (8),
+.BR ntfsprogs-plus (8),
 .BR ntfsls (8),
 .BR ntfsprogs (8)

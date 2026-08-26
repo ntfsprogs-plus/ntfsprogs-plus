@@ -28,6 +28,9 @@ char *ntfs_make_symlink(ntfs_inode *ni, const char *mnt_point);
 
 BOOL ntfs_possible_symlink(ntfs_inode *ni);
 
+BOOL ntfs_reparse_data_is_valid(ntfs_inode *ni,
+		const REPARSE_POINT *reparse_attr, size_t size);
+
 int ntfs_get_ntfs_reparse_data(ntfs_inode *ni, char *value, size_t size);
 
 char *ntfs_get_abslink(ntfs_volume *vol, ntfschar *junction,
@@ -45,6 +48,7 @@ int ntfs_reparse_set_wsl_not_symlink(ntfs_inode *ni, mode_t mode);
 int ntfs_set_ntfs_reparse_data(ntfs_inode *ni, const char *value,
 		size_t size, int flags);
 int ntfs_remove_ntfs_reparse_data(ntfs_inode *ni);
+int ntfs_reparse_index_check(ntfs_inode *ni, le32 reparse_tag, BOOL add);
 
 int ntfs_delete_reparse_index(ntfs_inode *ni);
 

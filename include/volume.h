@@ -54,7 +54,7 @@ typedef struct _ntfs_volume ntfs_volume;
 
 extern int fsck_errors;
 extern int fsck_fixes;
-extern int parse_errors;
+extern BOOL fsck_step_header_open;
 
 /* It is called when found filesystem inconsistency */
 #define check_failed(FORMAT, ARGS...) \
@@ -84,21 +84,18 @@ extern int parse_errors;
 /* It is called when each fsck step start */
 #define fsck_start_step(FORMAT, ARGS...) \
 	do { \
+		fsck_step_header_open = TRUE; \
 		ntfs_log_info("Parse #%d: " FORMAT, parse_count++, ##ARGS); \
 		if (fsck_errors) \
 		ntfs_log_info(" (left:%d, errors:%d, fixed:%d)", \
 			fsck_errors - fsck_fixes, fsck_errors, fsck_fixes); \
-		ntfs_log_info("\n"); \
 	} while (0)
 
-/* It is called when each fsck step end */
+/* Complete the Parse header without leaving transient percentages. */
 #define fsck_end_step() \
 	do { \
-		if ((fsck_errors - fsck_fixes) != parse_errors) \
-		parse_errors = (fsck_errors - fsck_fixes); \
-		if (parse_errors) \
-		ntfs_log_info("Parse #%d Errors remains: %d\n", \
-			parse_count - 1, parse_errors); \
+		ntfs_log_info(" 100%% completed\n"); \
+		fsck_step_header_open = FALSE; \
 	} while (0)
 
 /**
@@ -180,6 +177,7 @@ typedef enum {
 	NV_FsYesRepair,		/* 1: Volume is for fsck */
 	NV_FsAskRepair,		/* 1: Volume is for fsck */
 	NV_Fsck,		/* 1: Volume is on fsck */
+	NV_FsckSuppressFixupWarn,	/* 1: Summarize fsck fixup warnings */
 } ntfs_volume_state_bits;
 
 #define test_nvol_flag(nv, flag)	test_bit(NV_##flag, (nv)->state)
@@ -241,6 +239,13 @@ typedef enum {
 #define NVolFsck(nv)			test_nvol_flag(nv, Fsck)
 #define NVolSetFsck(nv)			set_nvol_flag(nv, Fsck)
 #define NVolClearFsck(nv)		clear_nvol_flag(nv, Fsck)
+
+#define NVolFsckSuppressFixupWarn(nv) \
+	test_nvol_flag(nv, FsckSuppressFixupWarn)
+#define NVolSetFsckSuppressFixupWarn(nv) \
+	set_nvol_flag(nv, FsckSuppressFixupWarn)
+#define NVolClearFsckSuppressFixupWarn(nv) \
+	clear_nvol_flag(nv, FsckSuppressFixupWarn)
 
 #define NVolIsOnFsck(nv)		NVolFsck(nv)
 
@@ -358,7 +363,26 @@ struct _ntfs_volume {
 	/* TODO: separate fields related with 'fsck' from volume structure */
 	u64 lost_found;		/* mft record number for lost_found directory */
 	u8 **fsck_lcn_bitmap;	/* lcn bitmap of fsck */
+	u32 *fsck_lcn_setcnt;	/* per-block count of set bits, for all-ones collapse */
+	u64 fsck_lcn_range_dup_count; /* duplicates found by generic range marking */
+	u64 fsck_mft_next_attr_instance_fix_count; /* corrected MFT attribute instances */
+	u64 fsck_mft_in_use_flag_fix_count; /* restored MFT in-use flags */
+	u64 fsck_mft_not_in_use_flag_fix_count; /* cleared MFT in-use flags */
+	u64 fsck_missing_standard_information_count; /* unreadable base records */
+	u64 fsck_corrupt_mft_record_count; /* structurally corrupt MFT records seen */
+	u64 fsck_mft_seqno_mismatch_count; /* stale MFT references seen */
+	u8 *fsck_lcn_arena;	/* mmap'd scratch backing literal blocks (opt-in), else NULL */
+	s64 fsck_lcn_arena_size;	/* byte size of the mmap arena */
+	int fsck_lcn_arena_fd;	/* fd of the unlinked scratch file, or -1 */
 	u64 max_flb_cnt;
+	/*
+	 * Full-occupancy oracle for the fsck allocator barrier. The pass-1 MFT scan
+	 * sets every cluster referenced by a valid inode here, and
+	 * ntfs_cluster_alloc() folds it into its on-disk $Bitmap read (fsck mode
+	 * only) so a repair never hands out a cluster some inode already owns.
+	 */
+	u8 **fsck_alloc_bitmap;	/* occupancy oracle blocks (NULL/FB_ONES/literal) */
+	u32 *fsck_alloc_setcnt;	/* per-block set-bit counts, for all-ones collapse */
 	u8 **fsck_mft_bitmap;	/* mft bitmap of fsck */
 	u64 max_fmb_cnt;
 	ntfs_mount_flags option_flags;	/* fsck option flags */
@@ -396,6 +420,7 @@ extern int ntfs_umount(ntfs_volume *vol, const BOOL force);
 
 extern int ntfs_version_is_supported(ntfs_volume *vol);
 extern int ntfs_volume_check_hiberfile(ntfs_volume *vol, int verbose);
+extern int ntfs_volume_invalidate_hiberfile(ntfs_volume *vol);
 extern int ntfs_logfile_reset(ntfs_volume *vol);
 
 extern int ntfs_volume_write_flags(ntfs_volume *vol, const le16 flags);

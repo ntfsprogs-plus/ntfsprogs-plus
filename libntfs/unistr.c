@@ -416,23 +416,6 @@ void ntfs_name_locase(ntfschar *name, u32 name_len, const ntfschar *locase,
 				name[i] = locase[u];
 }
 
-/**
- * ntfs_file_value_upcase - Convert a filename to upper case
- * @file_name_attr:
- * @upcase:
- * @upcase_len:
- *
- * Description...
- *
- * Returns:
- */
-void ntfs_file_value_upcase(FILE_NAME_ATTR *file_name_attr,
-		const ntfschar *upcase, const u32 upcase_len)
-{
-	ntfs_name_upcase((ntfschar*)&file_name_attr->file_name,
-			file_name_attr->file_name_length, upcase, upcase_len);
-}
-
 /*
    NTFS uses Unicode (UTF-16LE [NTFS-3G uses UCS-2LE, which is enough
    for now]) for path names, but the Unicode code points need to be
@@ -1635,27 +1618,6 @@ BOOL ntfs_collapsible_chars(ntfs_volume *vol,
 			collapsible = FALSE;
 	}
 	return (collapsible);
-}
-
-/*
- * Define the character encoding to be used.
- * Use UTF-8 unless specified otherwise.
- */
-
-int ntfs_set_char_encoding(const char *locale)
-{
-	use_utf8 = 0;
-	if (!locale || strstr(locale,"utf8") || strstr(locale,"UTF8")
-			|| strstr(locale,"utf-8") || strstr(locale,"UTF-8"))
-		use_utf8 = 1;
-	else
-		if (setlocale(LC_ALL, locale))
-			use_utf8 = 0;
-		else {
-			ntfs_log_error("Invalid locale, encoding to UTF-8\n");
-			use_utf8 = 1;
-		}
-	return 0; /* always successful */
 }
 
 #if defined(__APPLE__) || defined(__DARWIN__)

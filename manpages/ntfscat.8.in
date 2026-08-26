@@ -2,7 +2,7 @@
 .\" Copyright (c) 2007 Yura Pakhuchiy.
 .\" This file may be copied under the terms of the GNU Public License.
 .\"
-.TH NTFSCAT 8 "September 2007" "ntfs-3g @VERSION@"
+.TH NTFSCAT 8 "September 2007" "ntfsprogs-plus @VERSION@"
 .SH NAME
 ntfscat \- print NTFS files and streams on the standard output
 .SH SYNOPSIS
@@ -113,7 +113,7 @@ If you find a bug please send an email describing the problem to the
 development team:
 .br
 .nh
-ntfs\-3g\-devel@lists.sf.net
+ntfs@lists.linux.dev
 .hy
 .SH AUTHORS
 .B ntfscat
@@ -122,11 +122,11 @@ It was ported to ntfs-3g by Erik Larsson.
 .SH AVAILABILITY
 .B ntfscat
 is part of the
-.B ntfs-3g
+.B ntfsprogs-plus
 package and is available from:
 .br
 .nh
-https://github.com/tuxera/ntfs-3g/wiki/
+https://github.com/ntfsprogs-plus/ntfsprogs-plus
 .hy
 .SH SEE ALSO
 Read \fBlibntfs\fR(8) for details how to access encrypted files.

@@ -289,28 +289,6 @@ char *ntfs_ie_filename_get(INDEX_ENTRY *ie)
 	return ntfs_attr_name_get(fn->file_name, fn->file_name_length);
 }
 
-void ntfs_ie_filename_dump(INDEX_ENTRY *ie)
-{
-	char *s;
-
-	s = ntfs_ie_filename_get(ie);
-	ntfs_log_debug("'%s' ", s);
-	ntfs_attr_name_free(&s);
-}
-
-void ntfs_ih_filename_dump(INDEX_HEADER *ih)
-{
-	INDEX_ENTRY *ie;
-
-	ntfs_log_trace("Entering\n");
-
-	ie = ntfs_ie_get_first(ih);
-	while (!ntfs_ie_end(ie)) {
-		ntfs_ie_filename_dump(ie);
-		ie = ntfs_ie_get_next(ie);
-	}
-}
-
 static int ntfs_ih_numof_entries(INDEX_HEADER *ih)
 {
 	int n;
@@ -414,7 +392,9 @@ INDEX_ROOT *ntfs_ir_lookup(ntfs_inode *ni, ntfschar *name,
 
 	if (ntfs_attr_lookup(AT_INDEX_ROOT, name, name_len, CASE_SENSITIVE,
 				0, NULL, 0, *ctx)) {
-		ntfs_log_perror("Failed to lookup $INDEX_ROOT");
+		/* A missing index root is a normal probe failure for callers. */
+		if (errno != ENOENT)
+			ntfs_log_perror("Failed to lookup $INDEX_ROOT");
 		goto err_out;
 	}
 
@@ -537,20 +517,12 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 		return -1;
 	}
 
-	if (fixed && ntfs_ask_repair(vol)) {
-		u8 vcn_size_bits;
-
-		ib->magic = magic_INDX;
-
-		if (vol->cluster_size <= block_size)
-			vcn_size_bits = vol->cluster_size_bits;
-		else
-			vcn_size_bits = NTFS_BLOCK_SIZE_BITS;
-
-		if (ntfs_attr_mst_pwrite(ia_na, vcn << vcn_size_bits, 1,
-					block_size, (u8 *)ib) != 1)
-			return -1;
-	}
+	/*
+	 * A wrong magic alone is not repaired here: this runs on every block read,
+	 * so a write from this spot is neither counted nor reported as a repair.
+	 * ntfsck_repair_index_block() restores the magic (with the other header
+	 * fields) when the index is validated.
+	 */
 	return (0);
 }
 
@@ -637,15 +609,30 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 	}
 
 	if (ie->ie_flags & INDEX_ENTRY_NODE) {
-		if (((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) !=
+		/*
+		 * A node entry stores its 8-byte sub-node VCN in the last eight bytes of
+		 * the entry. In a $I30 filename index the VCN follows the aligned key
+		 * directly, but view indexes ($SDH/$SII in $Secure, $O/$Q in $Quota, $O in
+		 * $ObjId, $R in $Reparse) carry a data part between the key and the VCN, so
+		 * the entry is longer than aligned_key_end + 8.
+		 */
+		if (((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) >
 				(le16_to_cpu(ie->length) - 8)) {
-			/* TODO: need to fix it */
 			ntfs_log_error("there is no vcn space in index node\n");
 			return -1;
 		}
 	}
 
-	if (((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) ==
+	/*
+	 * Only a filename index entry ends right after its aligned key, so only
+	 * there does "exactly eight bytes past the key" prove a missing sub-node
+	 * VCN. A view index entry carries a data part between the key and the VCN,
+	 * and a small payload lands on the same length -- $Quota/$O maps a 16-byte
+	 * SID key to a 4-byte owner id -- so the repair would stamp a leaf entry as
+	 * a node there.
+	 */
+	if (collation_rule == COLLATION_FILE_NAME &&
+			((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) ==
 			(le16_to_cpu(ie->length) - 8)) {
 		if (!(ie->ie_flags & INDEX_ENTRY_NODE)) {
 			fsck_err_found();
@@ -658,8 +645,14 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 		}
 	}
 
+	/*
+	 * An end entry carries no key, so the overflow checks below do not apply.
+	 * Return @ret rather than 0: the repairs above may have turned this very
+	 * entry into an end entry, and callers only write the entry back when a
+	 * positive value says something changed.
+	 */
 	if (ie->ie_flags & INDEX_ENTRY_END)
-		return 0;
+		return ret;
 
 	if (ie->key_length &&
 			((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key)) >
@@ -911,6 +904,25 @@ int ntfs_index_lookup(const void *key, const int key_len, ntfs_index_context *ic
 		if (errno == ENOENT)
 			errno = EIO;
 		return -1;
+	}
+
+	/*
+	 * Bound the root node against the attribute value before walking it:
+	 * ntfs_ie_lookup() takes the end of the node from index_length, so a corrupt
+	 * length would send the walk past the MFT record buffer. A record with such
+	 * a header is accepted at inode open under fsck (the header is repaired
+	 * later by the index checks); fail the lookup cleanly until then.
+	 */
+	if (le32_to_cpu(ir->index.entries_offset) < sizeof(INDEX_HEADER) ||
+			le32_to_cpu(ir->index.index_length) <
+			le32_to_cpu(ir->index.entries_offset) ||
+			offsetof(INDEX_ROOT, index) +
+			le32_to_cpu(ir->index.index_length) >
+			le32_to_cpu(icx->actx->attr->value_length)) {
+		ntfs_log_error("Corrupt $INDEX_ROOT header in inode %llu\n",
+				(unsigned long long)ni->mft_no);
+		err = errno = EIO;
+		goto err_lookup;
 	}
 
 	icx->block_size = le32_to_cpu(ir->index_block_size);
@@ -1744,7 +1756,8 @@ int ntfs_ie_add(ntfs_index_context *icx, INDEX_ENTRY *ie)
 			goto err_out;
 		}
 		if (errno != ENOENT) {
-			ntfs_log_perror("Failed to find place for new entry");
+			/* The caller supplies the operation-specific failure summary. */
+			ntfs_log_debug("Failed to find place for new index entry\n");
 			goto err_out;
 		}
 

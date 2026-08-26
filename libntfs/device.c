@@ -164,25 +164,6 @@ int ntfs_device_free(struct ntfs_device *dev)
 	return 0;
 }
 
-/*
- *		Sync the device
- *
- *	returns zero if successful.
- */
-
-int ntfs_device_sync(struct ntfs_device *dev)
-{
-	int ret;
-	struct ntfs_device_operations *dops;
-
-	if (NDevDirty(dev)) {
-		dops = dev->d_ops;
-		ret = dops->sync(dev);
-	} else
-		ret = 0;
-	return ret;
-}
-
 /**
  * ntfs_pread - positioned read from disk
  * @dev:	device to read from

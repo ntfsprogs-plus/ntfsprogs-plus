@@ -29,7 +29,10 @@
 #include <bitmap.h>
 #include <endians.h>
 #include <bootsect.h>
+#include <mft.h>
 #include <misc.h>
+#include <mst.h>
+#include <unistr.h>
 #include <getopt.h>
 
 #include "cluster.h"
@@ -37,6 +40,9 @@
 #include "list.h"
 #include "dir.h"
 #include "lcnalloc.h"
+#include "logfile.h"
+#include "reparse.h"
+#include "collate.h"
 #include "fsck.h"
 
 #define RETURN_FS_NO_ERRORS (0)
@@ -116,10 +122,135 @@ static struct {
 	ntfs_mount_flags flags;
 } option;
 
+/*
+ * Ceiling for a plausible index_block_size: Windows and mkntfs only ever use
+ * 4096, but accept any power of two up to 64K so an unusual yet walkable
+ * volume is still checked; anything beyond is a corrupt field, not geometry.
+ */
+#define NTFSCK_MAX_INDEX_BLOCK_SIZE	(64 * 1024)
+
+/*
+ * Salvage-aggressive mode. When set, ntfsck is allowed to take destructive
+ * recovery actions that trade unrecoverable data for a mountable volume - for
+ * example replacing a compression unit that will not decompress with a sparse
+ * hole.
+ */
+static BOOL opt_salvage;
+
+/*
+ * Force mode. When set, a repair mode may proceed even though Windows is
+ * hibernated on the volume; the hibernation image is invalidated first so
+ * that Windows cannot resume from a memory image that no longer matches the
+ * repaired volume.
+ */
+static BOOL opt_force;
+
 struct dir {
 	struct ntfs_list_head list;
 	u64 mft_no;
+	/*
+	 * The directory was reached through the lenient (system metadata)
+	 * path, so its children are system files too. utils_is_system_
+	 * metadata() only recognizes one parent hop past the reserved
+	 * inodes, which reaches $Extend's direct children but not, e.g.,
+	 * the $TxfLog files two levels below $RmMetadata; carrying the
+	 * verdict down the walk keeps the whole subtree lenient.
+	 */
+	BOOL system;
 };
+
+/* Whether the directory parse #4 is currently walking is a system one. */
+static BOOL walking_system_dir;
+
+/*
+ * Set when pass 3 cannot walk a directory completely. An MFT record not
+ * reached by an incomplete walk is not proof of an orphan, so pass 4 must not
+ * release records on that evidence.
+ */
+static BOOL namespace_walk_failed;
+/* One response controls every salvageable MFT fixup in this fsck run. */
+static BOOL fixup_repair_decided;
+static BOOL fixup_repair_approved;
+static BOOL fixup_repair_retry;
+static u8 *fixup_candidate_bitmap;
+static size_t fixup_candidate_bitmap_size;
+static u64 fixup_salvage_candidates;
+static u64 fixup_salvaged_records;
+/* One response controls all $FILE_NAME size repairs in this fsck run. */
+static BOOL fn_size_repair_decided;
+static BOOL fn_size_repair_approved;
+static BOOL fn_size_repair_apply_pass;
+static u64 fn_allocated_size_mismatches;
+static u64 fn_data_size_mismatches;
+static u64 fn_size_repairs_applied;
+/* One response controls all $FILE_NAME parent sequence repairs. */
+static BOOL fn_parent_seqno_repair_decided;
+static BOOL fn_parent_seqno_repair_approved;
+static BOOL fn_parent_seqno_repair_apply_pass;
+static u64 fn_parent_seqno_mismatches;
+static u64 fn_parent_seqno_repairs_applied;
+/* One response controls removal of every corrupted directory index entry. */
+static BOOL corrupt_index_repair_decided;
+static BOOL corrupt_index_repair_approved;
+static u64 corrupt_index_entries;
+static u64 stale_index_sequence_entries;
+static u64 corrupt_index_unopenable_inodes;
+static u64 corrupt_index_reference_failures;
+static u64 corrupt_index_inode_validation_failures;
+static u64 corrupt_index_sync_failures;
+/* One response controls all directory index bitmap content repairs. */
+static BOOL index_bitmap_repair_decided;
+static BOOL index_bitmap_repair_approved;
+static u64 index_bitmap_mismatches;
+/* One response controls clearing all non-zero index-entry reserved fields. */
+static BOOL index_reserved_repair_decided;
+static BOOL index_reserved_repair_approved;
+static BOOL index_reserved_repair_apply_pass;
+static u64 index_reserved_entries;
+static u64 index_reserved_repairs_applied;
+/* One response controls restoration of missing $Extend/$Reparse entries. */
+static BOOL reparse_index_repair_decided;
+static BOOL reparse_index_repair_approved;
+static u64 missing_reparse_index_entries;
+/* One response controls removal of stale $Extend/$Reparse entries. */
+static BOOL stale_reparse_repair_decided;
+static BOOL stale_reparse_repair_approved;
+/* Outcomes from the approved orphan relink operation. */
+static u64 orphan_missing_parent_references;
+static u64 orphan_parent_add_failures;
+static u64 orphan_parent_index_conflicts;
+static u64 orphan_lost_found_relinks;
+static u64 orphan_filename_removals;
+/* Set only when pass 5 changes namespace reachability. */
+static BOOL orphan_recovery_changed;
+/* Non-resident attributes whose mapping pairs require truncation. */
+static u64 corrupt_nonresident_runlists;
+
+enum ntfsck_deferred_index_type {
+	NTFSCK_DEFER_INDEX_BITMAP,
+	NTFSCK_DEFER_CORRUPT_ENTRY,
+};
+
+struct ntfsck_deferred_index {
+	struct ntfs_list_head list;
+	enum ntfsck_deferred_index_type type;
+	BOOL parent_seqno_mismatch;
+	u64 parent_mft_no;
+	le64 indexed_file;
+	u64 allocated_size;
+	u64 data_size;
+	u32 data_len;
+	u8 data[];
+};
+
+struct ntfsck_deferred_reparse {
+	struct ntfs_list_head list;
+	u64 mft_no;
+	le32 reparse_tag;
+};
+
+NTFS_LIST_HEAD(ntfsck_deferred_index_repairs);
+NTFS_LIST_HEAD(ntfsck_deferred_reparse_repairs);
 
 struct ntfsls_dirent {
 	ntfs_volume *vol;
@@ -133,6 +264,7 @@ struct rl_size {
 
 NTFS_LIST_HEAD(ntfs_dirs_list);
 NTFS_LIST_HEAD(oc_list_head); /* Orphaned mft records Candidate list */
+NTFS_LIST_HEAD(unopenable_mft_list);
 
 struct orphan_mft {
 	u64 mft_no;
@@ -140,9 +272,137 @@ struct orphan_mft {
 	struct ntfs_list_head ot_list;	/* Orphan Tree list */
 } orphan_mft_t;
 
+struct ntfsck_rebuilt_index {
+	struct ntfs_list_head list;
+	u64 mft_no;
+};
+
+struct ntfsck_cluster_dup_attr {
+	struct ntfs_list_head list;
+	u64 mft_no;
+	ATTR_TYPES type;
+	u32 name_len;
+	ntfschar name[];
+};
+
+NTFS_LIST_HEAD(ntfsck_cluster_dup_attrs);
+
+static void ntfsck_clear_orphan_list(void)
+{
+	struct orphan_mft *entry;
+
+	while (!ntfs_list_empty(&oc_list_head)) {
+		entry = ntfs_list_entry(oc_list_head.next,
+				struct orphan_mft, oc_list);
+		ntfs_list_del(&entry->oc_list);
+		free(entry);
+	}
+}
+
+NTFS_LIST_HEAD(ntfsck_rebuilt_indexes);
+
+static void ntfsck_clear_rebuilt_indexes(void)
+{
+	struct ntfsck_rebuilt_index *entry;
+
+	while (!ntfs_list_empty(&ntfsck_rebuilt_indexes)) {
+		entry = ntfs_list_entry(ntfsck_rebuilt_indexes.next,
+				struct ntfsck_rebuilt_index, list);
+		ntfs_list_del(&entry->list);
+		free(entry);
+	}
+}
+
+static void ntfsck_clear_cluster_dup_attrs(void)
+{
+	while (!ntfs_list_empty(&ntfsck_cluster_dup_attrs)) {
+		struct ntfsck_cluster_dup_attr *entry;
+
+		entry = ntfs_list_entry(ntfsck_cluster_dup_attrs.next,
+				struct ntfsck_cluster_dup_attr, list);
+		ntfs_list_del(&entry->list);
+		free(entry);
+	}
+}
+
+static int ntfsck_note_cluster_dup_attr(ntfs_attr *na)
+{
+	struct ntfsck_cluster_dup_attr *entry;
+	struct ntfs_list_head *pos;
+	size_t name_size;
+
+	if (!na || !na->ni)
+		return STATUS_ERROR;
+
+	ntfs_list_for_each(pos, &ntfsck_cluster_dup_attrs) {
+		entry = ntfs_list_entry(pos, struct ntfsck_cluster_dup_attr, list);
+		if (entry->mft_no == na->ni->mft_no &&
+				entry->type == na->type &&
+				entry->name_len == na->name_len &&
+				(!na->name_len || !memcmp(entry->name, na->name,
+						na->name_len * sizeof(ntfschar))))
+			return STATUS_OK;
+	}
+
+	name_size = na->name_len * sizeof(ntfschar);
+	entry = malloc(sizeof(*entry) + name_size);
+	if (!entry)
+		return STATUS_ERROR;
+	entry->mft_no = na->ni->mft_no;
+	entry->type = na->type;
+	entry->name_len = na->name_len;
+	if (name_size)
+		memcpy(entry->name, na->name, name_size);
+	ntfs_list_add_tail(&entry->list, &ntfsck_cluster_dup_attrs);
+	return STATUS_OK;
+}
+
+static void ntfsck_note_rebuilt_index(u64 mft_no)
+{
+	struct ntfsck_rebuilt_index *entry;
+	struct ntfs_list_head *pos;
+
+	ntfs_list_for_each(pos, &ntfsck_rebuilt_indexes) {
+		entry = ntfs_list_entry(pos, struct ntfsck_rebuilt_index, list);
+		if (entry->mft_no == mft_no)
+			return;
+	}
+	entry = malloc(sizeof(*entry));
+	if (!entry) {
+		ntfs_log_error("Could not remember rebuilt directory index "
+				"%"PRIu64"\n", mft_no);
+		return;
+	}
+	entry->mft_no = mft_no;
+	ntfs_list_add_tail(&entry->list, &ntfsck_rebuilt_indexes);
+}
+
+static BOOL ntfsck_index_was_rebuilt(u64 mft_no)
+{
+	struct ntfsck_rebuilt_index *entry;
+	struct ntfs_list_head *pos;
+
+	ntfs_list_for_each(pos, &ntfsck_rebuilt_indexes) {
+		entry = ntfs_list_entry(pos, struct ntfsck_rebuilt_index, list);
+		if (entry->mft_no == mft_no)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+struct unopenable_mft {
+	u64 mft_no;
+	struct ntfs_list_head list;
+};
+
 int parse_count = 1;
 s64 clear_mft_cnt;
+static u64 orphan_mft_open_failures;
 s64 total_valid_mft;
+s64 total_inuse_mft;	/* MFT records the bitmap marks in-use */
+s64 fsck_scan_eio;	/* MFT records that failed to read/open with EIO */
+/* $LogFile was reset this run: stale LSNs must be zeroed (see parse #1) */
+static BOOL logfile_was_reset;
 
 struct progress_bar prog;
 int pb_flags;
@@ -166,6 +426,11 @@ static void usage(int error)
 		"-q, --quiet		No progress bar\n"
 		"-r, --repair		Repair interactively\n"
 		"-y, --repair-yes		all yes about all question\n"
+		"-S, --salvage		aggressive salvage (may discard unrecoverable data)\n"
+		"-f, --force		repair even if Windows is hibernated on the volume\n"
+		"			(the hibernation image is discarded)\n"
+		"-D, --scratch-dir DIR	back the cluster bitmap with a scratch file under DIR\n"
+		"			(use a filesystem other than the volume being checked)\n"
 		"-v, --verbose		verbose\n"
 		"-V, --version		version\n\n"
 		"NOTE: -a/-p, -C, -n, -r, -y options are mutually exclusive with each other options\n\n"
@@ -192,6 +457,9 @@ static const struct option opts[] = {
 	{"repair",		no_argument,		NULL,	'r' },
 	{"repair-yes",		no_argument,		NULL,	'y' },
 	{"quiet",		no_argument,		NULL,	'q' },
+	{"salvage",		no_argument,		NULL,	'S' },
+	{"force",		no_argument,		NULL,	'f' },
+	{"scratch-dir",		required_argument,	NULL,	'D' },
 	{"verbose",		no_argument,		NULL,	'v' },
 	{"version",		no_argument,		NULL,	'V' },
 	{NULL,			0,			NULL,	 0  }
@@ -199,9 +467,20 @@ static const struct option opts[] = {
 
 static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
 		FILE_NAME_ATTR *ie_fn, ntfs_attr_search_ctx *actx);
+static int ntfsck_cmp_parent_mft_sequence(ntfs_inode *parent_ni,
+		FILE_NAME_ATTR *fn);
 static int ntfsck_check_directory(ntfs_inode *ni);
 static int ntfsck_check_file(ntfs_inode *ni);
-static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, BOOL *need_fix);
+static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
+		struct rl_size *rls, BOOL *need_fix, BOOL *dup_repaired);
+/* One response controls every duplicated-cluster runlist repair. */
+static BOOL cluster_dup_repair_decided;
+static BOOL cluster_dup_repair_approved;
+static BOOL cluster_dup_repair_retry;
+static u64 cluster_dup_affected_attrs;
+static u64 cluster_dup_clusters;
+static BOOL cluster_dup_attr_list_incomplete;
+static int ntfsck_repair_cluster_dup_attrs(ntfs_volume *vol);
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx);
 static int ntfsck_check_orphan_inode(ntfs_inode *parent_ni, ntfs_inode *ni);
@@ -211,20 +490,32 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		FILE_NAME_ATTR *ie_fn);
 static int ntfsck_check_orphan_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		FILE_NAME_ATTR *ie_fn);
+static int ntfsck_check_extend_inode(ntfs_inode *ni);
+static int ntfsck_check_view_index(ntfs_inode *ni);
+static int ntfsck_check_system_inode_detail(ntfs_inode *ni);
+static int ntfsck_validate_named_index(ntfs_inode *ni,
+		ntfschar *name, u32 name_len);
+static int ntfsck_initialize_named_index_attr(ntfs_inode *ni,
+		ntfschar *name, u32 name_len);
 static int ntfsck_initialize_index_attr(ntfs_inode *ni);
 static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set);
 static int ntfsck_check_attr_list(ntfs_inode *ni);
 static inline BOOL ntfsck_opened_ni_vol(s64 mft_num);
 static ntfs_inode *ntfsck_get_opened_ni_vol(ntfs_volume *vol, s64 mft_num);
+static int ntfsck_validate_system_file(ntfs_inode *ni);
 static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit);
 static void ntfsck_check_mft_records(ntfs_volume *vol);
-static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num);
+static int ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num);
 static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no);
 static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size, ntfs_attr_search_ctx *actx);
 static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
-		BOOL *need_fix, int set_bit);
+		BOOL *need_fix, int set_bit, BOOL *dup_repaired);
 static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
 		ntfs_attr_search_ctx *actx, struct rl_size *rls, int set_bit);
+static ntfs_inode *ntfsck_open_inode_after_raw_mft_check(ntfs_volume *vol,
+		u64 mft_no, BOOL expect_in_use);
+static BOOL ntfsck_rebuild_standard_information(ntfs_volume *vol, u64 mft_no);
+static BOOL ntfsck_remove_corrupt_file_name(ntfs_volume *vol, u64 mft_no);
 
 #define ntfsck_delete_mft	ntfsck_delete_orphaned_mft
 
@@ -233,9 +524,1063 @@ static ntfs_inode *ntfsck_open_inode(ntfs_volume *vol, u64 mft_no)
 	ntfs_inode *ni;
 
 	ni = ntfsck_get_opened_ni_vol(vol, mft_no);
-	if (!ni)
+	if (!ni) {
 		ni = ntfs_inode_open(vol, mft_no);
+		if (!ni && ntfsck_rebuild_standard_information(vol, mft_no))
+			ni = ntfs_inode_open(vol, mft_no);
+		if (!ni && ntfsck_remove_corrupt_file_name(vol, mft_no))
+			ni = ntfs_inode_open(vol, mft_no);
+	}
 	return ni;
+}
+
+static s8 ntfsck_expected_clusters_per_index_block(const ntfs_volume *vol,
+		u32 block_size)
+{
+	if (vol->cluster_size <= block_size)
+		return block_size >> vol->cluster_size_bits;
+	return block_size >> NTFS_BLOCK_SIZE_BITS;
+}
+
+static BOOL ntfsck_get_named_index_defaults(u64 mft_no,
+		const ntfschar *name, u32 name_len, ATTR_TYPES *type,
+		COLLATION_RULES *collation_rule)
+{
+	if (!name || !name_len || !type || !collation_rule)
+		return FALSE;
+
+	if (name_len == 4 &&
+			!memcmp(name, NTFS_INDEX_I30, 4 * sizeof(ntfschar))) {
+		*type = AT_FILE_NAME;
+		*collation_rule = COLLATION_FILE_NAME;
+		return TRUE;
+	}
+	if (name_len == 4 &&
+			!memcmp(name, NTFS_INDEX_SII, 4 * sizeof(ntfschar))) {
+		*type = AT_UNUSED;
+		*collation_rule = COLLATION_NTOFS_ULONG;
+		return TRUE;
+	}
+	if (name_len == 4 &&
+			!memcmp(name, NTFS_INDEX_SDH, 4 * sizeof(ntfschar))) {
+		*type = AT_UNUSED;
+		*collation_rule = COLLATION_NTOFS_SECURITY_HASH;
+		return TRUE;
+	}
+	if (name_len == 2 &&
+			!memcmp(name, NTFS_INDEX_Q, 2 * sizeof(ntfschar))) {
+		*type = AT_UNUSED;
+		*collation_rule = COLLATION_NTOFS_ULONG;
+		return TRUE;
+	}
+	if (name_len == 2 &&
+			!memcmp(name, NTFS_INDEX_R, 2 * sizeof(ntfschar))) {
+		*type = AT_UNUSED;
+		*collation_rule = COLLATION_NTOFS_ULONGS;
+		return TRUE;
+	}
+	if (name_len == 2 &&
+			!memcmp(name, NTFS_INDEX_O, 2 * sizeof(ntfschar))) {
+		*type = AT_UNUSED;
+		if (mft_no == 24) {
+			*collation_rule = COLLATION_NTOFS_SID;
+			return TRUE;
+		}
+		if (mft_no == 25) {
+			*collation_rule = COLLATION_NTOFS_ULONGS;
+			return TRUE;
+		}
+	}
+
+	return FALSE;
+}
+
+static u32 ntfsck_index_used_length(INDEX_HEADER *ih, const u8 *index_end,
+		BOOL *has_subnodes)
+{
+	u8 *entry;
+	BOOL found_subnode = FALSE;
+
+	if (!ih || !index_end)
+		return 0;
+
+	entry = (u8 *)ih + le32_to_cpu(ih->entries_offset);
+	if (le32_to_cpu(ih->entries_offset) < sizeof(INDEX_HEADER) ||
+			(le32_to_cpu(ih->entries_offset) & 7) || entry >= index_end)
+		return 0;
+
+	for (;;) {
+		INDEX_ENTRY *ie = (INDEX_ENTRY *)entry;
+		u16 length;
+
+		if (entry + sizeof(INDEX_ENTRY_HEADER) > index_end)
+			return 0;
+		length = le16_to_cpu(ie->length);
+		if (length < sizeof(INDEX_ENTRY_HEADER) || (length & 7) ||
+				entry + length > index_end)
+			return 0;
+		if (ie->ie_flags & INDEX_ENTRY_NODE)
+			found_subnode = TRUE;
+		entry += length;
+		if (ie->ie_flags & INDEX_ENTRY_END)
+			break;
+	}
+
+	if (has_subnodes)
+		*has_subnodes = found_subnode;
+	return entry - (u8 *)ih;
+}
+
+static BOOL ntfsck_repair_index_root_fields(ntfs_volume *vol, u64 mft_no,
+		ATTR_RECORD *attr)
+{
+	INDEX_ROOT *ir;
+	ATTR_TYPES expected_type = AT_UNUSED;
+	COLLATION_RULES expected_collation = COLLATION_BINARY;
+	u32 expected_block_size;
+	u32 payload_size;
+	u32 used_length;
+	s8 expected_clusters_per_index_block;
+	INDEX_HEADER_FLAGS expected_flags;
+	BOOL has_subnodes = FALSE;
+	BOOL changed = FALSE;
+	BOOL know_defaults;
+	const ntfschar *name = NULL;
+
+	if (!vol || !attr || attr->type != AT_INDEX_ROOT || attr->non_resident)
+		return FALSE;
+	if (le32_to_cpu(attr->value_length) < sizeof(INDEX_ROOT) +
+			sizeof(INDEX_ENTRY_HEADER))
+		return FALSE;
+
+	ir = (INDEX_ROOT *)((u8 *)attr + le16_to_cpu(attr->value_offset));
+	payload_size = le32_to_cpu(attr->value_length) - offsetof(INDEX_ROOT, index);
+	payload_size &= ~7U;
+	if (payload_size < sizeof(INDEX_HEADER) + sizeof(INDEX_ENTRY_HEADER))
+		return FALSE;
+
+	if (attr->name_length)
+		name = (const ntfschar *)((const u8 *)attr +
+				le16_to_cpu(attr->name_offset));
+	know_defaults = ntfsck_get_named_index_defaults(mft_no, name,
+			attr->name_length, &expected_type, &expected_collation);
+	if (know_defaults && ir->type != expected_type) {
+		ir->type = expected_type;
+		changed = TRUE;
+	}
+	if (know_defaults && ir->collation_rule != expected_collation) {
+		ir->collation_rule = expected_collation;
+		changed = TRUE;
+	}
+
+	expected_block_size = vol->indx_record_size;
+	if (le32_to_cpu(ir->index_block_size) != expected_block_size) {
+		ir->index_block_size = cpu_to_le32(expected_block_size);
+		changed = TRUE;
+	}
+	expected_clusters_per_index_block =
+		ntfsck_expected_clusters_per_index_block(vol, expected_block_size);
+	if (ir->clusters_per_index_block != expected_clusters_per_index_block) {
+		ir->clusters_per_index_block = expected_clusters_per_index_block;
+		changed = TRUE;
+	}
+	if (ir->reserved[0] || ir->reserved[1] || ir->reserved[2]) {
+		memset(ir->reserved, 0, sizeof(ir->reserved));
+		changed = TRUE;
+	}
+	/*
+	 * An INDEX_ROOT has no update sequence array, so unlike an index block there
+	 * is nothing to leave slack for: every writer starts the entries right after
+	 * the INDEX_HEADER, and the driver-side check (ntfs_attr_inconsistent())
+	 * accepts nothing else. Restore exactly that layout.
+	 */
+	if (le32_to_cpu(ir->index.entries_offset) != sizeof(INDEX_HEADER)) {
+		ir->index.entries_offset = const_cpu_to_le32(sizeof(INDEX_HEADER));
+		changed = TRUE;
+	}
+
+	used_length = ntfsck_index_used_length(&ir->index,
+			(u8 *)&ir->index + payload_size, &has_subnodes);
+	if (!used_length)
+		used_length = payload_size;
+	if (le32_to_cpu(ir->index.index_length) != used_length) {
+		ir->index.index_length = cpu_to_le32(used_length);
+		changed = TRUE;
+	}
+	if (le32_to_cpu(ir->index.allocated_size) != payload_size) {
+		ir->index.allocated_size = cpu_to_le32(payload_size);
+		changed = TRUE;
+	}
+	/*
+	 * LARGE_INDEX describes the entries of this very header -- whether they
+	 * carry sub-node pointers -- not the attributes of the inode holding it.
+	 * The two are not equivalent: ntfs_ir_leafify() clears the flag when the
+	 * root's last sub-node pointer goes away, yet leaves the now empty
+	 * $INDEX_ALLOCATION in place, and that is how $Extend/$Deleted ships.
+	 *
+	 * Deriving the flag from the presence of an $INDEX_ALLOCATION therefore
+	 * calls every such directory corrupt, and the rewrite is not even benign:
+	 * ntfs_ir_reparent() skips ntfs_ia_add() on a root that is not
+	 * SMALL_INDEX, so a leaf root left claiming LARGE_INDEX reaches
+	 * ntfs_ib_write() with icx->ia_na still NULL -- the lookup only opens it
+	 * when it descends through a sub-node.
+	 */
+	expected_flags = has_subnodes ? LARGE_INDEX : SMALL_INDEX;
+	if (ir->index.ih_flags != expected_flags) {
+		ir->index.ih_flags = expected_flags;
+		changed = TRUE;
+	}
+	if (ir->index.reserved[0] || ir->index.reserved[1] ||
+			ir->index.reserved[2]) {
+		memset(ir->index.reserved, 0, sizeof(ir->index.reserved));
+		changed = TRUE;
+	}
+
+	return changed;
+}
+
+/*
+ * Whether ntfsck_repair_index_root_fields() would change @attr. When @apply
+ * is false it must not: -n has to report the corruption without touching the
+ * record, and mutating the in-memory copy would also hide the fields from
+ * every later check that reads the same record.
+ */
+static BOOL ntfsck_index_root_fields_changed(ntfs_volume *vol, u64 mft_no,
+		ATTR_RECORD *attr, BOOL apply)
+{
+	ATTR_RECORD *copy;
+	u32 len;
+	BOOL changed;
+
+	if (apply)
+		return ntfsck_repair_index_root_fields(vol, mft_no, attr);
+
+	if (!attr || attr->type != AT_INDEX_ROOT || attr->non_resident)
+		return FALSE;
+	len = le32_to_cpu(attr->length);
+	copy = ntfs_malloc(len);
+	if (!copy)
+		return FALSE;
+	memcpy(copy, attr, len);
+	changed = ntfsck_repair_index_root_fields(vol, mft_no, copy);
+	free(copy);
+	return changed;
+}
+
+static BOOL ntfsck_repair_raw_index_root_fields(ntfs_volume *vol, u64 mft_no,
+		MFT_RECORD *mrec)
+{
+	ATTR_RECORD *attr;
+	u8 *record_end;
+	BOOL apply;
+	BOOL dirty = FALSE;
+
+	if (!vol || !mrec || !NVolFsck(vol))
+		return FALSE;
+	apply = !NVolFsNoRepair(vol);
+
+	/*
+	 * An extent record only carries overflow attributes of its base inode, so
+	 * @mft_no names the extent rather than the inode the INDEX_ROOT belongs to.
+	 * The per-inode defaults below would then be looked up under the wrong
+	 * number.
+	 */
+	if (MREF_LE(mrec->base_mft_record) != 0)
+		return FALSE;
+
+	record_end = (u8 *)mrec + le32_to_cpu(mrec->bytes_in_use);
+	attr = (ATTR_RECORD *)((u8 *)mrec + le16_to_cpu(mrec->attrs_offset));
+	while ((u8 *)attr + sizeof(ATTR_RECORD) <= record_end &&
+			attr->type != AT_END) {
+		u32 attr_len = le32_to_cpu(attr->length);
+
+		if (!attr_len || (u8 *)attr + attr_len > record_end)
+			break;
+		if (attr->type != AT_INDEX_ROOT || attr->non_resident)
+			goto next;
+		if (ntfsck_index_root_fields_changed(vol, mft_no, attr, apply)) {
+			ntfs_log_error("Inode(%llu): INDEX_ROOT header fields are corrupted.%s\n",
+					(unsigned long long)mft_no,
+					apply ? " Fixed." : "");
+			if (apply)
+				dirty = TRUE;
+			else
+				fsck_err_found();
+		}
+next:
+		attr = (ATTR_RECORD *)((u8 *)attr + attr_len);
+	}
+
+	return dirty;
+}
+
+static int ntfsck_repair_named_index_root(ntfs_inode *ni,
+		ntfs_attr_search_ctx *ctx)
+{
+	ntfs_volume *vol;
+	ntfs_inode *hosting;
+	BOOL apply;
+
+	if (!ni || !ctx || !ctx->attr)
+		return STATUS_ERROR;
+
+	vol = ni->vol;
+	if (!NVolFsck(vol))
+		return STATUS_OK;
+	apply = !NVolFsNoRepair(vol);
+
+	if (!ntfsck_index_root_fields_changed(vol, ni->mft_no, ctx->attr, apply))
+		return STATUS_OK;
+
+	fsck_err_found();
+	if (!apply) {
+		ntfs_log_error("Inode(%llu): INDEX_ROOT header fields are corrupted.\n",
+				(unsigned long long)ni->mft_no);
+		return STATUS_OK;
+	}
+	ntfs_log_error("Inode(%llu): INDEX_ROOT header fields are corrupted. Fixed.\n",
+			(unsigned long long)ni->mft_no);
+	/*
+	 * INDEX_ROOT can be relocated into an extent MFT record via the attribute
+	 * list, in which case ctx->mrec is that extent record, not the base one.
+	 * Persist the record that actually holds the attribute (ctx->ntfs_ino);
+	 * writing ctx->mrec back to the base slot would stamp the base record with
+	 * the extent's contents and record number.
+	 */
+	hosting = ctx->ntfs_ino ? ctx->ntfs_ino : ni;
+	if (ntfs_mft_record_write(vol, hosting->mft_no, ctx->mrec))
+		return STATUS_ERROR;
+	fsck_err_fixed();
+
+	return STATUS_OK;
+}
+
+static int ntfsck_read_index_block(ntfs_index_context *ictx, VCN vcn,
+		INDEX_BLOCK *ib, BOOL *mst_salvaged)
+{
+	s64 bytes;
+	u16 expected_usa_count;
+
+	if (mst_salvaged)
+		*mst_salvaged = FALSE;
+
+	if (ntfs_attr_mst_pread(ictx->ia_na, ntfs_ib_vcn_to_pos(ictx, vcn), 1,
+				ictx->block_size, (u8 *)ib) == 1)
+		return STATUS_OK;
+	/*
+	 * The salvage only rebuilds the in-memory copy; whether it is written
+	 * back is decided by ntfsck_repair_index_block(), so a no-repair run
+	 * may take it too and thereby see - and count - the same state a
+	 * repair run works on.
+	 */
+	if (!NVolFsck(ictx->ni->vol))
+		return STATUS_ERROR;
+
+	bytes = ntfs_attr_pread(ictx->ia_na, ntfs_ib_vcn_to_pos(ictx, vcn),
+			ictx->block_size, ib);
+	if (bytes != ictx->block_size)
+		return STATUS_ERROR;
+
+	expected_usa_count = (ictx->block_size >= NTFS_BLOCK_SIZE) ?
+		ictx->block_size / NTFS_BLOCK_SIZE + 1 : 1;
+	if (le16_to_cpu(ib->usa_ofs) != sizeof(INDEX_BLOCK))
+		ib->usa_ofs = const_cpu_to_le16(sizeof(INDEX_BLOCK));
+	if (le16_to_cpu(ib->usa_count) != expected_usa_count)
+		ib->usa_count = cpu_to_le16(expected_usa_count);
+	if (ntfs_mst_post_read_fixup((NTFS_RECORD *)ib, ictx->block_size))
+		return STATUS_ERROR;
+
+	if (mst_salvaged)
+		*mst_salvaged = TRUE;
+	return STATUS_OK;
+}
+
+static int ntfsck_repair_index_block(ntfs_index_context *ictx, VCN vcn,
+		INDEX_BLOCK *ib, BOOL mst_salvaged)
+{
+	u16 expected_usa_count;
+	u32 min_entries_offset;
+	u32 entries_offset;
+	u32 expected_allocated_size;
+	u32 used_length;
+	BOOL has_subnodes = FALSE;
+	BOOL changed = mst_salvaged;
+	INDEX_HEADER_FLAGS expected_flags;
+
+	if (!ictx || !ib)
+		return STATUS_ERROR;
+	if (!NVolFsck(ictx->ni->vol))
+		return STATUS_OK;
+
+	expected_usa_count = (ictx->block_size >= NTFS_BLOCK_SIZE) ?
+		ictx->block_size / NTFS_BLOCK_SIZE + 1 : 1;
+	min_entries_offset = (sizeof(INDEX_HEADER) +
+			expected_usa_count * 2 + 7) & ~7;
+	expected_allocated_size = ictx->block_size -
+		(sizeof(INDEX_BLOCK) - sizeof(INDEX_HEADER));
+
+	if (!ntfs_is_indx_record(ib->magic)) {
+		ib->magic = magic_INDX;
+		changed = TRUE;
+	}
+	if (le16_to_cpu(ib->usa_ofs) != sizeof(INDEX_BLOCK)) {
+		ib->usa_ofs = const_cpu_to_le16(sizeof(INDEX_BLOCK));
+		changed = TRUE;
+	}
+	if (le16_to_cpu(ib->usa_count) != expected_usa_count) {
+		ib->usa_count = cpu_to_le16(expected_usa_count);
+		changed = TRUE;
+	}
+	if (sle64_to_cpu(ib->index_block_vcn) != vcn) {
+		ib->index_block_vcn = cpu_to_sle64(vcn);
+		changed = TRUE;
+	}
+	/*
+	 * entries_offset is measured from the start of the INDEX_HEADER, and the
+	 * update sequence array sits between that header and the first entry. All
+	 * the format requires is that the entries begin past the USA, stay 8-byte
+	 * aligned and fit inside the block; a writer may leave more slack than the
+	 * minimum, and they do -- mkntfs starts the entries right after the USA
+	 * where the in-kernel driver pads further out.
+	 */
+	entries_offset = le32_to_cpu(ib->index.entries_offset);
+	if (entries_offset < min_entries_offset || (entries_offset & 7) ||
+			entries_offset >= expected_allocated_size) {
+		ib->index.entries_offset = cpu_to_le32(min_entries_offset);
+		changed = TRUE;
+	}
+	if (le32_to_cpu(ib->index.allocated_size) != expected_allocated_size) {
+		ib->index.allocated_size = cpu_to_le32(expected_allocated_size);
+		changed = TRUE;
+	}
+	if (ib->index.reserved[0] || ib->index.reserved[1] ||
+			ib->index.reserved[2]) {
+		memset(ib->index.reserved, 0, sizeof(ib->index.reserved));
+		changed = TRUE;
+	}
+
+	used_length = ntfsck_index_used_length(&ib->index,
+			(u8 *)&ib->index + expected_allocated_size, &has_subnodes);
+	/*
+	 * The entry chain does not tile the block, so nothing here can be repaired
+	 * in place. Report the failure instead of returning a header we may have
+	 * already rewritten: the caller then rebuilds the index, whereas walking
+	 * this block would just rediscover the damage on every repair round without
+	 * ever writing a correction back.
+	 */
+	if (!used_length)
+		return STATUS_ERROR;
+	if (le32_to_cpu(ib->index.index_length) != used_length) {
+		ib->index.index_length = cpu_to_le32(used_length);
+		changed = TRUE;
+	}
+	expected_flags = has_subnodes ? INDEX_NODE : LEAF_NODE;
+	if (ib->index.ih_flags != expected_flags) {
+		ib->index.ih_flags = expected_flags;
+		changed = TRUE;
+	}
+
+	if (!changed)
+		return STATUS_OK;
+
+	/*
+	 * In no-repair mode the block was normalized in memory just the same,
+	 * so the checks that follow behave exactly as in a repair run and the
+	 * corruption is reported at its cause; only the write-back is skipped.
+	 */
+	fsck_err_found();
+	ntfs_log_error("Inode(%llu): INDEX_ALLOCATION block VCN(%lld) header fields are corrupted.%s\n",
+			(unsigned long long)ictx->ni->mft_no, (long long)vcn,
+			NVolFsNoRepair(ictx->ni->vol) ? "" : " Fixed.");
+	if (NVolFsNoRepair(ictx->ni->vol))
+		return STATUS_OK;
+	if (ntfs_ib_write(ictx, ib))
+		return STATUS_ERROR;
+	fsck_err_fixed();
+
+	return STATUS_OK;
+}
+
+/*
+ * Last-chance read of an MFT record whose multi sector transfer fixup
+ * failed (the reader stamps such a record with the BAAD magic). Two
+ * on-disk states are recoverable:
+ *
+ * A FILE record whose fixup header (usa_ofs/usa_count) is corrupted even
+ * though every protected sector survived; ntfsck_read_index_block()
+ * already salvages index blocks the same way. Reread the record without
+ * deprotection, restore the canonical fixup header from the volume
+ * geometry (the values ntfs_mft_record_layout() writes) and retry the
+ * fixup: it still verifies every sector tail against the update sequence
+ * number, so a genuinely torn write keeps failing, silently, and the
+ * record is left to the discard path.
+ *
+ * A record carrying the BAAD magic on disk, which a Windows driver
+ * stamps once it detects a torn multi sector write. The update sequence
+ * array in the first sector still holds the bytes every sector tail is
+ * supposed to carry, so the intended content can be reassembled by
+ * deprotecting without tail verification; sectors the torn write never
+ * reached simply keep their older content. Whether the reassembled
+ * record is coherent cannot be decided here: it is handed to
+ * ntfs_mft_record_check() and the regular inode checks like any other
+ * record, and what they cannot repair still ends up discarded. chkdsk
+ * deletes such a record outright, so this can only recover more.
+ *
+ * The problem is only reported once the record is known to be
+ * salvageable, which keeps the -n error count equal to what a repair run
+ * fixes. A salvaged record is written straight back, which re-protects
+ * it with the restored header.
+ */
+static int ntfsck_note_fixup_candidate(u64 mft_no)
+{
+	size_t byte = mft_no >> 3;
+	u8 *bitmap;
+
+	if ((u64)byte != mft_no >> 3)
+		return STATUS_ERROR;
+	if (byte >= fixup_candidate_bitmap_size) {
+		bitmap = ntfs_realloc(fixup_candidate_bitmap, byte + 1);
+		if (!bitmap)
+			return STATUS_ERROR;
+		memset(bitmap + fixup_candidate_bitmap_size, 0,
+				byte + 1 - fixup_candidate_bitmap_size);
+		fixup_candidate_bitmap = bitmap;
+		fixup_candidate_bitmap_size = byte + 1;
+	}
+	if (fixup_candidate_bitmap[byte] & (1U << (mft_no & 7)))
+		return STATUS_OK;
+	fixup_candidate_bitmap[byte] |= 1U << (mft_no & 7);
+	fixup_salvage_candidates++;
+	fsck_err_found();
+	return STATUS_OK;
+}
+
+static int ntfsck_salvage_mft_record(ntfs_volume *vol, u64 mft_no,
+		MFT_RECORD *mrec)
+{
+	u16 expected_usa_ofs;
+	u16 expected_usa_count;
+
+	if (!NVolFsck(vol) || !vol->mft_na)
+		return STATUS_ERROR;
+	/* Refuse non-allocated records, as ntfs_mft_records_read() does. */
+	if ((s64)mft_no + 1 > vol->mft_na->initialized_size >>
+			vol->mft_record_size_bits)
+		return STATUS_ERROR;
+
+	if (ntfs_attr_pread(vol->mft_na,
+				(s64)mft_no << vol->mft_record_size_bits,
+				vol->mft_record_size, mrec) !=
+			vol->mft_record_size)
+		return STATUS_ERROR;
+
+	if (vol->major_ver < 3 || (vol->major_ver == 3 && !vol->minor_ver))
+		expected_usa_ofs = (sizeof(MFT_RECORD_OLD) + 1) & ~1;
+	else
+		expected_usa_ofs = (sizeof(MFT_RECORD) + 1) & ~1;
+	expected_usa_count = (vol->mft_record_size >= NTFS_BLOCK_SIZE) ?
+		vol->mft_record_size / NTFS_BLOCK_SIZE + 1 : 1;
+
+	if (ntfs_is_file_record(mrec->magic)) {
+		/* A canonical header means the sectors themselves are torn. */
+		if (le16_to_cpu(mrec->usa_ofs) == expected_usa_ofs &&
+				le16_to_cpu(mrec->usa_count) ==
+				expected_usa_count)
+			return STATUS_ERROR;
+
+		mrec->usa_ofs = cpu_to_le16(expected_usa_ofs);
+		mrec->usa_count = cpu_to_le16(expected_usa_count);
+
+		if (ntfs_mst_post_read_fixup_warn((NTFS_RECORD *)mrec,
+					vol->mft_record_size, FALSE))
+			return STATUS_ERROR;
+
+	} else if (mrec->magic == magic_BAAD) {
+		u16 *usa, *tail;
+		int i;
+
+		/* With the fixup header gone too there is nothing to trust. */
+		if (le16_to_cpu(mrec->usa_ofs) != expected_usa_ofs ||
+				le16_to_cpu(mrec->usa_count) !=
+				expected_usa_count)
+			return STATUS_ERROR;
+
+		/* Deprotect without tail verification. */
+		usa = (u16 *)((u8 *)mrec + expected_usa_ofs);
+		tail = (u16 *)((u8 *)mrec + NTFS_BLOCK_SIZE) - 1;
+		for (i = 1; i < expected_usa_count; i++) {
+			*tail = usa[i];
+			tail += NTFS_BLOCK_SIZE / sizeof(u16);
+		}
+		mrec->magic = magic_FILE;
+
+	} else
+		return STATUS_ERROR;
+
+	/*
+	 * Count each salvageable MFT record once, rather than counting every failed
+	 * MST-protected read. The latter includes repeated reads and records for
+	 * which no safe recovery exists, so it cannot drive a meaningful repair
+	 * question.
+	 */
+	if (ntfsck_note_fixup_candidate(mft_no))
+		return STATUS_ERROR;
+	if (!fixup_repair_decided || !fixup_repair_approved)
+		return STATUS_ERROR;
+
+	if (ntfs_mft_record_write(vol, mft_no, mrec))
+		return STATUS_ERROR;
+
+	fsck_err_fixed();
+	fixup_salvaged_records++;
+	return STATUS_OK;
+}
+
+static ntfs_inode *ntfsck_open_inode_after_raw_mft_check(ntfs_volume *vol,
+		u64 mft_no, BOOL expect_in_use)
+{
+	MFT_RECORD *mrec;
+	ntfs_inode *ni = NULL;
+	BOOL dirty = FALSE;
+	BOOL readable;
+
+	mrec = ntfs_malloc(vol->mft_record_size);
+	if (!mrec)
+		return NULL;
+
+	/* A failed fixup does not fail the read: it leaves BAAD magic. */
+	readable = !ntfs_mft_record_read(vol, mft_no, mrec);
+	if (!readable || mrec->magic == magic_BAAD)
+		readable = !ntfsck_salvage_mft_record(vol, mft_no, mrec);
+
+	if (readable && !ntfs_mft_record_check(vol, mft_no, mrec)) {
+		dirty = ntfsck_repair_raw_index_root_fields(vol, mft_no, mrec);
+		if (expect_in_use && NVolFsck(vol) && !NVolFsNoRepair(vol) &&
+				!(mrec->flags & MFT_RECORD_IN_USE)) {
+			vol->fsck_mft_in_use_flag_fix_count++;
+			mrec->flags |= MFT_RECORD_IN_USE;
+			dirty = TRUE;
+		}
+		if (dirty) {
+			fsck_err_found();
+			if (ntfs_mft_record_write(vol, mft_no, mrec))
+				goto out;
+			fsck_err_fixed();
+		}
+		ni = ntfsck_open_inode(vol, mft_no);
+	}
+
+	out:
+	ntfs_free(mrec);
+	return ni;
+}
+
+/*
+ * ntfs_inode_open() refuses a base record whose $STANDARD_INFORMATION is
+ * missing or shorter than the NTFS 1.2 layout, and the caller of a failed
+ * open removes the index entry, after which the orphan pass fails the same
+ * open and discards the record, so one lost attribute used to cost the whole
+ * file. Rebuild the attribute instead: prefer the value of a copy a corrupted
+ * attribute list left in an extent record (Windows only ever reads the
+ * attribute from the base record, so such a copy is unreachable yet keeps the
+ * genuine times, security_id and usn), and fall back to $FILE_NAME, which
+ * duplicates the times and flags and is what chkdsk recreates the attribute
+ * from.
+ */
+static ATTR_RECORD *ntfsck_walk_raw_record(ntfs_volume *vol, MFT_RECORD *m,
+		BOOL (*cb)(ATTR_RECORD *a, u32 offset, void *priv), void *priv)
+{
+	ATTR_RECORD *a = NULL;
+	u32 offset, biu, alen;
+
+	if (le32_to_cpu(m->bytes_allocated) != vol->mft_record_size)
+		return NULL;
+
+	biu = le32_to_cpu(m->bytes_in_use);
+	offset = le16_to_cpu(m->attrs_offset);
+	if ((biu & 7) || biu > vol->mft_record_size || (offset & 7) ||
+			offset < (u32)((le16_to_cpu(m->usa_ofs) +
+					le16_to_cpu(m->usa_count) * 2 + 7) & ~7))
+		return NULL;
+
+	while (offset + 8 <= biu) {
+		a = (ATTR_RECORD *)((u8 *)m + offset);
+		if (a->type == AT_END)
+			return a;	/* reached the attribute terminator */
+		if (offset + offsetof(ATTR_RECORD, resident_end) > biu)
+			return NULL;
+		alen = le32_to_cpu(a->length);
+		if (!alen || (alen & 7) || alen > biu - offset)
+			return NULL;
+		if (cb && !cb(a, offset, priv))
+			return NULL;
+		offset += alen;
+	}
+	return NULL;
+}
+
+struct ntfsck_si_base_walk {
+	u32 bad_si_off, bad_si_len;	/* broken $SI, if still present */
+	u32 al_off;			/* resident $ATTRIBUTE_LIST */
+	u32 fn_off;			/* first resident $FILE_NAME */
+	BOOL healthy_si, bad_al;
+};
+
+static BOOL ntfsck_si_base_walk_cb(ATTR_RECORD *a, u32 offset, void *priv)
+{
+	struct ntfsck_si_base_walk *w = priv;
+	u32 alen = le32_to_cpu(a->length);
+
+	if (a->type == AT_STANDARD_INFORMATION) {
+		if (!a->non_resident && le32_to_cpu(a->value_length) >=
+				offsetof(STANDARD_INFORMATION, v1_end)) {
+			w->healthy_si = TRUE;	/* open failed for another reason */
+			return FALSE;
+		}
+		w->bad_si_off = offset;
+		w->bad_si_len = alen;
+	} else if (a->type == AT_ATTRIBUTE_LIST) {
+		/* only a resident, well-formed list can be re-pointed */
+		if (a->non_resident || w->al_off ||
+				le16_to_cpu(a->value_offset) +
+				le32_to_cpu(a->value_length) > alen) {
+			w->bad_al = TRUE;
+			return FALSE;
+		}
+		w->al_off = offset;
+	} else if (a->type == AT_FILE_NAME && !w->fn_off &&
+			!a->non_resident &&
+			le16_to_cpu(a->value_offset) +
+			le32_to_cpu(a->value_length) <= alen &&
+			le32_to_cpu(a->value_length) >=
+			offsetof(FILE_NAME_ATTR, file_name))
+		w->fn_off = offset;
+	return TRUE;
+}
+
+struct ntfsck_si_ext_walk {
+	le16 instance;			/* wanted $SI instance */
+	u32 si_off, si_len, si_vlen;	/* located $SI copy */
+};
+
+static BOOL ntfsck_si_ext_walk_cb(ATTR_RECORD *a, u32 offset, void *priv)
+{
+	struct ntfsck_si_ext_walk *w = priv;
+
+	if (a->type != AT_STANDARD_INFORMATION || a->non_resident ||
+			a->instance != w->instance)
+		return TRUE;
+	if (le16_to_cpu(a->value_offset) + le32_to_cpu(a->value_length) >
+			le32_to_cpu(a->length) ||
+			le32_to_cpu(a->value_length) <
+			offsetof(STANDARD_INFORMATION, v1_end))
+		return TRUE;
+	w->si_off = offset;
+	w->si_len = le32_to_cpu(a->length);
+	w->si_vlen = le32_to_cpu(a->value_length);
+	return TRUE;
+}
+
+static BOOL ntfsck_rebuild_standard_information(ntfs_volume *vol, u64 mft_no)
+{
+	MFT_RECORD *m;
+	MFT_RECORD *ext_m = NULL;
+	ATTR_RECORD *a;
+	ATTR_LIST_ENTRY *e = NULL;
+	FILE_NAME_ATTR *fn;
+	STANDARD_INFORMATION *si;
+	struct ntfsck_si_base_walk w = {0, };
+	struct ntfsck_si_ext_walk xw = {0, };
+	u8 src[offsetof(STANDARD_INFORMATION, v3_end)] = {0, };
+	u32 attr_len = offsetof(ATTR_RECORD, resident_end) + sizeof(src);
+	u32 al_entry_len = (offsetof(ATTR_LIST_ENTRY, name) + 7) & ~7;
+	u32 biu, need, al_si_pos = 0;
+	u64 ext_no = 0;
+	le16 new_inst;
+	u8 *p;
+	BOOL have_src = FALSE, have_al_si = FALSE;
+	problem_context_t pctx = {0, };
+	BOOL rebuilt = FALSE;
+
+	if (!NVolFsck(vol))
+		return FALSE;
+
+	m = ntfs_malloc(vol->mft_record_size);
+	if (!m)
+		return FALSE;
+
+	if (ntfs_mft_record_read(vol, mft_no, m))
+		goto out;
+
+	if (!ntfs_is_file_record(m->magic) ||
+			!(m->flags & MFT_RECORD_IN_USE) ||
+			m->base_mft_record)
+		goto out;
+
+	/* the walk must have ended on the attribute terminator */
+	a = ntfsck_walk_raw_record(vol, m, ntfsck_si_base_walk_cb, &w);
+	if (!a || w.healthy_si || w.bad_al || !w.fn_off)
+		goto out;
+	biu = le32_to_cpu(m->bytes_in_use);
+
+	/* find the attribute list entry for $STANDARD_INFORMATION */
+	if (w.al_off) {
+		ATTR_RECORD *al = (ATTR_RECORD *)((u8 *)m + w.al_off);
+		u32 alvl = le32_to_cpu(al->value_length);
+
+		p = (u8 *)al + le16_to_cpu(al->value_offset);
+		while (al_si_pos + offsetof(ATTR_LIST_ENTRY, name) <= alvl) {
+			u16 el;
+
+			e = (ATTR_LIST_ENTRY *)(p + al_si_pos);
+			el = le16_to_cpu(e->length);
+			if (el < offsetof(ATTR_LIST_ENTRY, name) || (el & 7) ||
+					al_si_pos + el > alvl)
+				goto out;	/* leave a broken list alone */
+			if (e->type == AT_STANDARD_INFORMATION) {
+				have_al_si = TRUE;
+				break;
+			}
+			al_si_pos += el;
+		}
+
+		/*
+		 * The reachable copy the list points at may live in an extent
+		 * record; salvage its value, it is the genuine attribute.
+		 */
+		if (have_al_si &&
+				MREF(le64_to_cpu(e->mft_reference)) != mft_no) {
+			ext_no = MREF(le64_to_cpu(e->mft_reference));
+			ext_m = ntfs_malloc(vol->mft_record_size);
+			if (!ext_m)
+				goto out;
+			xw.instance = e->instance;
+			if (!ntfs_mft_record_read(vol, ext_no, ext_m) &&
+					ntfs_is_file_record(ext_m->magic) &&
+					(ext_m->flags & MFT_RECORD_IN_USE) &&
+					le64_to_cpu(ext_m->base_mft_record) &&
+					MREF_LE(ext_m->base_mft_record) ==
+					mft_no &&
+					ntfsck_walk_raw_record(vol, ext_m,
+						ntfsck_si_ext_walk_cb, &xw) &&
+					xw.si_len) {
+				a = (ATTR_RECORD *)((u8 *)ext_m + xw.si_off);
+				memcpy(src, (u8 *)a +
+						le16_to_cpu(a->value_offset),
+						xw.si_vlen > sizeof(src) ?
+						sizeof(src) : xw.si_vlen);
+				have_src = TRUE;
+			} else
+				xw.si_len = 0;	/* unusable: fall back to $FN */
+		}
+	}
+
+	need = attr_len + (w.al_off && !have_al_si ? al_entry_len : 0);
+	if (biu - w.bad_si_len + need > le32_to_cpu(m->bytes_allocated))
+		goto out;
+
+	pctx.inum = mft_no;
+	fsck_err_found();
+	if (!ntfs_fix_problem(vol, PR_MFT_SI_MISSING, &pctx))
+		goto out;
+
+	if (!have_src) {
+		fn = (FILE_NAME_ATTR *)((u8 *)m + w.fn_off +
+				le16_to_cpu(((ATTR_RECORD *)((u8 *)m +
+						w.fn_off))->value_offset));
+		si = (STANDARD_INFORMATION *)src;
+		si->creation_time = fn->creation_time;
+		si->last_data_change_time = fn->last_data_change_time;
+		si->last_mft_change_time = fn->last_mft_change_time;
+		si->last_access_time = fn->last_access_time;
+		si->file_attributes = fn->file_attributes &
+			FILE_ATTR_VALID_FLAGS;
+	}
+
+	/* drop the stale extent copy first; the base is untouched on failure */
+	if (ext_m && xw.si_len) {
+		u32 ext_biu = le32_to_cpu(ext_m->bytes_in_use);
+
+		memmove((u8 *)ext_m + xw.si_off,
+				(u8 *)ext_m + xw.si_off + xw.si_len,
+				ext_biu - xw.si_off - xw.si_len);
+		ext_m->bytes_in_use = cpu_to_le32(ext_biu - xw.si_len);
+		if (ntfs_mft_record_write(vol, ext_no, ext_m))
+			goto out;
+	}
+
+	if (w.bad_si_len) {
+		memmove((u8 *)m + w.bad_si_off,
+				(u8 *)m + w.bad_si_off + w.bad_si_len,
+				biu - w.bad_si_off - w.bad_si_len);
+		biu -= w.bad_si_len;
+		if (w.al_off > w.bad_si_off)
+			w.al_off -= w.bad_si_len;
+	}
+
+	p = (u8 *)m + le16_to_cpu(m->attrs_offset);
+	memmove(p + attr_len, p, biu - le16_to_cpu(m->attrs_offset));
+	biu += attr_len;
+	if (w.al_off)
+		w.al_off += attr_len;
+	a = (ATTR_RECORD *)p;
+	memset(a, 0, attr_len);
+	a->type = AT_STANDARD_INFORMATION;
+	a->length = cpu_to_le32(attr_len);
+	a->name_offset = cpu_to_le16(offsetof(ATTR_RECORD, resident_end));
+	new_inst = m->next_attr_instance;
+	a->instance = new_inst;
+	m->next_attr_instance = cpu_to_le16(
+			le16_to_cpu(m->next_attr_instance) + 1);
+	a->value_length = cpu_to_le32(sizeof(src));
+	a->value_offset = cpu_to_le16(offsetof(ATTR_RECORD, resident_end));
+	memcpy((u8 *)a + offsetof(ATTR_RECORD, resident_end), src, sizeof(src));
+
+	/* keep the attribute list pointing at the base record */
+	if (w.al_off) {
+		ATTR_RECORD *al = (ATTR_RECORD *)((u8 *)m + w.al_off);
+
+		p = (u8 *)al + le16_to_cpu(al->value_offset);
+		if (!have_al_si) {
+			u32 alv_off = p - (u8 *)m;
+
+			memmove(p + al_entry_len, p, biu - alv_off);
+			biu += al_entry_len;
+			al->length = cpu_to_le32(le32_to_cpu(al->length) +
+					al_entry_len);
+			al->value_length = cpu_to_le32(
+					le32_to_cpu(al->value_length) +
+					al_entry_len);
+			memset(p, 0, al_entry_len);
+			al_si_pos = 0;
+			e = (ATTR_LIST_ENTRY *)p;
+			e->type = AT_STANDARD_INFORMATION;
+			e->length = cpu_to_le16(al_entry_len);
+			e->name_offset = offsetof(ATTR_LIST_ENTRY, name);
+		} else
+			e = (ATTR_LIST_ENTRY *)(p + al_si_pos);
+		e->lowest_vcn = const_cpu_to_sle64(0);
+		e->mft_reference = MK_LE_MREF(mft_no,
+				le16_to_cpu(m->sequence_number));
+		e->instance = new_inst;
+	}
+
+	m->bytes_in_use = cpu_to_le32(biu);
+
+	if (ntfs_mft_record_write(vol, mft_no, m))
+		goto out;
+
+	fsck_err_fixed();
+	rebuilt = TRUE;
+out:
+	free(ext_m);
+	free(m);
+	return rebuilt;
+}
+
+struct ntfsck_fn_walk {
+	u32 bad_fn_off, bad_fn_len;	/* first structurally corrupt $FN */
+	BOOL has_al;			/* an $ATTRIBUTE_LIST is present */
+};
+
+static BOOL ntfsck_fn_walk_cb(ATTR_RECORD *a, u32 offset, void *priv)
+{
+	struct ntfsck_fn_walk *w = priv;
+	u32 vlen = le32_to_cpu(a->value_length);
+	FILE_NAME_ATTR *fn;
+
+	if (a->type == AT_ATTRIBUTE_LIST) {
+		w->has_al = TRUE;
+		return TRUE;
+	}
+	if (a->type != AT_FILE_NAME || w->bad_fn_off)
+		return TRUE;
+
+	/* mirror the structural checks ntfs_attr_inconsistent() rejects on */
+	if (!a->non_resident &&
+			vlen >= offsetof(FILE_NAME_ATTR, file_name) &&
+			(u32)le16_to_cpu(a->value_offset) + vlen <=
+			le32_to_cpu(a->length)) {
+		fn = (FILE_NAME_ATTR *)((u8 *)a + le16_to_cpu(a->value_offset));
+		if (fn->file_name_length &&
+				fn->file_name_length * sizeof(ntfschar) +
+				offsetof(FILE_NAME_ATTR, file_name) <= vlen)
+			return TRUE;	/* well-formed name */
+	}
+	w->bad_fn_off = offset;
+	w->bad_fn_len = le32_to_cpu(a->length);
+	return TRUE;
+}
+
+/*
+ * ntfs_attr_inconsistent() rejects a $FILE_NAME whose value is truncated,
+ * non-resident or whose name overflows, which fails ntfs_mft_record_check()
+ * and so the whole inode open, after which the caller removes the index entry
+ * and the orphan pass discards the record -- one corrupt name used to cost
+ * the file and every intact hard-link or DOS name with it. chkdsk instead
+ * drops only the bad name, so remove just the corrupt $FILE_NAME (adjusting
+ * the hard-link count) and let the open be retried; the directory walk then
+ * prunes the matching index entry. A record carrying an attribute list also
+ * has a list entry for the name, and re-pointing that is out of scope here,
+ * so such records are left to the existing path.
+ */
+static BOOL ntfsck_remove_corrupt_file_name(ntfs_volume *vol, u64 mft_no)
+{
+	MFT_RECORD *m;
+	ATTR_RECORD *a;
+	struct ntfsck_fn_walk w = {0, };
+	problem_context_t pctx = {0, };
+	u32 biu;
+	u16 link_count;
+	BOOL removed = FALSE;
+
+	if (!NVolFsck(vol))
+		return FALSE;
+
+	m = ntfs_malloc(vol->mft_record_size);
+	if (!m)
+		return FALSE;
+
+	if (ntfs_mft_record_read(vol, mft_no, m))
+		goto out;
+
+	if (!ntfs_is_file_record(m->magic) ||
+			!(m->flags & MFT_RECORD_IN_USE) ||
+			m->base_mft_record)
+		goto out;
+
+	a = ntfsck_walk_raw_record(vol, m, ntfsck_fn_walk_cb, &w);
+	if (!a || !w.bad_fn_off || w.has_al)
+		goto out;
+
+	pctx.inum = mft_no;
+	fsck_err_found();
+	if (!ntfs_fix_problem(vol, PR_ATTR_FN_CORRUPTED_REMOVE, &pctx))
+		goto out;
+
+	biu = le32_to_cpu(m->bytes_in_use);
+	do {
+		memmove((u8 *)m + w.bad_fn_off,
+				(u8 *)m + w.bad_fn_off + w.bad_fn_len,
+				biu - w.bad_fn_off - w.bad_fn_len);
+		biu -= w.bad_fn_len;
+		m->bytes_in_use = cpu_to_le32(biu);
+		link_count = le16_to_cpu(m->link_count);
+		if (link_count)
+			m->link_count = cpu_to_le16(link_count - 1);
+
+		memset(&w, 0, sizeof(w));
+		a = ntfsck_walk_raw_record(vol, m, ntfsck_fn_walk_cb, &w);
+	} while (a && w.bad_fn_off && !w.has_al);
+
+	if (ntfs_mft_record_write(vol, mft_no, m))
+		goto out;
+
+	fsck_err_fixed();
+	removed = TRUE;
+out:
+	free(m);
+	return removed;
 }
 
 static int ntfsck_close_inode(ntfs_inode *ni)
@@ -269,7 +1614,281 @@ static int ntfsck_close_inode_in_dir(ntfs_inode *ni, ntfs_inode *dir_ni)
 	return res;
 }
 
-/* update lcn bitmap to disk, not set in fsck lcn bitmap */
+static VCN ntfsck_runlist_end_vcn(const runlist *rl)
+{
+	int index = 0;
+
+	if (!rl)
+		return 0;
+
+	while (rl[index].length)
+		index++;
+
+	return rl[index].vcn;
+}
+
+struct ntfsck_attrlist_item {
+	ntfs_inode *record_ni;
+	ATTR_RECORD *attr;
+};
+
+static int ntfsck_compare_attrlist_items(ntfs_volume *vol,
+		const struct ntfsck_attrlist_item *left,
+		const struct ntfsck_attrlist_item *right)
+{
+	VCN left_lowest_vcn;
+	VCN right_lowest_vcn;
+	u16 left_instance;
+	u16 right_instance;
+	int rc;
+
+	rc = (int)le32_to_cpu(left->attr->type) -
+		(int)le32_to_cpu(right->attr->type);
+	if (rc)
+		return rc;
+
+	if (!left->attr->name_length && right->attr->name_length)
+		return -1;
+	if (left->attr->name_length && !right->attr->name_length)
+		return 1;
+	if (left->attr->name_length && right->attr->name_length) {
+		rc = ntfs_names_full_collate(
+				(ntfschar *)((u8 *)left->attr +
+				le16_to_cpu(left->attr->name_offset)),
+				left->attr->name_length,
+				(ntfschar *)((u8 *)right->attr +
+				le16_to_cpu(right->attr->name_offset)),
+				right->attr->name_length,
+				CASE_SENSITIVE,
+				vol->upcase,
+				vol->upcase_len);
+		if (rc)
+			return rc;
+	}
+
+	left_lowest_vcn = left->attr->non_resident ?
+		sle64_to_cpu(left->attr->lowest_vcn) : 0;
+	right_lowest_vcn = right->attr->non_resident ?
+		sle64_to_cpu(right->attr->lowest_vcn) : 0;
+	if (left_lowest_vcn < right_lowest_vcn)
+		return -1;
+	if (left_lowest_vcn > right_lowest_vcn)
+		return 1;
+
+	left_instance = left_lowest_vcn ? 0 : le16_to_cpu(left->attr->instance);
+	right_instance = right_lowest_vcn ? 0 : le16_to_cpu(right->attr->instance);
+	if (left_instance < right_instance)
+		return -1;
+	if (left_instance > right_instance)
+		return 1;
+
+	if (left->record_ni->mft_no < right->record_ni->mft_no)
+		return -1;
+	if (left->record_ni->mft_no > right->record_ni->mft_no)
+		return 1;
+
+	return 0;
+}
+
+static void ntfsck_sort_attrlist_items(ntfs_volume *vol,
+		struct ntfsck_attrlist_item *items, size_t count)
+{
+	size_t index;
+
+	for (index = 1; index < count; index++) {
+		struct ntfsck_attrlist_item item = items[index];
+		size_t sort_index = index;
+
+		while (sort_index > 0 &&
+				ntfsck_compare_attrlist_items(vol,
+					&items[sort_index - 1], &item) > 0) {
+			items[sort_index] = items[sort_index - 1];
+			sort_index--;
+		}
+		items[sort_index] = item;
+	}
+}
+
+static int ntfsck_collect_attrlist_items(ntfs_inode *base_ni,
+		struct ntfsck_attrlist_item **items, size_t *item_count)
+{
+	struct ntfsck_attrlist_item *collected = NULL;
+	size_t capacity = 0;
+	size_t count = 0;
+	int extent_index;
+
+	if (!base_ni || !items || !item_count)
+		return STATUS_ERROR;
+
+	for (extent_index = -1; extent_index < base_ni->nr_extents;
+			extent_index++) {
+		ntfs_attr_search_ctx *ctx;
+		ntfs_inode *record_ni;
+		int ret;
+
+		record_ni = extent_index < 0 ? base_ni :
+			base_ni->extent_nis[extent_index];
+		/*
+		 * Walk each record physically by anchoring the context on the raw mft
+		 * record. A context opened on the base inode would go through
+		 * ntfs_external_attr_find(), enumerate the whole logical attribute set, and
+		 * then the extent iterations below would collect the extent attributes a
+		 * second time, producing a duplicated (and therefore corrupt) rebuilt list.
+		 */
+		ctx = ntfs_attr_get_search_ctx(NULL, record_ni->mrec);
+		if (!ctx)
+			goto err_out;
+
+		while (!(ret = ntfs_attrs_walk(ctx))) {
+			struct ntfsck_attrlist_item *new_items;
+
+			if (ctx->attr->type == AT_ATTRIBUTE_LIST)
+				continue;
+
+			if (count == capacity) {
+				size_t new_capacity = capacity ? capacity * 2 : 16;
+
+				new_items = realloc(collected,
+						new_capacity * sizeof(*collected));
+				if (!new_items) {
+					ntfs_attr_put_search_ctx(ctx);
+					goto err_out;
+				}
+				collected = new_items;
+				capacity = new_capacity;
+			}
+
+			collected[count].record_ni = record_ni;
+			collected[count].attr = ctx->attr;
+			count++;
+		}
+
+		ntfs_attr_put_search_ctx(ctx);
+		if (ret && errno != ENOENT)
+			goto err_out;
+	}
+
+	*items = collected;
+	*item_count = count;
+	return STATUS_OK;
+
+err_out:
+	free(collected);
+	return STATUS_ERROR;
+}
+
+static int ntfsck_rebuild_attr_list(ntfs_inode *ni)
+{
+	struct ntfsck_attrlist_item *items = NULL;
+	ntfs_inode *base_ni;
+	ntfs_attr *na = NULL;
+	u8 *new_al = NULL;
+	u32 new_al_len = 0;
+	size_t item_count = 0;
+	size_t index;
+	size_t offset = 0;
+	int ret = STATUS_ERROR;
+
+	if (!ni)
+		return STATUS_ERROR;
+
+	base_ni = ni->nr_extents == -1 ? ni->base_ni : ni;
+	if (!base_ni || !NInoAttrList(base_ni) || !base_ni->attr_list)
+		return STATUS_ERROR;
+
+	if (base_ni->nr_extents > 0 && !base_ni->extent_nis)
+		return STATUS_ERROR;
+
+	if (ntfsck_collect_attrlist_items(base_ni, &items, &item_count))
+		goto out;
+
+	if (!item_count) {
+		ntfs_log_error("No attributes available to rebuild attrlist of "
+				"inode(%"PRIu64")\n", base_ni->mft_no);
+		goto out;
+	}
+
+	ntfsck_sort_attrlist_items(base_ni->vol, items, item_count);
+
+	for (index = 0; index < item_count; index++) {
+		u32 entry_len;
+
+		entry_len = (offsetof(ATTR_LIST_ENTRY, name) +
+				items[index].attr->name_length * sizeof(ntfschar) + 7) & ~7;
+		if (new_al_len > 0x40000U - entry_len) {
+			ntfs_log_error("Rebuilt attrlist of inode(%"PRIu64") is too large\n",
+					base_ni->mft_no);
+			goto out;
+		}
+		new_al_len += entry_len;
+	}
+
+	new_al = ntfs_calloc(new_al_len);
+	if (!new_al)
+		goto out;
+
+	for (index = 0; index < item_count; index++) {
+		ATTR_LIST_ENTRY *entry = (ATTR_LIST_ENTRY *)(new_al + offset);
+		ATTR_RECORD *attr = items[index].attr;
+		u32 entry_len = (offsetof(ATTR_LIST_ENTRY, name) +
+				attr->name_length * sizeof(ntfschar) + 7) & ~7;
+
+		entry->type = attr->type;
+		entry->length = cpu_to_le16(entry_len);
+		entry->name_length = attr->name_length;
+		entry->name_offset = offsetof(ATTR_LIST_ENTRY, name);
+		entry->lowest_vcn = attr->non_resident ?
+			attr->lowest_vcn : const_cpu_to_sle64(0);
+		entry->mft_reference = MK_LE_MREF(items[index].record_ni->mft_no,
+				le16_to_cpu(items[index].record_ni->mrec->sequence_number));
+		entry->instance = attr->non_resident && sle64_to_cpu(attr->lowest_vcn) ?
+			const_cpu_to_le16(0) : attr->instance;
+		if (attr->name_length)
+			memcpy(entry->name,
+					(u8 *)attr + le16_to_cpu(attr->name_offset),
+					attr->name_length * sizeof(ntfschar));
+		offset += entry_len;
+	}
+
+	na = ntfs_attr_open(base_ni, AT_ATTRIBUTE_LIST, AT_UNNAMED, 0);
+	if (!na)
+		goto out;
+
+	if (ntfs_attr_truncate(na, new_al_len)) {
+		ntfs_log_perror("Failed to resize attrlist of inode(%"PRIu64")",
+				base_ni->mft_no);
+		goto out;
+	}
+
+	if (ntfs_attr_pwrite(na, 0, new_al_len, new_al) != new_al_len) {
+		ntfs_log_perror("Failed to rewrite attrlist of inode(%"PRIu64")",
+				base_ni->mft_no);
+		goto out;
+	}
+
+	free(base_ni->attr_list);
+	base_ni->attr_list = new_al;
+	base_ni->attr_list_size = new_al_len;
+	NInoSetAttrList(base_ni);
+	NInoAttrListSetDirty(base_ni);
+	ntfs_inode_mark_dirty(base_ni);
+	new_al = NULL;
+	ret = STATUS_OK;
+
+out:
+	if (na)
+		ntfs_attr_close(na);
+	free(new_al);
+	free(items);
+	return ret;
+}
+
+/*
+ * Seed the fsck occupancy oracle from every non-resident runlist of @ni. Run
+ * by the pass-1 MFT scan before any repair can allocate, so the allocator
+ * barrier (ntfs_cluster_alloc -> ntfs_fsck_or_alloc_lcnbmp) sees full
+ * occupancy and never hands out an in-use cluster.
+ */
 static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 {
 	ntfs_volume *vol;
@@ -303,9 +1922,9 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 
 		while (rl[i].length) {
 			/*
-			 * it's need to set bitmap temporarily,
-			 * before check and alloc cluster to avoid
-			 * cluster duplication in ntfsck
+			 * Record occupancy in the oracle before any repair can
+			 * allocate, so the allocator barrier never reuses these
+			 * clusters (cluster duplication avoidance in ntfsck).
 			 */
 			/* lcn corrupted */
 			if (rl[i].lcn >= vol->nr_clusters) {
@@ -322,7 +1941,8 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 			}
 
 			if (rl[i].lcn > (LCN)LCN_HOLE)
-				ntfs_bitmap_set_run(ni->vol->lcnbmp_na, rl[i].lcn, rl[i].length);
+				ntfs_fsck_set_alloc_lcnbmp_range(ni->vol,
+						rl[i].lcn, rl[i].length);
 			++i;
 		}
 
@@ -338,6 +1958,7 @@ static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
 		ntfs_attr_search_ctx *actx, struct rl_size *rls, int set_bit)
 {
 	BOOL need_fix = FALSE;
+	BOOL dup_repaired = FALSE;
 	problem_context_t pctx = {0, };
 
 	ntfs_volume *vol;
@@ -351,7 +1972,8 @@ static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
 	ntfs_init_problem_ctx(&pctx, ni, na, actx, NULL, NULL, a, NULL);
 
 	/* check whole cluster runlist and set cluster bitmap of fsck */
-	if (ntfsck_check_attr_runlist(na, rls, &need_fix, set_bit)) {
+	if (ntfsck_check_attr_runlist(na, rls, &need_fix, set_bit,
+			&dup_repaired)) {
 		ntfs_log_error("Failed to get non-resident attribute(%d) "
 				"in directory(%"PRId64")", na->type, ni->mft_no);
 		return STATUS_ERROR;
@@ -359,16 +1981,17 @@ static int __ntfsck_check_non_resident_attr(ntfs_attr *na,
 
 	/* if need_fix is set to TRUE, apply modified runlist to cluster runs */
 	if (need_fix == TRUE) {
-		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_LOG_APPLY_RUNLIST_TO_DISK, &pctx)) {
+		if (!dup_repaired)
+			fsck_err_found();
+		if (dup_repaired ||
+				ntfs_fix_problem(vol, PR_LOG_APPLY_RUNLIST_TO_DISK,
+					&pctx)) {
 			/*
 			 * keep a valid runlist as long as possible.
 			 * if truncate zero, call with second parameter to 0
 			 */
 			if (ntfsck_update_runlist(na, rls->alloc_size, actx)) {
-				/* FIXME: why ntfsck_update_runlist failed? and
-				 * what should it do? */
-				fsck_err_fixed();
+				/* The caller stops the current repair and leaves it unfixed. */
 				return STATUS_ERROR;
 			}
 			fsck_err_fixed();
@@ -399,6 +2022,55 @@ static void ntfsck_set_attr_lcnbmp(ntfs_attr *na)
 
 	__ntfsck_check_non_resident_attr(na, actx, &rls, 1);
 	ntfs_attr_put_search_ctx(actx);
+}
+
+static int ntfsck_repair_cluster_dup_attrs(ntfs_volume *vol)
+{
+	struct ntfs_list_head *pos;
+	int ret = STATUS_OK;
+
+	if (cluster_dup_attr_list_incomplete)
+		return STATUS_ERROR;
+
+	ntfs_list_for_each(pos, &ntfsck_cluster_dup_attrs) {
+		struct ntfsck_cluster_dup_attr *entry;
+		ntfs_attr_search_ctx *actx;
+		ntfs_inode *ni;
+		ntfs_attr *na;
+		struct rl_size rls = {0, };
+
+		entry = ntfs_list_entry(pos, struct ntfsck_cluster_dup_attr, list);
+		ni = ntfsck_open_inode(vol, entry->mft_no);
+		if (!ni) {
+			ret = STATUS_ERROR;
+			continue;
+		}
+		if (ni->attr_list && ntfs_inode_attach_all_extents(ni)) {
+			ntfsck_close_inode(ni);
+			ret = STATUS_ERROR;
+			continue;
+		}
+		na = ntfs_attr_open(ni, entry->type, entry->name,
+				entry->name_len);
+		if (!na) {
+			ntfsck_close_inode(ni);
+			ret = STATUS_ERROR;
+			continue;
+		}
+		actx = ntfs_attr_get_search_ctx(ni, NULL);
+		if (!actx || ntfs_attr_lookup(entry->type, entry->name,
+				entry->name_len, 0, 0, NULL, 0, actx) ||
+				!actx->attr || !actx->attr->non_resident ||
+				__ntfsck_check_non_resident_attr(na, actx, &rls, 1))
+			ret = STATUS_ERROR;
+		if (actx)
+			ntfs_attr_put_search_ctx(actx);
+		ntfs_attr_close(na);
+		if (ntfsck_close_inode(ni))
+			ret = STATUS_ERROR;
+	}
+
+	return ret;
 }
 
 static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
@@ -436,7 +2108,8 @@ static void ntfsck_clear_attr_lcnbmp(ntfs_attr *na)
  * @rls : structure for runlist length, it contains allocated size and
  *	  real allocated size. it may be NULL, don't return calculated size.
  */
-static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, BOOL *need_fix)
+static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
+		struct rl_size *rls, BOOL *need_fix, BOOL *dup_repaired)
 {
 	ntfs_volume *vol;
 	ntfs_inode *ni;
@@ -446,7 +2119,6 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 	s64 rl_data_size = 0;	/* rl data size (real allocated size) */
 	s64 rsize;		/* a cluster run size */
 	int i = 0;
-	problem_context_t pctx = {0, };
 
 	if (!na || !na->ni || !na->rl)
 		return STATUS_ERROR;
@@ -456,8 +2128,6 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 
 	vol = ni->vol;
 
-	ntfs_init_problem_ctx(&pctx, ni, na, NULL, NULL, ni->mrec, NULL, NULL);
-
 	while (rl && rl[i].length) {
 		if (rl[i].lcn > LCN_HOLE) {
 			ntfs_log_trace("%s cluster run of mft entry(%"PRIu64") in memory : "
@@ -466,9 +2136,14 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
 
-			/* check lcn corrupted */
+			/*
+			 * An lcn beyond the volume is corruption. Drop this run and everything
+			 * after it in memory; the resulting shorter rls->alloc_size no longer
+			 * matches the on-disk allocated_size, so the non-resident size
+			 * reconciliation in ntfsck_check_non_resident_attr() is what rewrites the
+			 * truncated runlist to disk.
+			 */
 			if (rl[i].lcn >= vol->nr_clusters) {
-				/* truncate runlist */
 				rl[i].lcn = LCN_ENOENT;
 				rl[i].length = 0;
 				break;
@@ -505,8 +2180,18 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 	}
 
 	if (dup_rl) {
+		u64 duplicated = 0;
+
+		for (i = 0; dup_rl[i].length; i++)
+			duplicated += dup_rl[i].length;
+		if (ntfsck_note_cluster_dup_attr(na))
+			cluster_dup_attr_list_incomplete = TRUE;
+		fsck_err_found();
+		cluster_dup_affected_attrs++;
+		cluster_dup_clusters += duplicated;
 		/* Found cluster duplication */
-		if (ntfs_fix_problem(vol, PR_CLUSTER_DUPLICATION_FOUND, &pctx)) {
+		if (cluster_dup_repair_decided &&
+				cluster_dup_repair_approved) {
 			/*
 			 * fix cluster duplication in ntfs_fsck_repair_cluster_dup(),
 			 * but it is applied to disk in caller side.
@@ -514,6 +2199,10 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 			ntfs_log_debug("dup_rl: duplicated runlists\n");
 			ntfs_debug_runlist_dump(dup_rl);
 			ntfs_fsck_repair_cluster_dup(na, dup_rl);
+			if (need_fix)
+				*need_fix = TRUE;
+			if (dup_repaired)
+				*dup_repaired = TRUE;
 
 #ifdef DEBUG
 			ntfs_log_info("Resolve cluster duplication of inode(%"
@@ -527,8 +2216,6 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit, struct rl_size *rls, 
 #endif
 		}
 
-		if (need_fix)
-			*need_fix = TRUE;
 		ntfs_free(dup_rl);
 	}
 
@@ -560,13 +2247,22 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 		u64 mft_no = 0;
 
 		mft_no = le64_to_cpu(ictx->entry->indexed_file);
-		if ((MSEQNO_LE(ictx->entry->indexed_file) !=
+		if (MREF(mft_no) == ni->mft_no &&
+				!MSEQNO_LE(ictx->entry->indexed_file) &&
+				ni->mrec->sequence_number) {
+			/*
+			 * The entry was minted while the record had sequence
+			 * number zero: rebind it instead of failing the add
+			 * and leaving a stale duplicate behind.
+			 */
+			ictx->entry->indexed_file = MK_LE_MREF(ni->mft_no,
+					le16_to_cpu(ni->mrec->sequence_number));
+			ntfsck_update_index_entry(ictx);
+		} else if ((MSEQNO_LE(ictx->entry->indexed_file) !=
 					le16_to_cpu(ni->mrec->sequence_number)) ||
 				(MREF(mft_no) != ni->mft_no)) {
 			/* found index and orphaned inode is different */
-			ntfs_log_error("mft number of inode(%"PRIu64
-					") and parent index(%"PRIu64") "
-					"are different\n", MREF(mft_no), ni->mft_no);
+			orphan_parent_index_conflicts++;
 			ntfs_index_ctx_put(ictx);
 			return STATUS_ERROR;
 		}
@@ -576,8 +2272,9 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 			ntfs_log_error("Index already exist in parent(%"PRIu64"), "
 					"inode(%"PRIu64")\n",
 					parent_ni->mft_no, ni->mft_no);
-			errno = EEXIST;
 			ntfs_index_ctx_put(ictx);
+			/* Set after the put so the helper cannot clobber it. */
+			errno = EEXIST;
 			return STATUS_ERROR;
 		}
 
@@ -646,9 +2343,24 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	int tfn_len;
 
 	ret = ntfsck_find_and_check_index(parent_ni, ni, fn, FALSE);
-	if (ret == STATUS_OK) { /* index already exist in parent inode */
+	if (ret == STATUS_OK) {
 		return STATUS_OK;
 	} else if (ret == STATUS_ERROR) {
+		/*
+		 * An entry for this same inode already exists in the parent (EEXIST): the
+		 * inode is already correctly linked, so there is nothing to add. Treat it
+		 * as success -- reporting failure here sends the caller down the lost+found
+		 * path, which drops the $FILE_NAME when that add also fails.
+		 */
+		if (errno == EEXIST) {
+			fn->parent_directory = MK_LE_MREF(parent_ni->mft_no,
+					le16_to_cpu(parent_ni->mrec->sequence_number));
+			NInoFileNameSetDirty(ctx->ntfs_ino);
+			ntfs_inode_mark_dirty(ctx->ntfs_ino);
+			ntfs_inode_mark_dirty(ni);
+			ntfsck_set_mft_record_bitmap(ni, TRUE);
+			return STATUS_OK;
+		}
 		err = -EIO;
 		return STATUS_ERROR;
 	}
@@ -673,6 +2385,7 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 		ntfs_attr_close(ia_na);
 
 		ntfsck_initialize_index_attr(ni);
+		ntfs_attr_reinit_search_ctx(ctx);
 
 		tfn->allocated_size = 0;
 		tfn->data_size = 0;
@@ -687,8 +2400,6 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	err = ntfs_index_add_filename(parent_ni, tfn, MK_MREF(ni->mft_no,
 				le16_to_cpu(ni->mrec->sequence_number)));
 	if (err) {
-		ntfs_log_error("Failed to add index(%"PRIu64") to parent(%"PRIu64") "
-				"err(%d)\n", ni->mft_no, parent_ni->mft_no, err);
 		err = -EIO;
 		free(tfn);
 		/* if parent_ni != lost+found, then add inode to lostfound */
@@ -727,6 +2438,11 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 		free(tfn);
 		return STATUS_ERROR;
 	}
+	/*
+	 * The index entry above is built from tfn, but the orphan's resident
+	 * FILE_NAME is fn. Keep both parent references identical.
+	 */
+	fn->parent_directory = tfn->parent_directory;
 	free(tfn);
 
 	NInoFileNameSetDirty(ctx->ntfs_ino);
@@ -734,6 +2450,55 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	ntfs_inode_mark_dirty(ni);
 
 	ntfsck_set_mft_record_bitmap(ni, TRUE);
+
+	return STATUS_OK;
+}
+
+static int ntfsck_add_filename_to_parent(ntfs_volume *vol,
+		ntfs_inode *parent_ni, ntfs_inode *ni, FILE_NAME_ATTR *fn)
+{
+	FILE_NAME_ATTR *tfn;
+	int tfn_len;
+	int ret;
+
+	if (!vol || !parent_ni || !ni || !fn)
+		return STATUS_ERROR;
+
+	tfn_len = sizeof(FILE_NAME_ATTR) +
+		fn->file_name_length * sizeof(ntfschar);
+	tfn = ntfs_calloc(tfn_len);
+	if (!tfn)
+		return STATUS_ERROR;
+
+	memcpy(tfn, fn, tfn_len);
+	tfn->parent_directory = MK_LE_MREF(parent_ni->mft_no,
+			le16_to_cpu(parent_ni->mrec->sequence_number));
+
+	ret = ntfs_index_add_filename(parent_ni, tfn,
+			MK_MREF(ni->mft_no,
+			le16_to_cpu(ni->mrec->sequence_number)));
+	if (ret) {
+		ntfs_log_error("Failed to add index(%"PRIu64") to parent(%"PRIu64") "
+				"err(%d)\n", ni->mft_no, parent_ni->mft_no, ret);
+		free(tfn);
+		return STATUS_ERROR;
+	}
+
+	if (parent_ni->attr_list) {
+		if (ntfsck_check_attr_list(parent_ni) ||
+				ntfs_inode_attach_all_extents(parent_ni)) {
+			free(tfn);
+			return STATUS_ERROR;
+		}
+	}
+
+	ntfsck_set_mft_record_bitmap(parent_ni, TRUE);
+	ntfs_inode_mark_dirty(parent_ni);
+
+	ret = ntfsck_find_and_check_index(parent_ni, ni, tfn, TRUE);
+	free(tfn);
+	if (ret != STATUS_OK)
+		return STATUS_ERROR;
 
 	return STATUS_OK;
 }
@@ -842,6 +2607,95 @@ rename_fn:
 	goto add_to_parent;
 }
 
+/*
+ * An orphaned record that has lost every $FILE_NAME cannot be relinked by the
+ * loop above -- it never iterates -- so the record used to be marked unused
+ * and its data discarded. chkdsk instead invents a name and files the record
+ * under lost+found; do the same by synthesizing a $FILE_NAME
+ * ("FSCK_<mft_no>") from the cached $STANDARD_INFORMATION and indexing it
+ * there. Returns STATUS_OK once the inode carries an indexed name again.
+ */
+static int ntfsck_add_nameless_inode_to_lostfound(ntfs_inode *ni,
+		ntfs_attr_search_ctx *ctx)
+{
+	FILE_NAME_ATTR *new_fn = NULL;
+	FILE_NAME_ATTR *fn;
+	ntfs_volume *vol = ni->vol;
+	ntfs_inode *lost_found = NULL;
+	ntfschar *ucs_name = (ntfschar *)NULL;
+	int ucs_namelen;
+	int fn_len;
+	int ret = STATUS_ERROR;
+	char filename[MAX_FILENAME_LEN_LOST_FOUND] = {0, };
+
+	lost_found = ntfsck_open_inode(vol, vol->lost_found);
+	if (!lost_found) {
+		ntfs_log_error("Can't open lost+found directory\n");
+		return ret;
+	}
+
+	snprintf(filename, MAX_FILENAME_LEN_LOST_FOUND, "%s%"PRIu64"",
+			FILENAME_PREFIX_LOST_FOUND, ni->mft_no);
+	ucs_namelen = ntfs_mbstoucs(filename, &ucs_name);
+	if (ucs_namelen <= 0) {
+		ntfs_log_error("ntfs_mbstoucs failed, ucs_namelen : %d\n",
+				ucs_namelen);
+		goto err_out;
+	}
+
+	fn_len = sizeof(FILE_NAME_ATTR) + ucs_namelen * sizeof(ntfschar);
+	new_fn = ntfs_calloc(fn_len);
+	if (!new_fn)
+		goto err_out;
+
+	new_fn->parent_directory = MK_LE_MREF(lost_found->mft_no,
+			le16_to_cpu(lost_found->mrec->sequence_number));
+	new_fn->creation_time = ni->creation_time;
+	new_fn->last_data_change_time = ni->last_data_change_time;
+	new_fn->last_mft_change_time = ni->last_mft_change_time;
+	new_fn->last_access_time = ni->last_access_time;
+	new_fn->allocated_size = cpu_to_sle64(ni->allocated_size);
+	new_fn->data_size = cpu_to_sle64(ni->data_size);
+	new_fn->file_attributes = ni->flags & FILE_ATTR_VALID_FLAGS;
+	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)
+		new_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
+	new_fn->file_name_length = ucs_namelen;
+	new_fn->file_name_type = FILE_NAME_WIN32;
+	memcpy(new_fn->file_name, ucs_name, ucs_namelen * sizeof(ntfschar));
+
+	ntfs_attr_reinit_search_ctx(ctx);
+	if (ntfs_attr_add(ni, AT_FILE_NAME, AT_UNNAMED, 0, (u8 *)new_fn, fn_len)) {
+		ntfs_log_error("Failed to add $FN(%"PRIu64")\n", ni->mft_no);
+		goto err_out;
+	}
+
+	/*
+	 * The single synthesized name is the record's only link; set the
+	 * count now so the consistency check ntfsck_add_inode_to_parent()
+	 * runs internally does not reject it as a zero-link record.
+	 */
+	ni->mrec->link_count = const_cpu_to_le16(1);
+	ntfs_inode_mark_dirty(ni);
+
+	ntfs_attr_reinit_search_ctx(ctx);
+	fn = ntfsck_find_file_name_attr(ni, new_fn, ctx);
+	if (!fn) {
+		ntfs_log_error("Failed to lookup synthesized $FILE_NAME of inode(%"PRIu64")\n",
+				ni->mft_no);
+		goto err_out;
+	}
+
+	ret = ntfsck_add_inode_to_parent(vol, lost_found, ni, fn, ctx);
+err_out:
+	if (ucs_name)
+		free(ucs_name);
+	if (new_fn)
+		ntfs_free(new_fn);
+	if (lost_found)
+		ntfsck_close_inode(lost_found);
+	return ret;
+}
+
 MFT_RECORD *mrec_temp_buf;
 /* delete orphaned mft, call this when inode open failed. */
 static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no)
@@ -861,6 +2715,7 @@ static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no)
 	ntfsck_check_mft_record_unused(vol, mft_no);
 	ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_no);
 	ntfs_fsck_mftbmp_clear(vol, mft_no);
+	check_mftrec_in_use(vol, mft_no, 1);
 }
 
 /*
@@ -896,7 +2751,7 @@ static int ntfsck_cmp_parent_mft_number(ntfs_inode *parent_ni, FILE_NAME_ATTR *f
 }
 
 static int ntfsck_check_parent_mft_record(ntfs_inode *parent_ni,
-		ntfs_inode *ni, INDEX_ENTRY *ie)
+		ntfs_inode *ni, INDEX_ENTRY *ie, ntfs_index_context *ictx)
 {
 	FILE_NAME_ATTR *fn;
 	FILE_NAME_ATTR *ie_fn;
@@ -910,8 +2765,6 @@ static int ntfsck_check_parent_mft_record(ntfs_inode *parent_ni,
 
 	fn = ntfsck_find_file_name_attr(ni, ie_fn, ctx);
 	if (!fn) {
-		ntfs_log_error("Failed to find filename in inode(%"PRIu64")\n",
-				ni->mft_no);
 		ntfs_attr_put_search_ctx(ctx);
 		return STATUS_ERROR;
 	}
@@ -924,14 +2777,39 @@ static int ntfsck_check_parent_mft_record(ntfs_inode *parent_ni,
 		return STATUS_ERROR;
 	}
 
-	if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn)) {
-		ntfs_log_error("Seuqnece number of parent(%"PRIu64")"
-				"and parent directory in $FN of inode(%"PRIu64") is not same\n",
-				parent_ni->mft_no, MREF_LE(fn->parent_directory));
-		ntfs_attr_put_search_ctx(ctx);
-		return STATUS_ERROR;
+	/*
+	 * The directory MFT number and name have both been verified above. A changed
+	 * sequence number therefore identifies a stale reference to the same
+	 * directory, not a different file.
+	 */
+	if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn) ||
+			ntfsck_cmp_parent_mft_sequence(parent_ni, ie_fn)) {
+		if (!fn_parent_seqno_repair_apply_pass) {
+			fn_parent_seqno_mismatches++;
+			fsck_err_found();
+		}
+		if (fn_parent_seqno_repair_apply_pass &&
+				fn_parent_seqno_repair_approved) {
+			u16 pdir_seq = le16_to_cpu(parent_ni->mrec->sequence_number);
+
+			if (!pdir_seq)
+				goto out;
+			fn->parent_directory =
+				MK_LE_MREF(parent_ni->mft_no, pdir_seq);
+			ie_fn->parent_directory = fn->parent_directory;
+			ntfs_inode_mark_dirty(ctx->ntfs_ino);
+			/*
+			 * The index walk reloads ictx->ib without flushing
+			 * a dirty block, so write the entry out right away.
+			 */
+			if (!ntfsck_update_index_entry(ictx)) {
+				fsck_err_fixed();
+				fn_parent_seqno_repairs_applied++;
+			}
+		}
 	}
 
+out:
 	ntfs_attr_put_search_ctx(ctx);
 	return STATUS_OK;
 }
@@ -941,7 +2819,7 @@ static int ntfsck_check_parent_mft_record(ntfs_inode *parent_ni,
  * and also check parent mft number and sequence in $FN
  */
 static int ntfsck_check_inode_fields(ntfs_inode *parent_ni,
-		ntfs_inode *ni, INDEX_ENTRY *ie)
+		ntfs_inode *ni, INDEX_ENTRY *ie, ntfs_index_context *ictx)
 {
 	u16 ni_seq;		/* ni's MFT sequence no */
 	u16 idx_seq;		/* index entry's MFT sequence no */
@@ -964,15 +2842,37 @@ static int ntfsck_check_inode_fields(ntfs_inode *parent_ni,
 	/* check indexed_file of index entry and inode mft record and sequence */
 	idx_seq = MSEQNO_LE(ie->indexed_file);
 	ni_seq = le16_to_cpu(ni->mrec->sequence_number);
-	if (ni_seq != idx_seq) {
-		ntfs_log_error("Mismatch sequence number of index and inode(%"PRIu64")\n",
-				ni->mft_no);
+	if (idx_seq && ni_seq != idx_seq) {
+		stale_index_sequence_entries++;
 		return STATUS_ERROR;
 	}
 
 	/* check parent mft record of $FN and parent mft record and sequence */
-	if (ntfsck_check_parent_mft_record(parent_ni, ni, ie))
+	if (ntfsck_check_parent_mft_record(parent_ni, ni, ie, ictx))
 		return STATUS_ERROR;
+
+	/*
+	 * A zero sequence number in the reference disables every stale reference
+	 * check, and the name and parent binding verified just above prove the entry
+	 * belongs to this record: rebind it to the record's real sequence number.
+	 */
+	if (!idx_seq) {
+		problem_context_t pctx = {0, };
+
+		ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, ictx, ni->mrec,
+				NULL, NULL);
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_IDX_SEQNO_ZERO, &pctx) &&
+				ni_seq) {
+			ie->indexed_file = MK_LE_MREF(ni->mft_no, ni_seq);
+			/*
+			 * The index walk reloads ictx->ib without flushing
+			 * a dirty block, so write the entry out right away.
+			 */
+			if (!ntfsck_update_index_entry(ictx))
+				fsck_err_fixed();
+		}
+	}
 
 	return STATUS_OK;
 }
@@ -997,14 +2897,15 @@ static int ntfsck_check_orphan_inode_fields(ntfs_inode *parent_ni, ntfs_inode *n
 	return STATUS_OK;
 }
 
-static int ntfsck_remove_filename(ntfs_inode *ni, FILE_NAME_ATTR *fn)
+static int ntfsck_remove_filename(ntfs_inode *ni, ntfs_attr_search_ctx *ctx)
 {
 	int ret = STATUS_OK;
 	int nlink = 0;
 
-	ret = ntfs_attr_remove(ni, AT_FILE_NAME, fn->file_name, fn->file_name_length);
+	ret = ntfs_attr_record_rm(ctx);
 	if (ret)
 		return STATUS_ERROR;
+	ntfs_attr_reinit_search_ctx(ctx);
 
 	nlink = le16_to_cpu(ni->mrec->link_count);
 
@@ -1076,6 +2977,15 @@ stack_of:
 					le16_to_cpu(ctx->attr->value_offset));
 
 			parent_no = le64_to_cpu(fn->parent_directory);
+			if (ntfsck_index_was_rebuilt(MREF(parent_no))) {
+				/*
+				 * Rebuilding a corrupt parent index invalidates every old reachability
+				 * claim below it. Do not repopulate that index while it is still being
+				 * repaired; keep the record reachable through the known-good lost+found
+				 * directory instead.
+				 */
+				goto add_to_lostfound;
+			}
 
 			/*
 			 * Consider that the parent could be orphaned.
@@ -1098,9 +3008,7 @@ stack_of:
 					goto stack_of;
 				}
 
-				ntfs_log_error("Not found parent inode(%"PRIu64")"
-						"of inode(%"PRIu64") in orphaned list\n",
-						MREF(parent_no), ni->mft_no);
+				orphan_missing_parent_references++;
 				goto add_to_lostfound;
 			}
 
@@ -1117,17 +3025,11 @@ stack_of:
 				}
 
 				if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn)) {
-					/* do not add inode to parent */
-					ntfs_log_debug("Different sequence number of parent(%"PRIu64
-							") and inode(%"PRIu64")\n",
-							parent_ni->mft_no, ni->mft_no);
-					ntfs_attr_record_rm(ctx);
-					NInoClearDirty(parent_ni);
-					NInoFileNameClearDirty(parent_ni);
-					NInoAttrListClearDirty(parent_ni);
-					ntfsck_close_inode(parent_ni);
-					parent_ni = NULL;
-					continue;
+					/* Refresh stale parent references before relinking. */
+					fn->parent_directory =
+						MK_LE_MREF(parent_ni->mft_no,
+						le16_to_cpu(parent_ni->mrec->sequence_number));
+					ntfs_inode_mark_dirty(ctx->ntfs_ino);
 				}
 			}
 
@@ -1140,8 +3042,7 @@ stack_of:
 					continue; /* success adding to parent, go to next $FN */
 				}
 
-				ntfs_log_error("Failed to add inode(%"PRIu64") to parent(%"PRIu64")\n",
-						ni->mft_no, parent_ni->mft_no);
+				orphan_parent_add_failures++;
 				NInoClearDirty(parent_ni);
 				NInoFileNameClearDirty(parent_ni);
 				NInoAttrListClearDirty(parent_ni);
@@ -1159,19 +3060,39 @@ add_to_lostfound:
 					ni->mft_no, FILENAME_LOST_FOUND);
 			ret = ntfsck_add_inode_to_lostfound(ni, fn, ctx);
 			if (ret) {
-				ntfs_log_error("Failed to add inode(%"PRIu64") to %s\n",
-						ni->mft_no, FILENAME_LOST_FOUND);
-				ntfsck_remove_filename(ni, fn);
+				orphan_filename_removals++;
+				ntfsck_remove_filename(ni, ctx);
 				ret = STATUS_OK;
 			} else {
 				ret = STATUS_OK;
 				nlink++;
+				orphan_lost_found_relinks++;
 			}
 		} /* while (!ntfs_attr_lookup(AT_FILE_NAME, ... */
 
+		if (nlink == 0 && ni) {
+			problem_context_t pctx = {0, };
+
+			/*
+			 * The record kept no name the loop could relink; rather
+			 * than discard it and its data, invent one under
+			 * lost+found.
+			 */
+			pctx.inum = entry->mft_no;
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_NO_NAME, &pctx) &&
+					ntfsck_add_nameless_inode_to_lostfound(ni, ctx) ==
+					STATUS_OK) {
+				nlink = 1;
+				fsck_err_fixed();
+			}
+		}
+
 		if (nlink == 0) {
-			ntfsck_close_inode(ni);
-			ni = NULL;
+			if (ni) {
+				ntfsck_close_inode(ni);
+				ni = NULL;
+			}
 			ntfsck_check_mft_record_unused(vol, entry->mft_no);
 			ntfs_fsck_mftbmp_clear(vol, entry->mft_no);
 			check_mftrec_in_use(vol, entry->mft_no, 1);
@@ -1230,7 +3151,7 @@ static int ntfsck_check_if_extent_mft_record(ntfs_volume *vol, s64 mft_num)
 	return STATUS_OK;	/* extent mft */
 }
 
-static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
+static int ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 {
 	u16 seq_no;
 	s64 pos = mft_num * vol->mft_record_size;
@@ -1239,19 +3160,16 @@ static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 	if (ntfs_attr_pread(vol->mft_na, pos, count, mrec_temp_buf) != count) {
 		ntfs_log_perror("Couldn't read $MFT record %lld",
 				(long long)mft_num);
-		return;
+		return STATUS_ERROR;
 	}
 
 	if (!ntfs_is_file_record(mrec_temp_buf->magic) ||
 			!(mrec_temp_buf->flags & MFT_RECORD_IN_USE)) {
 		ntfs_log_verbose("Record(%"PRId64") unused. Skipping.\n",
 				mft_num);
-		return;
+		return STATUS_OK;
 	}
 
-	ntfs_log_error("Record(%"PRId64") used. "
-			"Mark the mft record as not in use.\n",
-			mft_num);
 	mrec_temp_buf->flags &= ~MFT_RECORD_IN_USE;
 	seq_no = le16_to_cpu(mrec_temp_buf->sequence_number);
 	if (seq_no == 0xffff)
@@ -1262,7 +3180,36 @@ static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 	if (ntfs_attr_pwrite(vol->mft_na, pos, count, mrec_temp_buf) != count) {
 		ntfs_log_error("Failed to write mft record(%"PRId64")\n",
 				mft_num);
+		return STATUS_ERROR;
 	}
+	vol->fsck_mft_not_in_use_flag_fix_count++;
+	return STATUS_OK;
+}
+
+static void ntfsck_clear_unopenable_mft_list(void)
+{
+	struct unopenable_mft *entry;
+
+	while (!ntfs_list_empty(&unopenable_mft_list)) {
+		entry = ntfs_list_entry(unopenable_mft_list.next,
+				struct unopenable_mft, list);
+		ntfs_list_del(&entry->list);
+		free(entry);
+	}
+}
+
+static void ntfsck_add_unopenable_mft(s64 mft_no)
+{
+	struct unopenable_mft *entry;
+
+	entry = malloc(sizeof(*entry));
+	if (!entry) {
+		ntfs_log_error("Could not remember unreadable MFT record %"PRId64
+				" for aggregate repair\n", mft_no);
+		return;
+	}
+	entry->mft_no = mft_no;
+	ntfs_list_add_tail(&entry->list, &unopenable_mft_list);
 }
 
 static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
@@ -1271,6 +3218,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	struct orphan_mft *of;
 	int is_used;
 	ntfs_attr_search_ctx *ctx = NULL;
+	BOOL raw_retry_done = FALSE;
 	problem_context_t pctx = {0, };
 
 	pctx.inum = mft_num;
@@ -1291,26 +3239,24 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	ni = ntfsck_open_inode(vol, mft_num);
 	if (!ni) {
+		raw_retry_done = TRUE;
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num,
+				is_used > 0);
+	}
+	if (!ni) {
 		/* check this mft is extend mft or not */
 		if (!ntfsck_check_if_extent_mft_record(vol, mft_num)) {
 			/* extent mft */
 			return;
 		}
 
-		if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_OPEN_FAILURE, &pctx)) {
-			if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
-				ntfs_log_error("ntfs_bitmap_clear_bit failed, errno : %d\n",
-						errno);
-				return;
-			}
-			ntfsck_check_mft_record_unused(vol, mft_num);
-			ntfs_fsck_mftbmp_clear(vol, mft_num);
-			check_mftrec_in_use(vol, mft_num, 1);
-			clear_mft_cnt++;
-		}
+		fsck_err_found();
+		orphan_mft_open_failures++;
+		ntfsck_add_unopenable_mft(mft_num);
 		return;
 	}
 
+	retry_validate:
 	ctx = ntfs_attr_get_search_ctx(ni, NULL);
 	if (!ctx) {
 		ntfs_log_error("Failed to allocate attribute context\n");
@@ -1320,9 +3266,17 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	if (ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
 				CASE_SENSITIVE, 0, NULL, 0, ctx)) {
-		ntfs_log_error("Failed to find filename of inode(%"PRIu64")\n",
-				ni->mft_no);
-		goto err_check_inode;
+		/*
+		 * A record that opens cleanly but carries no $FILE_NAME is still a
+		 * candidate: the relink pass invents a name for it under lost+found rather
+		 * than discarding the record. Only a genuine lookup failure (not "no such
+		 * attribute") is fatal.
+		 */
+		if (errno != ENOENT) {
+			ntfs_log_error("Failed to find filename of inode(%"PRIu64")\n",
+					ni->mft_no);
+			goto err_check_inode;
+		}
 	}
 
 	if (ni->attr_list) {
@@ -1365,14 +3319,32 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 err_check_inode:
 	ntfs_attr_put_search_ctx(ctx);
+	ctx = NULL;
 	ntfsck_close_inode(ni);
+	ni = NULL;
 
-	if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_CHECK_FAILURE, &pctx))
-		ntfsck_check_mft_record_unused(vol, mft_num);
+	if (!raw_retry_done) {
+		raw_retry_done = TRUE;
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num,
+				is_used > 0);
+		if (ni)
+			goto retry_validate;
+	}
 
-	ntfs_fsck_mftbmp_clear(vol, mft_num);
-	check_mftrec_in_use(vol, mft_num, 1);
-	clear_mft_cnt++;
+	fsck_err_found();
+	if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_CHECK_FAILURE, &pctx)) {
+		if (ntfsck_check_mft_record_unused(vol, mft_num))
+			return;
+		if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
+			ntfs_log_error("ntfs_bitmap_clear_bit failed, errno : %d\n",
+					errno);
+			return;
+		}
+		ntfs_fsck_mftbmp_clear(vol, mft_num);
+		check_mftrec_in_use(vol, mft_num, 1);
+		clear_mft_cnt++;
+		fsck_err_fixed();
+	}
 	return;
 }
 
@@ -1480,6 +3452,62 @@ void ntfsck_debug_print_fn_attr(ntfs_attr_search_ctx *actx,
  * @ie : index entry of file (parent's index)
  * @ictx : index context for lookup, not for ni. It's context of ni's parent
  */
+static int ntfsck_defer_index_repair(enum ntfsck_deferred_index_type type,
+		u64 parent_mft_no, le64 indexed_file, const void *data,
+		u32 data_len, u64 allocated_size, u64 data_size,
+		BOOL parent_seqno_mismatch)
+{
+	struct ntfsck_deferred_index *repair;
+
+	repair = malloc(sizeof(*repair) + data_len);
+	if (!repair)
+		return STATUS_ERROR;
+	repair->type = type;
+	repair->parent_seqno_mismatch = parent_seqno_mismatch;
+	repair->parent_mft_no = parent_mft_no;
+	repair->indexed_file = indexed_file;
+	repair->allocated_size = allocated_size;
+	repair->data_size = data_size;
+	repair->data_len = data_len;
+	if (data_len)
+		memcpy(repair->data, data, data_len);
+	ntfs_list_add_tail(&repair->list, &ntfsck_deferred_index_repairs);
+	return STATUS_OK;
+}
+
+static int ntfsck_defer_reparse_repair(ntfs_inode *ni, le32 reparse_tag)
+{
+	struct ntfsck_deferred_reparse *repair;
+
+	repair = malloc(sizeof(*repair));
+	if (!repair)
+		return STATUS_ERROR;
+	repair->mft_no = ni->mft_no;
+	repair->reparse_tag = reparse_tag;
+	ntfs_list_add_tail(&repair->list, &ntfsck_deferred_reparse_repairs);
+	return STATUS_OK;
+}
+
+static void ntfsck_clear_deferred_repairs(void)
+{
+	while (!ntfs_list_empty(&ntfsck_deferred_index_repairs)) {
+		struct ntfsck_deferred_index *repair;
+
+		repair = ntfs_list_entry(ntfsck_deferred_index_repairs.next,
+				struct ntfsck_deferred_index, list);
+		ntfs_list_del(&repair->list);
+		free(repair);
+	}
+	while (!ntfs_list_empty(&ntfsck_deferred_reparse_repairs)) {
+		struct ntfsck_deferred_reparse *repair;
+
+		repair = ntfs_list_entry(ntfsck_deferred_reparse_repairs.next,
+				struct ntfsck_deferred_reparse, list);
+		ntfs_list_del(&repair->list);
+		free(repair);
+	}
+}
+
 static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		ntfs_index_context *ictx)
 {
@@ -1487,6 +3515,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	char *filename = NULL;
 	int ret = STATUS_OK;
 	BOOL need_fix = FALSE;
+	BOOL aggregate_size_fix = FALSE;
 	FILE_NAME_ATTR *fn;
 	ntfs_attr_search_ctx *actx;
 	problem_context_t pctx = {0, };
@@ -1536,6 +3565,29 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 				ni->mft_no, filename, ictx->ni->mft_no);
 		ret = STATUS_ERROR;
 		goto out;
+	}
+
+	/*
+	 * file_name_type only has four defined namespaces (POSIX, WIN32, DOS and
+	 * WIN32_AND_DOS); a larger value is corruption that confuses name matching
+	 * and DOS-name pairing. The original namespace cannot be recovered, so
+	 * normalize both copies to WIN32, the case-insensitive default.
+	 */
+	if (ie_fn->file_name_type > FILE_NAME_WIN32_AND_DOS ||
+			fn->file_name_type > FILE_NAME_WIN32_AND_DOS) {
+		if (!filename)
+			filename = ntfs_attr_name_get(ie_fn->file_name,
+					ie_fn->file_name_length);
+		pctx.filename = filename;
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_ATTR_FN_NAMESPACE_INVALID, &pctx)) {
+			ie_fn->file_name_type = FILE_NAME_WIN32;
+			fn->file_name_type = FILE_NAME_WIN32;
+			ntfs_inode_mark_dirty(ni);
+			NInoFileNameSetDirty(ni);
+			if (!ntfsck_update_index_entry(ictx))
+				fsck_err_fixed();
+		}
 	}
 
 	/*
@@ -1600,10 +3652,15 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 			if (ntfs_fix_problem(vol, PR_MFT_FLAG_MISMATCH, &pctx)) {
 				ie_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
 				fn->file_attributes = ie_fn->file_attributes;
-				ntfs_index_entry_mark_dirty(ictx);
 				ntfs_inode_mark_dirty(ni);
 				NInoFileNameSetDirty(ni);
-				fsck_err_fixed();
+				/*
+				 * The index walk reloads ictx->ib without
+				 * flushing a dirty block, so write the entry
+				 * out right away.
+				 */
+				if (!ntfsck_update_index_entry(ictx))
+					fsck_err_fixed();
 			}
 		}
 
@@ -1621,16 +3678,19 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 				fn->allocated_size = ie_fn->allocated_size;
 				ie_fn->data_size = cpu_to_sle64(0);
 				fn->data_size = ie_fn->data_size;
-				ntfs_index_entry_mark_dirty(ictx);
 				ntfs_inode_mark_dirty(ni);
 				NInoFileNameSetDirty(ni);
-				fsck_err_fixed();
+				if (!ntfsck_update_index_entry(ictx))
+					fsck_err_fixed();
 			}
 		}
 
 		/* if inode is directory, then skip size fields check */
 		goto out;
 	}
+
+	if (utils_is_metadata(ni) == 1)
+		goto out;
 
 	/*
 	 * Already applied proepr value to inode field.
@@ -1639,12 +3699,11 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 
 	/* check $FN size fields */
 	if (ni->allocated_size != sle64_to_cpu(ie_fn->allocated_size)) {
-		filename = ntfs_attr_name_get(ie_fn->file_name,
-				ie_fn->file_name_length);
-		pctx.filename = filename;
-		fsck_err_found();
-		ntfs_print_problem(vol, PR_MFT_ALLOCATED_SIZE_MISMATCH, &pctx);
-
+		if (!fn_size_repair_apply_pass) {
+			fsck_err_found();
+			fn_allocated_size_mismatches++;
+		}
+		aggregate_size_fix = TRUE;
 		need_fix = TRUE;
 		goto fix_index;
 	}
@@ -1653,12 +3712,11 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	 * It looks like that Windows does not check MFT/$FN's data size.
 	 */
 	if (ni->data_size != sle64_to_cpu(ie_fn->data_size)) {
-		filename = ntfs_attr_name_get(ie_fn->file_name,
-				ie_fn->file_name_length);
-		pctx.filename = filename;
-		fsck_err_found();
-		ntfs_print_problem(vol, PR_MFT_DATA_SIZE_MISMATCH, &pctx);
-
+		if (!fn_size_repair_apply_pass) {
+			fsck_err_found();
+			fn_data_size_mismatches++;
+		}
+		aggregate_size_fix = TRUE;
 		need_fix = TRUE;
 		goto fix_index;
 	}
@@ -1667,15 +3725,24 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	 * $FILE_NAME attrib when ntfs_inode_close() is called */
 fix_index:
 	if (need_fix) {
-		if (ntfs_ask_repair(vol)) {
+		BOOL repair = aggregate_size_fix ?
+			(fn_size_repair_apply_pass && fn_size_repair_approved) :
+			ntfs_ask_repair(vol);
+
+		if (repair) {
 			ntfs_inode_mark_dirty(ni);
 			NInoFileNameSetDirty(ni);
 
 			ie_fn->allocated_size = cpu_to_sle64(ni->allocated_size);
+			fn->allocated_size = ie_fn->allocated_size;
 			ie_fn->data_size = cpu_to_sle64(ni->data_size);
+			fn->data_size = ie_fn->data_size;
 
-			ntfs_index_entry_mark_dirty(ictx);
-			fsck_err_fixed();
+			if (!ntfsck_update_index_entry(ictx)) {
+				fsck_err_fixed();
+				if (aggregate_size_fix)
+					fn_size_repairs_applied++;
+			}
 		}
 	}
 
@@ -1730,8 +3797,9 @@ static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
 		ntfs_attr_name_free(&filename);
 #endif
 
-		/* Ignore hard links from other directories */
-		if (fn->parent_directory != ie_fn->parent_directory) {
+		/* Ignore hard links from other directories. */
+		if (MREF_LE(fn->parent_directory) !=
+				MREF_LE(ie_fn->parent_directory)) {
 			ntfs_log_debug("MFT record numbers don't match "
 					"(%llu != %llu)\n",
 					(unsigned long long)MREF_LE(ie_fn->parent_directory),
@@ -1784,13 +3852,36 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		/* mft record flags is set to directory */
 		if (ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4)) {
 			if (!(ie_flags & FILE_ATTR_I30_INDEX_PRESENT)) {
+				ntfs_attr_search_ctx *actx;
+				FILE_NAME_ATTR *fn;
+
 				ie_flags |= FILE_ATTR_I30_INDEX_PRESENT;
 				ie_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
+				/*
+				 * An index entry is only a copy of the MFT $FILE_NAME. Update both
+				 * copies, otherwise a recovered directory passes this check but chkdsk
+				 * subsequently removes the mismatched index entry and re-links it.
+				 */
+				actx = ntfs_attr_get_search_ctx(ni, NULL);
+				if (actx) {
+					fn = ntfsck_find_file_name_attr(ni, ie_fn, actx);
+					if (fn) {
+						fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
+						ntfs_inode_mark_dirty(ni);
+						NInoFileNameSetDirty(ni);
+					}
+					ntfs_attr_put_search_ctx(actx);
+				}
 
 				fsck_err_found();
 				if (ntfs_fix_problem(vol, PR_DIR_FLAG_MISMATCH_IDX_FN, &pctx)) {
-					ntfs_index_entry_mark_dirty(ictx);
-					fsck_err_fixed();
+					/*
+					 * The index walk reloads ictx->ib
+					 * without flushing a dirty block, so
+					 * write the entry out right away.
+					 */
+					if (!ntfsck_update_index_entry(ictx))
+						fsck_err_fixed();
 				}
 			}
 		} else {
@@ -1817,8 +3908,8 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 
 				fsck_err_found();
 				if (ntfs_fix_problem(vol, PR_DIR_IR_NOT_EXIST, &pctx)) {
-					ntfs_index_entry_mark_dirty(ictx);
-					fsck_err_fixed();
+					if (!ntfsck_update_index_entry(ictx))
+						fsck_err_fixed();
 				}
 			}
 #endif
@@ -1835,8 +3926,8 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 
 				fsck_err_found();
 				if (ntfs_fix_problem(vol, PR_MFT_FLAG_MISMATCH_IDX_FN, &pctx)) {
-					ntfs_index_entry_mark_dirty(ictx);
-					fsck_err_fixed();
+					if (!ntfsck_update_index_entry(ictx))
+						fsck_err_fixed();
 				}
 			}
 		} else {
@@ -1849,8 +3940,28 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 				return STATUS_ERROR;
 			}
 			if (!ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4)) {
-				/* there are no $DATA and $INDEX_ROOT in MFT */
-				return STATUS_ERROR;
+				/*
+				 * Neither an unnamed $DATA nor an $INDEX_ROOT. The record is otherwise
+				 * healthy, and deleting it over the one missing attribute would also
+				 * discard any named streams it still carries, so restore a zero-length
+				 * unnamed $DATA the way chkdsk does and keep the file.
+				 */
+				fsck_err_found();
+				if (!ntfs_fix_problem(vol,
+						PR_MFT_UNNAMED_DATA_MISSING,
+						&pctx))
+					return STATUS_ERROR;
+
+				if (ntfs_attr_add(ni, AT_DATA, AT_UNNAMED, 0,
+							NULL, 0)) {
+					ntfs_log_error("Failed to add unnamed "
+							"$DATA to inode(%"PRIu64")\n",
+							ni->mft_no);
+					return STATUS_ERROR;
+				}
+				ntfs_inode_mark_dirty(ni);
+				fsck_err_fixed();
+				return (int32_t)ie_flags;
 			}
 
 			/* found $INDEX_ROOT */
@@ -1859,8 +3970,8 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 
 			fsck_err_found();
 			if (ntfs_fix_problem(vol, PR_FILE_HAVE_IR, &pctx)) {
-				ntfs_index_entry_mark_dirty(ictx);
-				fsck_err_fixed();
+				if (!ntfsck_update_index_entry(ictx))
+					fsck_err_fixed();
 			}
 		}
 	}
@@ -1918,10 +4029,15 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 	VCN next_vcn, last_vcn, highest_vcn;
 	ATTR_RECORD *attr = NULL;
 	runlist *rl = NULL;
+	BOOL rebuilt_attr_list = FALSE;
 	int not_mapped;
-	int err;
+	/*
+	 * Conservative default: only the normal end-of-extents exit sets this to
+	 * ENOENT (which marks the runlist fully mapped). Any other exit leaves it
+	 * EIO so a half-built runlist is never treated as complete.
+	 */
+	int err = EIO;
 	problem_context_t pctx = {0, };
-	BOOL shrink = FALSE;
 
 	if (!na || !na->ni)
 		return NULL;
@@ -1962,11 +4078,13 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 		}
 
 		/*
-		 * Non-resident attribute, but it's size is zero,
-		 * then shrink attribute for AT_DATA. (Windows behavior)
-		 *
-		 * Check if changing condition to "na->type != AT_INDEX_ALLOCATION"
-		 * instead of "na->type == AT_DATA".
+		 * A non-resident $DATA with allocated_size zero owns no clusters, so map it
+		 * as an empty runlist without decoding the mapping pairs. If the mapping
+		 * pairs nevertheless still encode cluster runs, those runs are stale and
+		 * are detected (from the raw mapping pairs) and discarded by
+		 * ntfsck_check_non_resident_attr(); hiding them here also keeps their
+		 * clusters out of the fsck bitmap, so the final bitmap reconciliation frees
+		 * them.
 		 */
 		if (!utils_is_metadata(ni) &&
 				na->type == AT_DATA &&
@@ -1983,7 +4101,6 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 			rl[0].length = 0;
 			na->rl = rl;
 
-			shrink = TRUE;
 			goto out;
 		}
 
@@ -1997,8 +4114,10 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 			runlist *part_rl = NULL;
 
 			rl = ntfs_decompress_cluster_run(vol, attr, temp_rl, &part_rl);
-			if (!rl)
+			if (!rl) {
+				ntfs_attr_put_search_ctx(actx);
 				return NULL;
+			}
 
 			if (rl == part_rl) {
 				*need_fix = TRUE;
@@ -2027,10 +4146,11 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 				break;
 			}
 
-			/* TODO: last_vcn value should be recalculated */
-			/* Get the last vcn in the attribute. */
-			last_vcn = sle64_to_cpu(attr->allocated_size) >>
-				vol->cluster_size_bits;
+			/*
+			 * Compare highest_vcn against the decoded runlist instead of
+			 * trusting the first extent's allocated_size field.
+			 */
+			last_vcn = ntfsck_runlist_end_vcn(rl);
 		}
 
 		highest_vcn = sle64_to_cpu(attr->highest_vcn);
@@ -2045,7 +4165,24 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 		if (next_vcn < sle64_to_cpu(attr->lowest_vcn)) {
 			ntfs_log_error("Inode %"PRIu64"has corrupt attribute list\n",
 					ni->mft_no);
-			/* TODO: how attribute list repair ?? */
+			if (!rebuilt_attr_list) {
+				pctx.ctx = actx;
+				fsck_err_found();
+				if (ntfs_fix_problem(vol, PR_ATTRLIST_REBUILD, &pctx) &&
+						!ntfsck_rebuild_attr_list(ni)) {
+					fsck_err_fixed();
+					rebuilt_attr_list = TRUE;
+					free(rl);
+					rl = NULL;
+					na->rl = NULL;
+					ntfs_attr_put_search_ctx(actx);
+					actx = ntfs_attr_get_search_ctx(ni, NULL);
+					if (!actx)
+						return NULL;
+					next_vcn = last_vcn = highest_vcn = 0;
+					continue;
+				}
+			}
 			err = EIO;
 			break;
 		}
@@ -2054,26 +4191,16 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 	if (err == ENOENT)
 		NAttrSetFullyMapped(na);
 
+	if (rl)
+		last_vcn = ntfsck_runlist_end_vcn(rl);
+
 	if (highest_vcn != last_vcn - 1) {
-		ntfs_log_error("highest_vcn and last_vcn of attr(%x) "
-				"of inode(%"PRIu64") : highest_vcn(0x%"PRIx64") "
-				"last_vcn(0x%"PRIx64")\n",
-				na->type, na->ni->mft_no, highest_vcn, last_vcn);
 		*need_fix = TRUE;
 	}
 
 	na->rl = rl;
 
 out:
-	if (shrink == TRUE) {
-		fsck_err_found();
-
-		if (ntfs_fix_problem(vol, PR_ATTR_NON_RESIDENT_SIZES_MISMATCH, &pctx)) {
-			ntfs_non_resident_attr_shrink(na, 0);
-			fsck_err_fixed();
-		}
-	}
-
 	ntfs_attr_put_search_ctx(actx);
 	return rl;
 }
@@ -2255,10 +4382,11 @@ out:
 }
 
 /*
- * Remove $IA/$BITMAP, and initialize $IR attribute for repairing.
- * This function should be called $IA or $BITMAP attribute is corrupted.
+ * Remove $IA/$BITMAP, and initialize $IR attribute for repairing. This
+ * function should be called when index attributes are corrupted.
  */
-static int ntfsck_initialize_index_attr(ntfs_inode *ni)
+static int ntfsck_initialize_named_index_attr(ntfs_inode *ni,
+		ntfschar *name, u32 name_len)
 {
 	ntfs_attr *bm_na = NULL;
 	ntfs_attr *ia_na = NULL;
@@ -2268,7 +4396,7 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 	/*
 	 * Remove both ia attr and bitmap attr and recreate them.
 	 */
-	ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4);
+	ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, name, name_len);
 	if (ia_na) {
 		/* clear fsck cluster(lcn) bitmap */
 		ntfsck_clear_attr_lcnbmp(ia_na);
@@ -2282,7 +4410,7 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 		ia_na = NULL;
 	}
 
-	bm_na = ntfs_attr_open(ni, AT_BITMAP, NTFS_INDEX_I30, 4);
+	bm_na = ntfs_attr_open(ni, AT_BITMAP, name, name_len);
 	if (bm_na) {
 		if (ntfs_attr_rm(bm_na)) {
 			ntfs_log_error("Failed to remove $BITMAP attr. of "
@@ -2293,9 +4421,10 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 		bm_na = NULL;
 	}
 
-	ir_na = ntfs_attr_open(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4);
+	ir_na = ntfs_attr_open(ni, AT_INDEX_ROOT, name, name_len);
 	if (!ir_na) {
-		ntfs_log_verbose("Can't open $IR attribute from mft(%"PRIu64") entry\n",
+		ntfs_log_verbose("Can't open index root attribute from mft(%"PRIu64") "
+				"entry\n",
 				ni->mft_no);
 		goto out;
 	}
@@ -2308,7 +4437,7 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 		int index_len =
 			sizeof(INDEX_HEADER) + sizeof(INDEX_ENTRY_HEADER);
 
-		ir = ntfs_ir_lookup2(ni, NTFS_INDEX_I30, 4);
+		ir = ntfs_ir_lookup2(ni, name, name_len);
 		if (!ir)
 			goto out;
 
@@ -2329,6 +4458,9 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 	ir_na = NULL;
 
 	ntfs_inode_mark_dirty(ni);
+	if (name_len == 4 && !memcmp(name, NTFS_INDEX_I30,
+				4 * sizeof(ntfschar)))
+		ntfsck_note_rebuilt_index(ni->mft_no);
 
 	ret = STATUS_OK;
 out:
@@ -2339,6 +4471,11 @@ out:
 	if (bm_na)
 		ntfs_attr_close(bm_na);
 	return ret;
+}
+
+static int ntfsck_initialize_index_attr(ntfs_inode *ni)
+{
+	return ntfsck_initialize_named_index_attr(ni, NTFS_INDEX_I30, 4);
 }
 
 /*
@@ -2356,7 +4493,7 @@ out:
  *
  */
 static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
-		BOOL *need_fix, int set_bit)
+		BOOL *need_fix, int set_bit, BOOL *dup_repaired)
 {
 	runlist *rl = NULL;
 	int ret = STATUS_OK;
@@ -2372,9 +4509,7 @@ static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
 	}
 
 	if (*need_fix == TRUE) {
-		ntfs_log_error("Non-resident cluster run of inode(%"PRId64")(%02x:%"PRIu64") "
-				"corrupted. rl_size(%"PRIx64":%"PRIx64"). Truncate it\n",
-				na->ni->mft_no, na->type, na->data_size, rls->alloc_size, rls->real_size);
+		corrupt_nonresident_runlists++;
 	}
 
 #if UNUSED
@@ -2383,7 +4518,7 @@ static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
 	ntfs_debug_runlist_dump(rl);
 #endif
 
-	ret = ntfsck_check_runlist(na, set_bit, rls, need_fix);
+	ret = ntfsck_check_runlist(na, set_bit, rls, need_fix, dup_repaired);
 	if (ret)
 		return STATUS_ERROR;
 
@@ -2400,17 +4535,20 @@ static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size, ntfs_attr_search_c
 {
 	ntfs_inode *ni;
 	u32 backup_attr_list_size = 0;
+	s64 backup_allocated_size;
 
 	if (!na->ni)
 		return STATUS_ERROR;
 
 	ni = na->ni;
+	backup_allocated_size = na->allocated_size;
 	if (NInoAttrList(ni))
 		backup_attr_list_size = ni->attr_list_size;
 
 	/* apply rl to disk */
 	na->allocated_size = new_size;
 	if (ntfs_attr_update_mapping_pairs(na, 0)) {
+		na->allocated_size = backup_allocated_size;
 		ntfs_log_error("Failed to update mapping pairs of "
 				"inode(%"PRIu64")\n", ni->mft_no);
 		return STATUS_ERROR;
@@ -2455,7 +4593,7 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 
 	s64 data_size;
 	s64 alloc_size;
-	s64 new_size;
+	s64 init_size;
 	s64 aligned_data_size;
 	s64 lowest_vcn;
 	struct rl_size rls = {0, };
@@ -2477,12 +4615,6 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 		goto out;
 
 	/*
-	 * Skip size check of metadata files
-	 */
-	if (utils_is_metadata(ni))
-		goto out;
-
-	/*
 	 * Check size only atrr->lowest_vcn is zero.
 	 */
 	lowest_vcn = sle64_to_cpu(a->lowest_vcn);
@@ -2494,35 +4626,159 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 	aligned_data_size = (data_size + vol->cluster_size - 1) & ~(vol->cluster_size - 1);
 
 	/*
-	 * Reset non-residnet if sizes are invalid,
-	 * And then make it resident attribute.
+	 * initialized_size records how many bytes of data_size have actually been
+	 * written; everything from there up to data_size reads back as zero. It must
+	 * therefore stay within [0, data_size] -- a value past data_size would
+	 * expose uninitialized cluster contents as file data.
 	 */
-
-	/* TODO: check more detail */
-
-	if (alloc_size != rls.alloc_size || data_size > alloc_size) {
-		new_size = 0;
-	} else {
-		if (aligned_data_size <= alloc_size)
-			goto out;
-		new_size = alloc_size;
+	init_size = sle64_to_cpu(a->initialized_size);
+	if (init_size < 0 || init_size > data_size) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_ATTR_INITIALIZED_SIZE_MISMATCH, &pctx)) {
+			init_size = (init_size < 0) ? 0 : data_size;
+			a->initialized_size = cpu_to_sle64(init_size);
+			na->initialized_size = init_size;
+			ntfs_inode_mark_dirty(actx->ntfs_ino);
+			fsck_err_fixed();
+		}
 	}
 
 	/*
-	 * ntfsck_update_runlist will set appropriate flag
-	 * and fields of attribute structure at ntfs_attr_update_meta(),
-	 * that is also including compressed_size and flags.
+	 * Everything below rewrites the attribute's structure -- rebuilding an
+	 * index, shrinking the runlist or forcing the attribute resident. That is
+	 * unsafe for system files: their correct size follows from the volume
+	 * geometry (e.g.
 	 */
+	if (utils_is_metadata(ni))
+		goto out;
+
+	/*
+	 * $INDEX_ALLOCATION is never sparse and never has an uninitialized
+	 * tail: every allocated index block is written, so initialized_size
+	 * always equals data_size, and data_size is a whole number of index
+	 * blocks. (data_size need not equal allocated_size, which is only
+	 * cluster-aligned.)  A violation means the size fields are corrupt, so
+	 * rebuild the index from scratch -- the same safe path used below for
+	 * a runlist/allocation mismatch.
+	 */
+	if (na->type == AT_INDEX_ALLOCATION &&
+			(init_size != data_size ||
+			 (vol->indx_record_size &&
+			  (data_size & (vol->indx_record_size - 1))))) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_ATTR_NON_RESIDENT_SIZES_MISMATCH,
+					&pctx)) {
+			if (!ntfsck_initialize_index_attr(ni))
+				fsck_err_fixed();
+		}
+		goto out;
+	}
+
+	/*
+	 * An empty non-resident $DATA (every size field zero, no cluster runs) is
+	 * not corruption -- truncation to zero can legitimately leave the attribute
+	 * non-resident and the layout is harmless -- so leave it alone. But when the
+	 * mapping pairs still encode cluster runs although every size field says the
+	 * attribute is empty, the runs are stale leftovers whose clusters will be
+	 * reclaimed as free and can end up cross-linked: discard them by rewriting
+	 * the attribute resident, the way Windows keeps an empty $DATA.
+	 */
+	if (na->type == AT_DATA && alloc_size == 0 && data_size == 0 &&
+			init_size == 0 && rls.alloc_size == 0 &&
+			!(na->data_flags & ATTR_IS_ENCRYPTED)) {
+		u16 mp_ofs = le16_to_cpu(a->mapping_pairs_offset);
+
+		/*
+		 * The runlist is empty when the mapping pairs begin with the
+		 * terminator. mapping_pairs_offset itself was validated
+		 * against the record length in ntfs_attr_inconsistent().
+		 */
+		if (mp_ofs < le32_to_cpu(a->length) &&
+				((const u8 *)a)[mp_ofs] != 0) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_ATTR_EMPTY_DATA_STALE_RUNS,
+						&pctx)) {
+				if (!ntfs_non_resident_attr_shrink(na, 0) &&
+						!NAttrNonResident(na))
+					fsck_err_fixed();
+			}
+		}
+		goto out;
+	}
+
+	/*
+	 * For sparse/compressed attributes compressed_size counts the bytes actually
+	 * backed by clusters, i.e. the hole-free part of the runlist. The inode
+	 * caches it as its allocated size and the $FILE_NAME checks propagate that
+	 * into every index entry, so a corrupt value must be repaired from the
+	 * runlist before it spreads.
+	 */
+	if ((a->flags & (ATTR_IS_COMPRESSED | ATTR_IS_SPARSE)) &&
+			sle64_to_cpu(a->compressed_size) != rls.real_size) {
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_ATTR_COMPRESSED_SIZE_MISMATCH,
+					&pctx)) {
+			a->compressed_size = cpu_to_sle64(rls.real_size);
+			na->compressed_size = rls.real_size;
+			if (na->type == AT_DATA && na->name == AT_UNNAMED) {
+				ni->allocated_size = rls.real_size;
+				NInoFileNameSetDirty(ni);
+			}
+			ntfs_inode_mark_dirty(actx->ntfs_ino);
+			fsck_err_fixed();
+		}
+	}
+
+	/*
+	 * The runlist survived every check above (decode, lcn bounds,
+	 * highest_vcn, duplication), so it is the trusted description of the
+	 * attribute: repair corrupt size fields from it instead of throwing
+	 * the stream away. allocated_size must equal the hole-inclusive
+	 * runlist size and data_size must fit inside it; a single flipped
+	 * size field must not cost the file its clusters.
+	 */
+	if (alloc_size == rls.alloc_size && data_size <= alloc_size &&
+			aligned_data_size <= alloc_size)
+		goto out;
 
 	fsck_err_found();
 	if (!ntfs_fix_problem(vol, PR_ATTR_NON_RESIDENT_SIZES_MISMATCH, &pctx))
 		goto out;
 
-	if (na->type == AT_INDEX_ALLOCATION)
-		ntfsck_initialize_index_attr(ni);
-	else
-		ntfs_non_resident_attr_shrink(na, new_size);
+	if (na->type == AT_INDEX_ALLOCATION) {
+		/* index blocks are rebuilt, not resized */
+		if (!ntfsck_initialize_index_attr(ni))
+			fsck_err_fixed();
+		goto out;
+	}
 
+	alloc_size = rls.alloc_size;
+	if (data_size > alloc_size)
+		data_size = alloc_size;
+	if (init_size > data_size)
+		init_size = data_size;
+
+	a->allocated_size = cpu_to_sle64(alloc_size);
+	a->data_size = cpu_to_sle64(data_size);
+	a->initialized_size = cpu_to_sle64(init_size);
+	na->allocated_size = alloc_size;
+	na->data_size = data_size;
+	na->initialized_size = init_size;
+
+	/*
+	 * Refresh the cached inode sizes so the $FILE_NAME checks later on compare
+	 * against the repaired values, not the corrupt ones read at open time. For
+	 * compressed/sparse attributes the inode caches compressed_size, which is
+	 * not touched here.
+	 */
+	if (na->type == AT_DATA && na->name == AT_UNNAMED) {
+		ni->data_size = data_size;
+		if (!(a->flags & (ATTR_IS_COMPRESSED | ATTR_IS_SPARSE)))
+			ni->allocated_size = alloc_size;
+		NInoFileNameSetDirty(ni);
+	}
+
+	ntfs_inode_mark_dirty(actx->ntfs_ino);
 	fsck_err_fixed();
 
 out:
@@ -2530,6 +4786,49 @@ out:
 		memcpy(out_rls, &rls, sizeof(struct rl_size));
 
 	return STATUS_OK;
+}
+
+/*
+ * Add a fresh, empty $INDEX_ROOT (a single END entry, small index, no
+ * $INDEX_ALLOCATION) for the $I30 directory index -- the same layout
+ * ntfs_create() lays down for a new directory. Used to rebuild the root
+ * directory's index root when it is missing: the root can never be deleted,
+ * and the orphan pass repopulates the entries afterwards.
+ */
+static int ntfsck_create_empty_index_root(ntfs_inode *ni)
+{
+	ntfs_volume *vol = ni->vol;
+	INDEX_ROOT *ir;
+	INDEX_ENTRY *ie;
+	int ir_len, index_len, ret;
+
+	index_len = sizeof(INDEX_HEADER) + sizeof(INDEX_ENTRY_HEADER);
+	ir_len = offsetof(INDEX_ROOT, index) + index_len;
+	ir = ntfs_calloc(ir_len);
+	if (!ir)
+		return STATUS_ERROR;
+
+	ir->type = AT_FILE_NAME;
+	ir->collation_rule = COLLATION_FILE_NAME;
+	ir->index_block_size = cpu_to_le32(vol->indx_record_size);
+	if (vol->cluster_size <= vol->indx_record_size)
+		ir->clusters_per_index_block =
+			vol->indx_record_size >> vol->cluster_size_bits;
+	else
+		ir->clusters_per_index_block =
+			vol->indx_record_size >> NTFS_BLOCK_SIZE_BITS;
+	ir->index.entries_offset = const_cpu_to_le32(sizeof(INDEX_HEADER));
+	ir->index.index_length = cpu_to_le32(index_len);
+	ir->index.allocated_size = cpu_to_le32(index_len);
+	ie = (INDEX_ENTRY *)((u8 *)ir + sizeof(INDEX_ROOT));
+	ie->length = const_cpu_to_le16(sizeof(INDEX_ENTRY_HEADER));
+	ie->key_length = const_cpu_to_le16(0);
+	ie->ie_flags = INDEX_ENTRY_END;
+
+	ret = ntfs_attr_add(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4,
+			(u8 *)ir, ir_len);
+	free(ir);
+	return ret ? STATUS_ERROR : STATUS_OK;
 }
 
 static int ntfsck_check_directory(ntfs_inode *ni)
@@ -2547,10 +4846,52 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 	 * (ntfs_attr_inconsistent()). just check existence of $INDEX_ROOT.
 	 */
 	if (!ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4)) {
-		ntfs_log_perror("$IR is missing in inode(%"PRId64")", ni->mft_no);
-		ret = STATUS_ERROR;
-		/* remove mft entry */
-		goto out;
+		/*
+		 * A non-root directory with no $INDEX_ROOT is discarded (its
+		 * children are relinked by the orphan pass), but the root
+		 * directory cannot be removed, so rebuild an empty index root
+		 * for it and let the orphan pass refill it.
+		 */
+		if (ni->mft_no == FILE_root) {
+			ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL,
+					ni->mrec, NULL, NULL);
+			fsck_err_found();
+			if (!ntfs_fix_problem(ni->vol, PR_DIR_IDX_INITIALIZE,
+						&pctx) ||
+					ntfsck_create_empty_index_root(ni)) {
+				ret = STATUS_ERROR;
+				goto out;
+			}
+			fsck_err_fixed();
+			/* $IR now exists; keep checking the rest below */
+		} else {
+			ntfs_log_perror("$IR is missing in inode(%"PRId64")",
+					ni->mft_no);
+			ret = STATUS_ERROR;
+			/* remove mft entry */
+			goto out;
+		}
+	}
+
+	/* a directory must not carry an unnamed $DATA stream */
+	if (ntfs_attr_exist(ni, AT_DATA, AT_UNNAMED, 0)) {
+		ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, NULL,
+				NULL, NULL);
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_DIR_HAVE_UNNAMED_DATA, &pctx)) {
+			ntfs_attr *d_na;
+
+			d_na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
+			if (d_na) {
+				if (!ntfs_attr_rm(d_na))
+					fsck_err_fixed();
+				else
+					ntfs_log_error("Failed to remove unnamed "
+							"$DATA of inode(%"PRId64")\n",
+							ni->mft_no);
+				ntfs_attr_close(d_na);
+			}
+		}
 	}
 
 	ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4);
@@ -2579,7 +4920,7 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 
 	/* $INDEX_ALLOCATION is always non-resident */
 	if (!NAttrNonResident(ia_na)) {
-		/* TODO: check $BITMAP, if exist, remove bitmap and ia */
+		/* Reinitialize both $IA and $BITMAP when $IA is resident. */
 		ret = STATUS_ERROR;
 		goto init_all;
 	}
@@ -2629,8 +4970,10 @@ init_all:
 	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, NULL, NULL, NULL);
 	fsck_err_found();
 	if (ntfs_fix_problem(ni->vol, PR_DIR_HAVE_RESIDENT_IA, &pctx)) {
-		ntfsck_initialize_index_attr(ni);
-		fsck_err_fixed();
+		if (!ntfsck_initialize_index_attr(ni)) {
+			ret = STATUS_OK;
+			fsck_err_fixed();
+		}
 	}
 
 	return ret;
@@ -2641,7 +4984,8 @@ static int ntfsck_check_file(ntfs_inode *ni)
 	ntfs_attr_search_ctx *ctx;
 	ntfs_volume *vol;
 	ATTR_RECORD *a;
-	FILE_ATTR_FLAGS attr_flags = 0;
+	le16 mask;
+	problem_context_t pctx = {0, };
 
 	if (!ni)
 		return STATUS_ERROR;
@@ -2652,42 +4996,85 @@ static int ntfsck_check_file(ntfs_inode *ni)
 	if (!ctx)
 		return STATUS_ERROR;
 
-	if (ntfs_attr_lookup(AT_DATA, NULL, 0, CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+	if (ntfs_attr_lookup(AT_DATA, AT_UNNAMED, 0, CASE_SENSITIVE, 0, NULL, 0,
+				ctx)) {
 		ntfs_log_error("$DATA attribute of Inode(%"PRIu64") is missing\n",
 				ni->mft_no);
 		goto err_out;
 	}
 
 	a = ctx->attr;
-	if (a->flags & (ATTR_COMPRESSION_MASK | ATTR_IS_SPARSE)) {
-		if (a->flags & ATTR_COMPRESSION_MASK) {
-			attr_flags = FILE_ATTR_COMPRESSED;
-			if (vol->cluster_size > 4096) {
-				ntfs_log_error("Found compressed data(%"PRIu64" but "
-						"compression is disabled due to "
-						"cluster size(%i) > 4kiB.\n",
-						ni->mft_no, vol->cluster_size);
-				goto err_out;
-			}
+	ntfs_init_problem_ctx(&pctx, ni, NULL, ctx, NULL, ni->mrec, a, NULL);
 
-			if ((a->flags & ATTR_COMPRESSION_MASK) != ATTR_IS_COMPRESSED) {
-				ntfs_log_error("Found unknown compression method "
-						"or corrupt file.(%"PRIu64")\n",
-						ni->mft_no);
-				goto err_out;
+	/*
+	 * A compression mask that cannot be real is normalized instead of failing
+	 * the whole file (the failure path removes the index entry and the orphan
+	 * pass then deletes the record - way out of scale for a flag fault). The
+	 * mask is impossible on a resident or encrypted attribute, on a volume whose
+	 * clusters are too big to compress, and in a header too short to carry
+	 * compressed_size; otherwise a non-standard method is normalized to the only
+	 * one Windows ever writes.
+	 */
+	mask = a->flags & ATTR_COMPRESSION_MASK;
+	if (mask) {
+		BOOL keep = TRUE;
+
+		if (!a->non_resident ||
+				vol->cluster_size > MAX_COMPRESSION_CLUSTER_SIZE ||
+				(a->flags & ATTR_IS_ENCRYPTED) ||
+				le16_to_cpu(a->mapping_pairs_offset) <
+				offsetof(ATTR_RECORD, compressed_end))
+			keep = FALSE;
+
+		if (!keep || mask != ATTR_IS_COMPRESSED) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_ATTR_DATA_FLAGS_CORRUPTED,
+						&pctx)) {
+				a->flags &= ~ATTR_COMPRESSION_MASK;
+				if (keep)
+					a->flags |= ATTR_IS_COMPRESSED;
+				else if (a->non_resident &&
+						!(a->flags & ATTR_IS_SPARSE))
+					a->compression_unit = 0;
+				ntfs_inode_mark_dirty(ctx->ntfs_ino);
+				fsck_err_fixed();
 			}
 		}
-		if (a->flags & ATTR_IS_SPARSE)
-			attr_flags |= FILE_ATTR_SPARSE_FILE;
 	}
 
-	if (a->flags & ATTR_IS_ENCRYPTED) {
-		if (attr_flags & FILE_ATTR_COMPRESSED) {
-			ntfs_log_error("Found encrypted and compressed data.(%"PRIu64")\n",
-					ni->mft_no);
+	/*
+	 * A compressed stream must be visible as such in the inode flags, or the
+	 * file is served without decompression. Only the set direction is enforced,
+	 * and only for a stream that holds data: FILE_ATTR_COMPRESSED without a
+	 * compressed attribute is the legal "compress new data" state, and empty
+	 * streams re-derive their compression state from the inode flags on every
+	 * open.
+	 */
+	if ((a->flags & ATTR_IS_COMPRESSED) &&
+			(a->non_resident ? a->initialized_size != 0 :
+					   a->value_length != 0)) {
+		STANDARD_INFORMATION *si;
+
+		ntfs_attr_reinit_search_ctx(ctx);
+		a = NULL;	/* invalidated by the reinit */
+		if (ntfs_attr_lookup(AT_STANDARD_INFORMATION, AT_UNNAMED, 0,
+					CASE_SENSITIVE, 0, NULL, 0, ctx))
 			goto err_out;
+
+		si = ctx->attr->non_resident ? NULL :
+			(STANDARD_INFORMATION *)((u8 *)ctx->attr +
+				le16_to_cpu(ctx->attr->value_offset));
+		if (si && !(si->file_attributes & FILE_ATTR_COMPRESSED)) {
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_ATTR_SI_FLAG_MISMATCH,
+						&pctx)) {
+				si->file_attributes |= FILE_ATTR_COMPRESSED;
+				ni->flags |= FILE_ATTR_COMPRESSED;
+				ntfs_inode_mark_dirty(ctx->ntfs_ino);
+				NInoFileNameSetDirty(ni);
+				fsck_err_fixed();
+			}
 		}
-		attr_flags |= FILE_ATTR_ENCRYPTED;
 	}
 
 	ntfs_attr_put_search_ctx(ctx);
@@ -2809,11 +5196,13 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 	ATTR_TYPES type;
 	ATTR_LIST_ENTRY *al_entry;
 	ATTR_LIST_ENTRY *next_al_entry;
-	u16 al_length = 0;
-	u16 al_real_length = 0;
+	u32 al_length = 0;
+	u32 al_real_length = 0;
+	u32 remaining;
 	u8 *al_start;
 	u8 *al_end;
 	u8 *next_al_end = 0;
+	u64 nr_mft_records;
 	int ret = STATUS_OK;
 	problem_context_t pctx = {0, };
 
@@ -2821,12 +5210,19 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 	if (ctx->base_ntfs_ino && ni != ctx->base_ntfs_ino)
 		return STATUS_ERROR;
 
+	nr_mft_records = (u64)(ni->vol->mft_na->initialized_size >>
+			ni->vol->mft_record_size_bits);
+
 	ntfs_init_problem_ctx(&pctx, ni, NULL, ctx, NULL, ctx->mrec, ctx->attr, NULL);
 	al_start = ni->attr_list;
 	al_end = al_start + ni->attr_list_size;
 	al_entry = (ATTR_LIST_ENTRY *)ni->attr_list;
 
 	do {
+		remaining = al_end - (u8 *)al_entry;
+		if (remaining < sizeof(ATTR_LIST_ENTRY))
+			break;
+
 		type = al_entry->type;
 
 		if (type != AT_STANDARD_INFORMATION &&
@@ -2851,7 +5247,41 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 		}
 
 		al_length = le16_to_cpu(al_entry->length);
-		if (al_length == 0 || al_length & 7) {
+		if (al_length < sizeof(ATTR_LIST_ENTRY) || al_length & 7) {
+			ret = STATUS_ERROR;
+			goto out;
+		}
+
+		if (remaining < al_length)
+			break;
+
+		/*
+		 * The attribute name must lie inside the entry. A bogus
+		 * name_offset/name_length would make ntfs_attr_lookup() read
+		 * past the entry when it compares external attribute names.
+		 */
+		if (al_entry->name_length &&
+				(al_entry->name_offset <
+					offsetof(ATTR_LIST_ENTRY, name) ||
+				 (u32)al_entry->name_offset +
+					(u32)al_entry->name_length *
+					sizeof(ntfschar) > al_length)) {
+			ret = STATUS_ERROR;
+			goto out;
+		}
+
+		/*
+		 * The referenced base/extent record must exist. Attach walks
+		 * these references, so an out-of-range value would drive it to
+		 * a non-existent record.
+		 */
+		if (MREF_LE(al_entry->mft_reference) >= nr_mft_records) {
+			ret = STATUS_ERROR;
+			goto out;
+		}
+
+		/* lowest_vcn is a signed value and can never be negative. */
+		if (sle64_to_cpu(al_entry->lowest_vcn) < 0) {
 			ret = STATUS_ERROR;
 			goto out;
 		}
@@ -2863,6 +5293,10 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 		if ((u8 *)next_al_entry >= al_end)
 			break;
 
+		remaining = al_end - (u8 *)next_al_entry;
+		if (remaining < sizeof(ATTR_LIST_ENTRY))
+			break;
+
 		next_al_end = (u8 *)next_al_entry + le16_to_cpu(next_al_entry->length);
 		if (next_al_end > al_end)
 			break;
@@ -2871,14 +5305,34 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 	} while (1);
 
 out:
-	if (ni->attr_list_size != al_real_length) {
+	/*
+	 * Only trim a trailing-garbage tail off a list whose entries are otherwise
+	 * sound (ret == STATUS_OK). When an entry is corrupt the caller regenerates
+	 * the whole list from the real attributes, so truncating here would drop the
+	 * extents past the corrupt entry before the rebuild can collect them.
+	 */
+	if (ret == STATUS_OK && ni->attr_list_size != al_real_length) {
 		fsck_err_found();
 		if (ntfs_fix_problem(ni->vol, PR_ATTRLIST_LENGTH_CORRUPTED, &pctx)) {
-			ntfs_set_attribute_value_length(ctx->attr, al_real_length);
-			ni->attr_list_size = al_real_length;
-			if (!errno) {
-				ntfs_inode_mark_dirty(ni);
-				fsck_err_fixed();
+			ntfs_attr *al_na;
+
+			/*
+			 * Resize through ntfs_attr_truncate() so a non-resident
+			 * $ATTRIBUTE_LIST keeps a cluster-aligned allocated_size
+			 * and a matching runlist; ntfs_set_attribute_value_length()
+			 * would leave allocated_size desynced from the runlist.
+			 */
+			al_na = ntfs_attr_open(ni, AT_ATTRIBUTE_LIST, AT_UNNAMED, 0);
+			if (al_na) {
+				if (!ntfs_attr_truncate(al_na, al_real_length) &&
+						ntfs_attr_pwrite(al_na, 0, al_real_length,
+							ni->attr_list) == al_real_length) {
+					ni->attr_list_size = al_real_length;
+					NInoAttrListSetDirty(ni);
+					ntfs_inode_mark_dirty(ni);
+					fsck_err_fixed();
+				}
+				ntfs_attr_close(al_na);
 			}
 		}
 	}
@@ -2889,6 +5343,7 @@ out:
 static int ntfsck_check_attr_list(ntfs_inode *ni)
 {
 	ntfs_attr_search_ctx *ctx;
+	problem_context_t pctx = {0, };
 	int ret = STATUS_OK;
 
 	if (!ni->attr_list)
@@ -2900,15 +5355,1042 @@ static int ntfsck_check_attr_list(ntfs_inode *ni)
 
 	if (ntfs_attr_lookup(AT_ATTRIBUTE_LIST, AT_UNNAMED, 0, CASE_SENSITIVE,
 				0, NULL, 0, ctx)) {
-		ret = STATUS_ERROR;
-		goto out;
+		ntfs_attr_put_search_ctx(ctx);
+		return STATUS_ERROR;
 	}
 
 	ret = _ntfsck_check_attr_list_type(ctx);
-
-out:
+	/* Drop the search context before the rebuild rewrites the list. */
 	ntfs_attr_put_search_ctx(ctx);
+
+	if (ret != STATUS_OK) {
+		/*
+		 * The attribute-list entries are corrupt. Rather than discard the whole
+		 * inode, regenerate $ATTRIBUTE_LIST from the attribute records that
+		 * actually live in the base and extent records. ntfsck_rebuild_attr_list()
+		 * needs the extents attached, so attach them first; a list too broken to
+		 * attach (a bad length or an unreachable mft_reference) leaves 'ret' set so
+		 * the caller still drops the inode.
+		 */
+		ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec,
+				NULL, NULL);
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_ATTRLIST_REBUILD, &pctx) &&
+				!ntfs_inode_attach_all_extents(ni) &&
+				!ntfsck_rebuild_attr_list(ni)) {
+			fsck_err_fixed();
+			ret = STATUS_OK;
+		}
+	}
+
 	return ret;
+}
+
+/*
+ * RFC Phase 6: validate the $EA (extended attribute) chain.
+ *
+ * Walk the EA_ATTR linked list applying the structural rules used by
+ * ntfs_set_ntfs_ea() (chain integrity, name/value bounds, null terminator)
+ * and cross-check the packed size / NEED_EA count against $EA_INFORMATION.
+ * Following the RFC's "deletion over dubious repair" principle, a corrupt
+ * chain causes both $EA and $EA_INFORMATION to be removed together; the
+ * primary $DATA is never touched. Name characters are intentionally not
+ * validated, matching chkdsk (and ntfs_set_ntfs_ea()), to avoid destroying
+ * otherwise valid extended attributes.
+ */
+#define NTFSCK_EA_MAX_SIZE	(256 * 1024)
+static int ntfsck_check_ea(ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *ctx;
+	ntfs_attr *ea_na = NULL;
+	ntfs_attr *eainfo_na = NULL;
+	EA_INFORMATION eainfo;
+	u8 *buf = NULL;
+	s64 ea_size;
+	size_t offs, nextoffs = 0;
+	u32 ea_packed = 0;
+	int ea_count = 0;
+	BOOL have_eainfo = FALSE;
+	BOOL corrupt = FALSE;
+	problem_context_t pctx = {0, };
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return STATUS_ERROR;
+
+	if (!ntfs_attr_lookup(AT_EA_INFORMATION, AT_UNNAMED, 0, CASE_SENSITIVE,
+				0, NULL, 0, ctx)) {
+		have_eainfo = TRUE;
+		if (le32_to_cpu(ctx->attr->value_length) < sizeof(EA_INFORMATION))
+			corrupt = TRUE;
+		else
+			memcpy(&eainfo, (u8 *)ctx->attr +
+					le16_to_cpu(ctx->attr->value_offset),
+					sizeof(EA_INFORMATION));
+	}
+	ntfs_attr_put_search_ctx(ctx);
+
+	ea_na = ntfs_attr_open(ni, AT_EA, AT_UNNAMED, 0);
+
+	/* Neither present: nothing to validate. */
+	if (!ea_na && !have_eainfo)
+		return STATUS_OK;
+
+	/* One present without the other, or malformed $EA_INFORMATION. */
+	if (!ea_na || !have_eainfo) {
+		corrupt = TRUE;
+		goto verdict;
+	}
+	if (corrupt)
+		goto verdict;
+
+	ea_size = ea_na->data_size;
+	if (ea_size <= 0 || ea_size > NTFSCK_EA_MAX_SIZE) {
+		corrupt = TRUE;
+		goto verdict;
+	}
+
+	buf = ntfs_malloc(ea_size);
+	if (!buf) {
+		ntfs_attr_close(ea_na);
+		return STATUS_ERROR;
+	}
+	if (ntfs_attr_pread(ea_na, 0, ea_size, buf) != ea_size) {
+		corrupt = TRUE;
+		goto verdict;
+	}
+
+	/* Walk the chain (mirrors ntfs_set_ntfs_ea()'s consistency check). */
+	offs = 0;
+	while (offs < (size_t)ea_size) {
+		const EA_ATTR *p_ea = (const EA_ATTR *)&buf[offs];
+		u32 entry_end;
+
+		if (offs + offsetof(EA_ATTR, name) > (size_t)ea_size) {
+			corrupt = TRUE;
+			break;
+		}
+
+		nextoffs = offs + le32_to_cpu(p_ea->next_entry_offset);
+		entry_end = offs + offsetof(EA_ATTR, name) + p_ea->name_length +
+				1 + le16_to_cpu(p_ea->value_length);
+
+		if (!(nextoffs > offs &&
+				nextoffs <= (size_t)ea_size &&
+				!(nextoffs & 3) &&
+				p_ea->name_length &&
+				entry_end <= nextoffs &&
+				entry_end >= (nextoffs - 3) &&
+				!p_ea->name[p_ea->name_length])) {
+			corrupt = TRUE;
+			break;
+		}
+
+		if (p_ea->flags & NEED_EA)
+			ea_count++;
+		/* header(4) + name + 1 + value, excluding next_entry_offset */
+		ea_packed += 5 + p_ea->name_length +
+				le16_to_cpu(p_ea->value_length);
+		offs = nextoffs;
+	}
+
+	/*
+	 * Cross-validate against $EA_INFORMATION. Only the well-defined packed size
+	 * and NEED_EA count are compared; ea_query_length (the unpacked
+	 * ZwQueryEaFile buffer size) uses a different layout across Windows
+	 * versions, so comparing it would risk false positives.
+	 */
+	if (!corrupt &&
+			(le16_to_cpu(eainfo.ea_length) != ea_packed ||
+			 le16_to_cpu(eainfo.need_ea_count) != ea_count))
+		corrupt = TRUE;
+
+verdict:
+	free(buf);
+
+	if (corrupt) {
+		ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec,
+				NULL, NULL);
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_EA_CHAIN_CORRUPTED, &pctx)) {
+			int rm_ok = 1;
+
+			if (ea_na && ntfs_attr_rm(ea_na))
+				rm_ok = 0;
+			eainfo_na = ntfs_attr_open(ni, AT_EA_INFORMATION,
+					AT_UNNAMED, 0);
+			if (eainfo_na) {
+				if (ntfs_attr_rm(eainfo_na))
+					rm_ok = 0;
+				ntfs_attr_close(eainfo_na);
+			}
+			if (rm_ok) {
+				ntfs_inode_mark_dirty(ni);
+				fsck_err_fixed();
+			}
+		}
+	}
+
+	if (ea_na)
+		ntfs_attr_close(ea_na);
+	return STATUS_OK;
+}
+/*
+ * RFC reparse-point validation.
+ *
+ * Checks performed:
+ *   - consistency between the $STANDARD_INFORMATION reparse flag and the
+ *     presence of a $REPARSE_POINT attribute (the attribute is ground truth);
+ *   - structural validity of the reparse data (tag not reserved-zero,
+ *     reparse_data_length <= 16 KiB, header/length consistency and payload
+ *     bounds), reusing ntfs_reparse_data_is_valid();
+ * On corruption the reparse data and its $Extend/$Reparse index entry are
+ * removed together via ntfs_remove_ntfs_reparse_data(), which also clears the
+ * reparse flag.
+ *
+ * NOTE: full multi-hop circular-reference detection (RFC "Floyd" cycle check)
+ * is not implemented here: it requires offline resolution of NT target paths
+ * (\??\C:\...) to MFT records, infrastructure ntfsck does not yet have.
+ * Doing it hastily risks deleting valid links, so it is deliberately left out.
+ */
+#define NTFSCK_REPARSE_MAX_DATA		(16 * 1024)
+/*
+ * ntfsck_reparse_recall_flag_recoverable - is this only a missing recall flag?
+ *
+ * WSL special files (socket, fifo, character or block device) are stored as
+ * data-less reparse points and are valid only when $STANDARD_INFORMATION carries
+ * FILE_ATTRIBUTE_RECALL_ON_OPEN. A creator that fails to persist that flag
+ * leaves an otherwise well-formed stub that ntfs_reparse_data_is_valid() then
+ * rejects. Recognise exactly that case so it can be repaired by restoring the
+ * flag instead of destroying the special file.
+ */
+static BOOL ntfsck_reparse_recall_flag_recoverable(ntfs_inode *ni,
+		const REPARSE_POINT *rp, s64 attr_size)
+{
+	if (attr_size != (s64)sizeof(REPARSE_POINT) ||
+			le16_to_cpu(rp->reparse_data_length) != 0 ||
+			(ni->flags & FILE_ATTRIBUTE_RECALL_ON_OPEN))
+		return FALSE;
+
+	switch (rp->reparse_tag) {
+	case IO_REPARSE_TAG_AF_UNIX:
+	case IO_REPARSE_TAG_LX_FIFO:
+	case IO_REPARSE_TAG_LX_CHR:
+	case IO_REPARSE_TAG_LX_BLK:
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+static int ntfsck_check_reparse(ntfs_inode *ni)
+{
+	REPARSE_POINT *rp = NULL;
+	s64 attr_size = 0;
+	le32 reparse_tag = const_cpu_to_le32(0);
+	BOOL has_attr, has_flag;
+	BOOL corrupt = FALSE;
+	BOOL recall_missing = FALSE;
+	problem_context_t pctx = {0, };
+
+	has_flag = (ni->flags & FILE_ATTR_REPARSE_POINT) ? TRUE : FALSE;
+
+	/*
+	 * Probe for the attribute quietly: this runs on every checked inode and
+	 * ntfs_attr_readall() logs a perror for each inode that lacks the attribute
+	 * -- which is the overwhelming majority. ntfs_attr_exist() only reports
+	 * presence, and we read the data (which then cannot fail with ENOENT) only
+	 * when it is actually there.
+	 */
+	has_attr = ntfs_attr_exist(ni, AT_REPARSE_POINT, AT_UNNAMED, 0) ?
+			TRUE : FALSE;
+
+	if (!has_attr && !has_flag)
+		return STATUS_OK;
+
+	/* Attribute present: read and validate its structure. */
+	if (has_attr) {
+		rp = (REPARSE_POINT *)ntfs_attr_readall(ni, AT_REPARSE_POINT,
+				(ntfschar *)NULL, 0, &attr_size);
+		if (!rp ||
+				attr_size < (s64)sizeof(REPARSE_POINT) ||
+				attr_size > NTFSCK_REPARSE_MAX_DATA +
+					(s64)(sizeof(REPARSE_POINT) + sizeof(GUID)) ||
+				le16_to_cpu(rp->reparse_data_length) >
+					NTFSCK_REPARSE_MAX_DATA ||
+				!ntfs_reparse_data_is_valid(ni, rp,
+					(size_t)attr_size)) {
+			corrupt = TRUE;
+			if (rp && ntfsck_reparse_recall_flag_recoverable(ni, rp,
+						attr_size))
+				recall_missing = TRUE;
+		}
+		if (rp)
+			reparse_tag = rp->reparse_tag;
+		free(rp);
+	}
+
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec, NULL, NULL);
+
+	/*
+	 * A WSL special file that only lost FILE_ATTRIBUTE_RECALL_ON_OPEN is
+	 * repaired by restoring the flag, keeping the device node / fifo /
+	 * socket intact instead of deleting its reparse data.
+	 */
+	if (recall_missing) {
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_REPARSE_RECALL_FLAG_MISSING,
+					&pctx)) {
+			/*
+			 * The flag belongs in $STANDARD_INFORMATION only; $FILE_NAME
+			 * intentionally does not carry it, so update ni->flags (which
+			 * is written back to $STANDARD_INFORMATION) without marking
+			 * the file name dirty.
+			 */
+			ni->flags |= FILE_ATTRIBUTE_RECALL_ON_OPEN;
+			ntfs_inode_mark_dirty(ni);
+			fsck_err_fixed();
+		}
+		return STATUS_OK;
+	}
+
+	if (corrupt) {
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_REPARSE_ATTR_CORRUPTED, &pctx)) {
+			BOOL removed = FALSE;
+
+			if (!ntfs_remove_ntfs_reparse_data(ni)) {
+				removed = TRUE;
+			} else {
+				ntfs_attr *rna;
+
+				/*
+				 * ntfs_remove_ntfs_reparse_data() removes the $Extend/$Reparse index
+				 * entry first and gives up on the whole operation if that fails -- e.g.
+				 * the reparse data is too corrupt to yield a tag, or the $Reparse index
+				 * itself is damaged -- leaving the bad $REPARSE_POINT attribute in place
+				 * to be re-detected on every run. Force the attribute out so the
+				 * corruption cannot persist; any stale $Reparse index entry is reconciled
+				 * when that index is structurally revalidated.
+				 */
+				rna = ntfs_attr_open(ni, AT_REPARSE_POINT,
+						AT_UNNAMED, 0);
+				if (rna) {
+					if (!ntfs_attr_rm(rna)) {
+						ni->flags &=
+							~FILE_ATTR_REPARSE_POINT;
+						NInoFileNameSetDirty(ni);
+						removed = TRUE;
+					}
+					ntfs_attr_close(rna);
+				}
+			}
+			if (removed) {
+				ntfs_inode_mark_dirty(ni);
+				fsck_err_fixed();
+			}
+		}
+		return STATUS_OK;
+	}
+
+	/* Structure is fine (or absent): reconcile the reparse flag. */
+	if (has_attr != has_flag) {
+		fsck_err_found();
+		if (ntfs_fix_problem(ni->vol, PR_REPARSE_FLAG_MISMATCH, &pctx)) {
+			if (has_attr)
+				ni->flags |= FILE_ATTR_REPARSE_POINT;
+			else
+				ni->flags &= ~FILE_ATTR_REPARSE_POINT;
+			NInoFileNameSetDirty(ni);
+			ntfs_inode_mark_dirty(ni);
+			fsck_err_fixed();
+		}
+	}
+
+	/*
+	 * A structurally valid reparse point must also be indexed in
+	 * $Extend/$Reparse. Re-initializing a corrupt $R index empties it, and
+	 * unlike $SDH (rebuilt from $SDS) nothing else re-inserts the entries of the
+	 * intact reparse points, so restore this inode's one.
+	 */
+	if (has_attr &&
+			ntfs_reparse_index_check(ni, reparse_tag, FALSE) == 1) {
+		fsck_err_found();
+		missing_reparse_index_entries++;
+		ntfsck_defer_reparse_repair(ni, reparse_tag);
+	}
+
+	return STATUS_OK;
+}
+
+/*
+ * Is the $Extend/$Reparse entry keyed {@reparse_tag, @mref} backed by a real
+ * reparse point? That is the case only when the referenced record is a base
+ * record in use under the same sequence number and its $REPARSE_POINT
+ * attribute still carries the indexed tag.
+ */
+static BOOL ntfsck_reparse_entry_backed(ntfs_volume *vol, le32 reparse_tag,
+		u64 mref)
+{
+	ntfs_inode *ni;
+	ntfs_attr *na;
+	le32 tag;
+	BOOL backed = FALSE;
+
+	if (!MSEQNO(mref) || MREF(mref) >=
+			(u64)(vol->mft_na->initialized_size >>
+				vol->mft_record_size_bits))
+		return FALSE;
+
+	/* ntfs_inode_open() verifies in-use, base and sequence number. */
+	ni = ntfs_inode_open(vol, mref);
+	if (!ni)
+		return FALSE;
+
+	if (ntfs_attr_exist(ni, AT_REPARSE_POINT, AT_UNNAMED, 0)) {
+		na = ntfs_attr_open(ni, AT_REPARSE_POINT, AT_UNNAMED, 0);
+		if (na) {
+			if (ntfs_attr_pread(na, 0, 4, &tag) == 4 &&
+					tag == reparse_tag)
+				backed = TRUE;
+			ntfs_attr_close(na);
+		}
+	}
+	ntfs_inode_close(ni);
+	return backed;
+}
+
+/*
+ * $STANDARD_INFORMATION's security_id is only meaningful while $Secure's $SII
+ * index lists it: the id is the lookup key for the descriptor in $SDS, and a
+ * dangling id leaves the file without a resolvable security descriptor.
+ * Clearing it to zero is the neutral "no descriptor assigned" state that
+ * pre-NTFS-3.0 records use.
+ */
+static ntfs_index_context *ntfsck_sii_ctx;
+static BOOL ntfsck_sii_ctx_tried;
+
+static ntfs_index_context *ntfsck_get_sii_ctx(ntfs_volume *vol)
+{
+	if (!ntfsck_sii_ctx && !ntfsck_sii_ctx_tried) {
+		ntfsck_sii_ctx_tried = TRUE;
+		if (vol->secure_ni && ntfs_attr_exist(vol->secure_ni,
+					AT_INDEX_ROOT, NTFS_INDEX_SII, 4))
+			ntfsck_sii_ctx = ntfs_index_ctx_get(vol->secure_ni,
+					NTFS_INDEX_SII, 4);
+	}
+	return ntfsck_sii_ctx;
+}
+
+static void ntfsck_put_sii_ctx(void)
+{
+	if (ntfsck_sii_ctx) {
+		ntfs_index_ctx_put(ntfsck_sii_ctx);
+		ntfsck_sii_ctx = NULL;
+	}
+	ntfsck_sii_ctx_tried = FALSE;
+}
+
+static void ntfsck_check_security_id(ntfs_inode *ni)
+{
+	ntfs_volume *vol = ni->vol;
+	ntfs_index_context *sii;
+	SII_INDEX_KEY key;
+	problem_context_t pctx = {0, };
+
+	if (!ni->security_id)
+		return;
+
+	sii = ntfsck_get_sii_ctx(vol);
+	if (!sii)
+		return;
+
+	ntfs_index_ctx_reinit(sii);
+	key.security_id = ni->security_id;
+	if (!ntfs_index_lookup(&key, sizeof(key), sii))
+		return;
+	if (errno != ENOENT)
+		return;
+
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, NULL, NULL, NULL);
+	fsck_err_found();
+	if (!ntfs_fix_problem(vol, PR_MFT_SECURITY_ID_DANGLING, &pctx))
+		return;
+
+	ni->security_id = const_cpu_to_le32(0);
+	ntfs_inode_mark_dirty(ni);
+	fsck_err_fixed();
+}
+
+/*
+ * si->usn is a byte offset into $Extend/$UsnJrnl's $J stream. An offset past
+ * the journal's end -- or any non-zero offset when the journal has been
+ * deleted -- can never resolve to a change record, so clear it; Windows
+ * stamps a fresh usn on the next change it journals.
+ */
+#define NTFSCK_USNJRNL_UNKNOWN	(-2)
+#define NTFSCK_USNJRNL_BROKEN	(-3)
+static s64 ntfsck_usnjrnl_size = NTFSCK_USNJRNL_UNKNOWN;
+
+static s64 ntfsck_get_usnjrnl_size(ntfs_volume *vol)
+{
+	ntfs_inode *ni;
+	ntfs_attr *na;
+	ntfschar J[2] = { const_cpu_to_le16('$'), const_cpu_to_le16('J') };
+
+	if (ntfsck_usnjrnl_size != NTFSCK_USNJRNL_UNKNOWN)
+		return ntfsck_usnjrnl_size;
+
+	ni = ntfs_pathname_to_inode(vol, NULL, "$Extend/$UsnJrnl");
+	if (!ni) {
+		ntfsck_usnjrnl_size = (errno == ENOENT) ?
+			-1 : NTFSCK_USNJRNL_BROKEN;
+		return ntfsck_usnjrnl_size;
+	}
+
+	ntfsck_usnjrnl_size = NTFSCK_USNJRNL_BROKEN;
+	na = ntfs_attr_open(ni, AT_DATA, J, 2);
+	if (na) {
+		ntfsck_usnjrnl_size = na->data_size;
+		ntfs_attr_close(na);
+	}
+	ntfs_inode_close(ni);
+	return ntfsck_usnjrnl_size;
+}
+
+static void ntfsck_check_usn(ntfs_inode *ni)
+{
+	s64 jsize, usn;
+	problem_context_t pctx = {0, };
+
+	if (!test_nino_flag(ni, v3_Extensions) || !ni->usn)
+		return;
+
+	jsize = ntfsck_get_usnjrnl_size(ni->vol);
+	if (jsize == NTFSCK_USNJRNL_BROKEN)
+		return;
+
+	usn = sle64_to_cpu(ni->usn);
+	if (jsize >= 0 && usn >= 0 && usn <= jsize)
+		return;
+
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, NULL, NULL, NULL);
+	fsck_err_found();
+	if (!ntfs_fix_problem(ni->vol, PR_MFT_USN_INVALID, &pctx))
+		return;
+
+	ni->usn = const_cpu_to_le64(0);
+	ntfs_inode_mark_dirty(ni);
+	fsck_err_fixed();
+}
+
+/*
+ * Reverse sweep of the $Extend/$Reparse index. ntfsck_check_reparse()
+ * restores the entry of every valid reparse point, but nothing removed
+ * entries whose backing is gone - a cleared or reused record, a dropped
+ * $REPARSE_POINT attribute or a rewritten tag - so the volume kept
+ * enumerating reparse points that do not exist. Walk the index after the
+ * inode checks settled and remove every entry no reparse point vouches for.
+ */
+static void ntfsck_check_reparse_index(ntfs_volume *vol)
+{
+	ntfs_inode *ni, *dir_ni;
+	ntfs_index_context *xr;
+	INDEX_ENTRY *ie;
+	REPARSE_INDEX_KEY key;
+	REPARSE_INDEX_KEY *stale = NULL;
+	int nr_stale = 0, alloc_stale = 0, i;
+	problem_context_t pctx = {0, };
+	u64 inum;
+
+	dir_ni = ntfs_inode_open(vol, FILE_Extend);
+	if (!dir_ni)
+		return;
+	inum = ntfs_inode_lookup_by_mbsname(dir_ni, "$Reparse");
+	ntfs_inode_close(dir_ni);
+	if (inum == (u64)-1)
+		return;
+	ni = ntfs_inode_open(vol, inum);
+	if (!ni)
+		return;
+	xr = ntfs_index_ctx_get(ni, NTFS_INDEX_R, 2);
+	if (!xr) {
+		ntfs_inode_close(ni);
+		return;
+	}
+
+	ntfs_init_problem_ctx(&pctx, NULL, NULL, NULL, NULL, NULL, NULL,
+			NULL);
+
+	/*
+	 * No key collates below all-zero, so the failed lookup leaves the
+	 * context on the smallest entry (an all-zero key itself would be
+	 * found and is checked like any other).
+	 */
+	memset(&key, 0, sizeof(key));
+	if (ntfs_index_lookup(&key, sizeof(key), xr) && errno != ENOENT)
+		goto out;
+
+	ie = xr->entry;
+	if (!ie)
+		goto out;
+	if (ie->ie_flags & INDEX_ENTRY_END)
+		ie = ntfs_index_next(ie, xr);
+
+	/*
+	 * Collect first, remove after: ntfs_index_rm() restructures the
+	 * tree under the walk, whose block reloads then lose or replay
+	 * buffered changes (the mid-walk dirty-buffer trap), so nothing
+	 * may be removed while the iteration is in flight.
+	 */
+	while (ie) {
+		/*
+		 * A key of the wrong size is a structural entry problem
+		 * owned by the index validation, not a stale reference;
+		 * it cannot be looked up for removal below either.
+		 */
+		if (le16_to_cpu(ie->key_length) != sizeof(key)) {
+			ie = ntfs_index_next(ie, xr);
+			continue;
+		}
+		memcpy(&key, &ie->key, sizeof(key));
+
+		if (!ntfsck_reparse_entry_backed(vol, key.reparse_tag,
+					le64_to_cpu(key.file_id))) {
+			if (nr_stale == alloc_stale) {
+				REPARSE_INDEX_KEY *tmp;
+
+				alloc_stale = alloc_stale ?
+					alloc_stale * 2 : 16;
+				tmp = realloc(stale,
+						alloc_stale * sizeof(*stale));
+				if (!tmp)
+					break;
+				stale = tmp;
+			}
+			stale[nr_stale++] = key;
+		}
+		ie = ntfs_index_next(ie, xr);
+	}
+
+	if (nr_stale && !stale_reparse_repair_decided) {
+		ntfs_log_error("  * $Extend/$Reparse index: %d stale entry(ies)\n",
+				nr_stale);
+		ntfs_log_error("    Remove stale entries. Fix it? ");
+		stale_reparse_repair_approved = ntfs_ask_repair(vol);
+		stale_reparse_repair_decided = TRUE;
+	}
+
+	for (i = 0; i < nr_stale; i++) {
+		pctx.inum = MREF(le64_to_cpu(stale[i].file_id));
+		fsck_err_found();
+		if (!stale_reparse_repair_approved)
+			continue;
+		ntfs_index_ctx_reinit(xr);
+		if (!ntfs_index_lookup(&stale[i], sizeof(stale[i]), xr) &&
+				!ntfs_index_rm(xr))
+			fsck_err_fixed();
+		else
+			ntfs_log_error("Failed to remove stale $Reparse entry "
+					"of inode(%"PRIu64")\n", pctx.inum);
+	}
+out:
+	free(stale);
+	ntfs_index_ctx_put(xr);
+	ntfs_inode_close(ni);
+}
+
+/*
+ * One collected $Extend/$Deleted directory entry: enough to reopen the child
+ * and hand its exact name to ntfs_delete().
+ */
+struct ntfsck_deleted_ent {
+	u64 mft_no;
+	ntfschar *name;
+	int name_len;
+	BOOL is_dir;
+};
+
+struct ntfsck_deleted_ctx {
+	struct ntfsck_deleted_ent *ents;
+	int count;
+	int alloc;
+	u64 dir_mft_no;		/* to recognise the "." self entry */
+};
+
+/* Bound the recursion into nested $Deleted subdirectories. */
+#define NTFSCK_DELETED_MAX_DEPTH	32
+
+static int ntfsck_purge_deleted_dir(ntfs_volume *vol, u64 dir_mft_no,
+		int depth);
+
+/*
+ * ntfs_readdir() filldir callback: record every real child of a $Deleted
+ * subtree. The synthesized "." / ".." entries and the DOS half of a Win32+DOS
+ * pair are skipped -- ntfs_delete() removes the DOS name together with its
+ * Win32 name.
+ */
+static int ntfsck_collect_deleted(void *dirent, const ntfschar *name,
+		const int name_len, const int name_type,
+		const s64 pos __attribute__((unused)), const MFT_REF mref,
+		const unsigned dt_type)
+{
+	struct ntfsck_deleted_ctx *c = (struct ntfsck_deleted_ctx *)dirent;
+	struct ntfsck_deleted_ent *e;
+
+	if (name_type == FILE_NAME_DOS)
+		return 0;
+	if (MREF(mref) == c->dir_mft_no)
+		return 0;
+	if (name_len == 1 && le16_to_cpu(name[0]) == '.')
+		return 0;
+	if (name_len == 2 && le16_to_cpu(name[0]) == '.' &&
+			le16_to_cpu(name[1]) == '.')
+		return 0;
+
+	if (c->count == c->alloc) {
+		int na = c->alloc ? c->alloc * 2 : 16;
+		struct ntfsck_deleted_ent *tmp;
+
+		tmp = realloc(c->ents, na * sizeof(*tmp));
+		if (!tmp)
+			return -1;
+		c->ents = tmp;
+		c->alloc = na;
+	}
+	e = &c->ents[c->count];
+	e->name = ntfs_malloc(name_len * sizeof(ntfschar));
+	if (!e->name)
+		return -1;
+	memcpy(e->name, name, name_len * sizeof(ntfschar));
+	e->name_len = name_len;
+	e->mft_no = MREF(mref);
+	e->is_dir = (dt_type == NTFS_DT_DIR);
+	c->count++;
+	return 0;
+}
+
+/*
+ * ntfsck_purge_deleted_dir - remove every child of the directory @dir_mft_no.
+ *
+ * Deletes each child (recursing into subdirectories first so ntfs_delete()
+ * never trips over a non-empty directory), but leaves the directory itself in
+ * place; the caller removes it. Enumerate fully before deleting: ntfs_delete()
+ * restructures the parent's $I30 tree under the walk.
+ */
+static int ntfsck_purge_deleted_dir(ntfs_volume *vol, u64 dir_mft_no, int depth)
+{
+	ntfs_inode *dir_ni, *ni;
+	struct ntfsck_deleted_ctx c = { NULL, 0, 0, dir_mft_no };
+	problem_context_t pctx = {0, };
+	s64 pos;
+	int i;
+
+	if (depth > NTFSCK_DELETED_MAX_DEPTH)
+		return -1;
+
+	dir_ni = ntfs_inode_open(vol, dir_mft_no);
+	if (!dir_ni)
+		return -1;
+	pos = 0;
+	if (ntfs_readdir(dir_ni, &pos, &c, ntfsck_collect_deleted))
+		ntfs_log_perror("Failed to enumerate $Deleted inode(%"PRIu64")",
+				dir_mft_no);
+	ntfs_inode_close(dir_ni);
+
+	ntfs_init_problem_ctx(&pctx, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+	for (i = 0; i < c.count; i++) {
+		/* Empty a subdirectory before deleting it. */
+		if (c.ents[i].is_dir)
+			ntfsck_purge_deleted_dir(vol, c.ents[i].mft_no, depth + 1);
+
+		pctx.inum = c.ents[i].mft_no;
+		fsck_err_found();
+		if (!ntfs_fix_problem(vol, PR_DELETED_ORPHAN_REMOVE, &pctx))
+			continue;
+
+		/* ntfs_delete() closes both inodes, so reopen the parent. */
+		ni = ntfs_inode_open(vol, c.ents[i].mft_no);
+		if (!ni) {
+			ntfs_log_error("Failed to open $Deleted inode(%"PRIu64")\n",
+					c.ents[i].mft_no);
+			continue;
+		}
+		dir_ni = ntfs_inode_open(vol, dir_mft_no);
+		if (!dir_ni) {
+			ntfs_inode_close(ni);
+			continue;
+		}
+		if (ntfs_delete(vol, NULL, ni, dir_ni, c.ents[i].name,
+					c.ents[i].name_len))
+			ntfs_log_error("Failed to remove $Deleted inode(%"PRIu64")\n",
+					c.ents[i].mft_no);
+		else
+			fsck_err_fixed();
+	}
+
+	for (i = 0; i < c.count; i++)
+		free(c.ents[i].name);
+	free(c.ents);
+	return 0;
+}
+
+/*
+ * ntfsck_empty_deleted_dir - clear out $Extend/$Deleted.
+ *
+ * The Windows NTFS driver implements POSIX unlink (deleting a file that is
+ * still open) by moving the file into the hidden \$Extend\$Deleted directory
+ * and freeing it only once the last handle closes. A crash between the move
+ * and that final close strands the file there forever: it is unreachable by
+ * name yet still consumes its MFT record and clusters. Windows chkdsk empties
+ * $Deleted at boot; do the same, so an interrupted POSIX delete does not leak
+ * space on a volume the Linux driver (which never uses $Deleted) later mounts.
+ *
+ * Runs before pass 1 so the freed records and clusters are gone before the
+ * bitmaps are rebuilt from them. $Deleted is optional (only newer Windows
+ * creates it), so its absence is a no-op. The directory itself is kept.
+ */
+static void ntfsck_empty_deleted_dir(ntfs_volume *vol)
+{
+	ntfs_inode *ext_ni;
+	u64 inum;
+
+	/* $Extend exists only on NTFS 3.0+. */
+	if (vol->major_ver < 3)
+		return;
+
+	ext_ni = ntfs_inode_open(vol, FILE_Extend);
+	if (!ext_ni)
+		return;
+	inum = ntfs_inode_lookup_by_mbsname(ext_ni, "$Deleted");
+	ntfs_inode_close(ext_ni);
+	if (inum == (u64)-1)
+		return;			/* no $Deleted -> nothing to clean */
+
+	ntfsck_purge_deleted_dir(vol, inum, 0);
+}
+
+static int ntfsck_sparse_compression_unit(ntfs_attr *na, s64 cb_vcn_bytes);
+
+/*
+ * ntfsck_check_compressed - validate every compression unit of an inode.
+ *
+ * Each non-resident compressed $DATA attribute is read one compression unit at
+ * a time, which drives the LZNT1 decompressor. A unit that fails to
+ * decompress is reported. In salvage-aggressive mode (and when repairs are
+ * allowed) the unrecoverable unit is replaced with a sparse hole so that the
+ * rest of the file becomes readable instead of the whole file erroring out.
+ */
+static void ntfsck_check_compressed(ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *ctx;
+	u8 *buf = NULL;
+	s64 buf_size = 0;
+	problem_context_t pctx = {0, };
+
+	/*
+	 * Decompressing every compression unit of every compressed file is expensive
+	 * (Windows volumes compress many files), so this deep pass is opt-in via
+	 * salvage-aggressive mode, which is also the only mode that can act on what
+	 * it finds.
+	 */
+	if (!opt_salvage)
+		return;
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return;
+
+	while (!ntfs_attr_lookup(AT_DATA, NULL, 0, CASE_SENSITIVE, 0, NULL, 0,
+				ctx)) {
+		ATTR_RECORD *a = ctx->attr;
+		ntfschar *name;
+		ntfs_attr *na;
+		s64 vcn, size, cb_size;
+
+		/* Only non-resident compressed attributes contain CBs. */
+		if (!a->non_resident ||
+				!(a->flags & ATTR_COMPRESSION_MASK))
+			continue;
+
+		name = (ntfschar *)((u8 *)a + le16_to_cpu(a->name_offset));
+		na = ntfs_attr_open(ni, AT_DATA,
+				a->name_length ? name : AT_UNNAMED,
+				a->name_length);
+		if (!na)
+			continue;
+
+		if (!NAttrCompressed(na) || na->compression_block_size == 0) {
+			ntfs_attr_close(na);
+			continue;
+		}
+
+		cb_size = na->compression_block_size;
+		size = na->data_size;
+
+		if (cb_size > buf_size) {
+			u8 *nbuf = realloc(buf, cb_size);
+
+			if (!nbuf) {
+				ntfs_attr_close(na);
+				break;
+			}
+			buf = nbuf;
+			buf_size = cb_size;
+		}
+
+		for (vcn = 0; vcn < size; vcn += cb_size) {
+			s64 want = size - vcn;
+			s64 got;
+
+			if (want > cb_size)
+				want = cb_size;
+
+			got = ntfs_attr_pread(na, vcn, want, buf);
+			if (got == want)
+				continue;
+
+			/* This compression unit could not be decompressed. */
+			ntfs_init_problem_ctx(&pctx, ni, na, NULL, NULL,
+					ni->mrec, a, NULL);
+			fsck_err_found();
+			ntfs_log_error("Inode(%"PRIu64"): compression unit at "
+					"offset %"PRId64" failed to decompress\n",
+					ni->mft_no, vcn);
+			ntfs_fix_problem(ni->vol, PR_COMPRESSED_UNIT_CORRUPTED,
+					&pctx);
+
+			/*
+			 * Destructive salvage: turn the dead unit into a hole.
+			 * Only under -S, and only if the operator agrees to the
+			 * PR_COMPRESSED_UNIT_SPARSED prompt.
+			 */
+			if (opt_salvage &&
+					ntfs_fix_problem(ni->vol,
+						PR_COMPRESSED_UNIT_SPARSED, &pctx)) {
+				if (!ntfsck_sparse_compression_unit(na, vcn))
+					fsck_err_fixed();
+			}
+		}
+		ntfs_attr_close(na);
+	}
+
+	free(buf);
+	ntfs_attr_put_search_ctx(ctx);
+}
+
+/*
+ * ntfsck_sparse_compression_unit - replace one compression unit with a hole.
+ *
+ * @na:		compressed attribute
+ * @cb_vcn_bytes: byte offset (compression-unit aligned) of the dead unit
+ *
+ * The unit's real clusters are freed and its VCN range becomes a single sparse
+ * hole, so the file reads back zeros there instead of failing to decompress.
+ * The attribute's mapping pairs and compressed-size accounting are rewritten to
+ * match. This is destructive (the unit's contents are gone) and is only
+ * reached under salvage-aggressive mode.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+static int ntfsck_sparse_compression_unit(ntfs_attr *na, s64 cb_vcn_bytes)
+{
+	ntfs_volume *vol = na->ni->vol;
+	runlist *new_rl, *punch_rl = NULL;
+	VCN start_vcn;
+	s64 len, alloc_clusters;
+	int rl_size;
+
+	if (!NAttrCompressed(na) || na->compression_block_clusters == 0)
+		return -1;
+
+	if (ntfs_attr_map_whole_runlist(na))
+		return -1;
+
+	start_vcn = cb_vcn_bytes >> vol->cluster_size_bits;
+	len = na->compression_block_clusters;
+
+	/* Keep the hole within the attribute's allocated cluster range. */
+	alloc_clusters = na->allocated_size >> vol->cluster_size_bits;
+	if (start_vcn >= alloc_clusters)
+		return -1;
+	if (start_vcn + len > alloc_clusters)
+		len = alloc_clusters - start_vcn;
+	if (len <= 0)
+		return -1;
+
+	for (rl_size = 0; na->rl[rl_size].length; rl_size++)
+		;
+	rl_size++;	/* count the terminator too */
+
+	new_rl = ntfs_rl_punch_hole(na->rl, rl_size, start_vcn, len, &punch_rl);
+	if (!new_rl)
+		return -1;
+	na->rl = new_rl;
+
+	/* Release the clusters that used to back the (now dead) unit. */
+	if (punch_rl) {
+		ntfs_cluster_free_from_rl(vol, punch_rl);
+		free(punch_rl);
+	}
+
+	/* Recompute the compressed size from the new (holier) runlist. */
+	na->compressed_size = ntfs_rl_get_compressed_size(vol, na->rl);
+
+	NAttrSetRunlistDirty(na);
+	if (ntfs_attr_update_mapping_pairs(na, 0))
+		return -1;
+
+	ntfs_inode_mark_dirty(na->ni);
+	return 0;
+}
+/*
+ * The hard link count in the MFT record header must equal the number of
+ * $FILE_NAME attributes of the record: every name, including a separate
+ * DOS short name, is one $FILE_NAME plus one index entry in a directory.
+ * The directory walk verifies the index-entry side of every name (and
+ * the orphan pass rebuilds it), so counting the attributes completes the
+ * link accounting. A wrong count is dangerous in both directions: too
+ * low frees the record while names still point at it, too high keeps a
+ * deleted record allocated forever.
+ *
+ * A record without any $FILE_NAME is left alone: the name checks that
+ * follow remove the referencing index entry and hand the record to the
+ * orphan pass, which does its own link accounting.
+ */
+static void ntfsck_check_link_count(ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *ctx;
+	u16 nlink = 0;
+	int walk_err;
+	problem_context_t pctx = {0, };
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return;
+
+	while (!ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+				CASE_SENSITIVE, 0, NULL, 0, ctx))
+		nlink++;
+	walk_err = errno;
+	ntfs_attr_put_search_ctx(ctx);
+
+	/* The walk itself failed: this count proves nothing. */
+	if (walk_err != ENOENT)
+		return;
+
+	if (!nlink || nlink == le16_to_cpu(ni->mrec->link_count))
+		return;
+
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec,
+			NULL, NULL);
+	pctx.dsize = nlink;
+	fsck_err_found();
+	if (ntfs_fix_problem(ni->vol, PR_MFT_LINK_COUNT_MISMATCH, &pctx)) {
+		ni->mrec->link_count = cpu_to_le16(nlink);
+		ntfs_inode_mark_dirty(ni);
+		fsck_err_fixed();
+	}
 }
 
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
@@ -2930,37 +6412,132 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 			goto err_out;
 	}
 
-	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
-		goto err_out;
+	ntfsck_check_link_count(ni);
+
+	if (ntfsck_check_inode_fields(ictx->ni, ni, ie, ictx))
+		goto remove_index_out;
 
 	/* Check file type */
 	flags = ntfsck_check_file_type(ni, ictx, ie_fn);
 	if (flags < 0)
-		goto err_out;
+		goto remove_index_out;
 
 	if (flags & FILE_ATTR_I30_INDEX_PRESENT) {
 		ret = ntfsck_check_directory(ni);
 		if (ret)
-			goto err_out;
+			goto remove_index_out;
 	} else if (flags & FILE_ATTR_VIEW_INDEX_PRESENT) {
-		/* TODO: check view index */
+		ret = ntfsck_check_view_index(ni);
+		if (ret)
+			goto remove_index_out;
+	} else if (ni->mrec->flags & MFT_RECORD_IS_4) {
+		ret = ntfsck_check_extend_inode(ni);
+		if (ret)
+			goto remove_index_out;
 	} else {
 		ret = ntfsck_check_file(ni);
 		if (ret)
-			goto err_out;
+			goto remove_index_out;
 	}
+
+	/* validate extended attribute chain ($EA / $EA_INFORMATION) */
+	ntfsck_check_ea(ni);
+
+	/* validate reparse point ($REPARSE_POINT / $Extend/$Reparse) */
+	ntfsck_check_reparse(ni);
+
+	/* validate $SI security_id against $Secure's $SII index */
+	ntfsck_check_security_id(ni);
+
+	/* validate $SI usn against $Extend/$UsnJrnl */
+	ntfsck_check_usn(ni);
+
+	/* validate compression units of compressed data attributes */
+	ntfsck_check_compressed(ni);
 
 	/* check $FILE_NAME */
 	ret = ntfsck_check_file_name_attr(ni, ie_fn, ictx);
 	if (ret < 0)
-		goto err_out;
+		goto remove_index_out;
 
 	/* FALSE or TRUE? */
 	ntfsck_set_mft_record_bitmap(ni, FALSE);
 	return STATUS_OK;
 
+remove_index_out:
+	ntfsck_check_inode_non_resident(ni, 0);
+	return STATUS_NOT_FOUND;
+
 err_out:
 	ntfsck_check_inode_non_resident(ni, 0);
+	return STATUS_ERROR;
+}
+
+static int ntfsck_check_system_inode_detail(ntfs_inode *ni)
+{
+	if (!ni)
+		return STATUS_ERROR;
+
+	switch (ni->mft_no) {
+	case FILE_MFT:
+	case FILE_MFTMirr:
+	case FILE_LogFile:
+	case FILE_AttrDef:
+	case FILE_Bitmap:
+	case FILE_Boot:
+	case FILE_BadClus:
+	case FILE_UpCase:
+		return ntfsck_check_file(ni);
+	default:
+		return STATUS_OK;
+	}
+}
+
+static int ntfsck_check_extend_inode(ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *ctx;
+	BOOL has_data = FALSE;
+	BOOL has_logged_stream = FALSE;
+	BOOL has_unnamed_data = FALSE;
+	int ret;
+
+	if (!ni)
+		return STATUS_ERROR;
+
+	if (ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_Q, 2) ||
+			ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_O, 2) ||
+			ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_R, 2))
+		return ntfsck_check_view_index(ni);
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return STATUS_ERROR;
+
+	while (!(ret = ntfs_attrs_walk(ctx))) {
+		if (ctx->attr->type == AT_DATA) {
+			has_data = TRUE;
+			if (!ctx->attr->name_length)
+				has_unnamed_data = TRUE;
+		} else if (ctx->attr->type == AT_LOGGED_UTILITY_STREAM) {
+			has_logged_stream = TRUE;
+		}
+	}
+
+	if (ret == -1 && errno == ENOENT)
+		ret = STATUS_OK;
+
+	ntfs_attr_put_search_ctx(ctx);
+	if (ret)
+		return STATUS_ERROR;
+
+	if (has_unnamed_data)
+		return ntfsck_check_file(ni);
+
+	if (has_data || has_logged_stream)
+		return STATUS_OK;
+
+	ntfs_log_error("$Extend sub-file inode(%"PRIu64") has no data or "
+			"logged utility stream\n", ni->mft_no);
 	return STATUS_ERROR;
 }
 
@@ -2974,24 +6551,31 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		goto err_out;
 
 	if (ni->attr_list) {
-		ntfsck_check_attr_list(ni);
-		ntfs_inode_attach_all_extents(ni);
+		if (ntfsck_check_attr_list(ni))
+			goto err_out;
+
+		if (ntfs_inode_attach_all_extents(ni))
+			goto err_out;
 	}
 
-	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
+	ntfsck_check_link_count(ni);
+
+	if (ntfsck_check_inode_fields(ictx->ni, ni, ie, ictx))
 		goto err_out;
 
 	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
 		ret = ntfsck_check_directory(ni);
+		if (ret)
+			goto err_out;
+	} else if (ni->mrec->flags & MFT_RECORD_IS_VIEW_INDEX) {
+		ret = ntfsck_check_view_index(ni);
+		if (ret)
+			goto err_out;
 	}
 
-	/* TODO: check index
-	if (ni->mrec->flags & MFT_RECORD_IS_VIEW_INDEX) {
-		ret = ntfsck_check_index(ni);
-	}
-	*/
-
-	/* TODO: check system file more detail respectively. */
+	ret = ntfsck_check_system_inode_detail(ni);
+	if (ret)
+		goto err_out;
 
 	ntfsck_set_mft_record_bitmap(ni, FALSE);
 	return STATUS_OK;
@@ -3025,14 +6609,31 @@ static int ntfsck_check_orphan_inode(ntfs_inode *parent_ni, ntfs_inode *ni)
 		if (ret)
 			goto err_out;
 	} else if (ni->mrec->flags & MFT_RECORD_IS_VIEW_INDEX) {
-		/* TODO: check view index */
+		ret = ntfsck_check_view_index(ni);
+		if (ret)
+			goto err_out;
 	} else if (ni->mrec->flags & MFT_RECORD_IS_4) {
-		/* TODO: check $Extend sub-files */
+		ret = ntfsck_check_extend_inode(ni);
+		if (ret)
+			goto err_out;
 	} else {
 		ret = ntfsck_check_file(ni);
 		if (ret)
 			goto err_out;
 	}
+
+	/*
+	 * Re-linked orphans must get the same attribute validation as inodes
+	 * reached through the normal directory walk (see ntfsck_check_inode());
+	 * otherwise corruption inside an orphan -- a bad reparse point, a broken
+	 * $EA chain, an undecompressable unit -- survives the recovery pass and
+	 * is only caught on the next full run, so ntfsck never converges.
+	 */
+	ntfsck_check_ea(ni);
+	ntfsck_check_reparse(ni);
+	ntfsck_check_security_id(ni);
+	ntfsck_check_usn(ni);
+	ntfsck_check_compressed(ni);
 
 	return STATUS_OK;
 
@@ -3089,7 +6690,6 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	u64 mft_no;
 	int ret = STATUS_OK;
 	FILE_NAME_ATTR *ie_fn = &ie->key.file_name;
-	problem_context_t pctx = {0, };
 
 	if (!ie)
 		return STATUS_ERROR;
@@ -3099,8 +6699,6 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	if ((ntfsck_opened_ni_vol(MREF(mref)) == TRUE) || mft_no == FILE_root)
 		return STATUS_OK;
 
-	ntfs_init_problem_ctx(&pctx, NULL, NULL, NULL, ictx, NULL, NULL, ie_fn);
-	pctx.inum = mft_no;
 #ifdef DEBUG
 	char *filename;
 	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
@@ -3112,6 +6710,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	ni = ntfsck_open_inode(vol, mft_no);
 	if (ni) {
 		BOOL is_mft_checked = FALSE;
+		BOOL lenient;
 
 		/*
 		 * check if mft record is already checked
@@ -3119,25 +6718,64 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		if (ntfs_fsck_mftbmp_get(vol, ni->mft_no)) {
 			is_mft_checked = TRUE;
 
+			/* Check every index entry, including additional hard links. */
+			if (ntfsck_check_parent_mft_record(ictx->ni, ni, ie, ictx)) {
+				corrupt_index_reference_failures++;
+				ntfsck_close_inode(ni);
+				goto remove_index;
+			}
+
 			/* Check file type */
 			if (ntfsck_check_file_type(ni, ictx, ie_fn) < 0) {
+				corrupt_index_reference_failures++;
 				ntfsck_close_inode(ni);
 				goto remove_index;
 			}
 
 			/* check $FILE_NAME */
 			if (ntfsck_check_file_name_attr(ni, ie_fn, ictx) < 0) {
+				corrupt_index_reference_failures++;
 				ntfsck_close_inode(ni);
 				goto remove_index;
+			}
+			/*
+			 * The aggregate FILE_NAME repair pass reuses the bitmap built by the
+			 * counting pass. A checked directory must still be queued, otherwise this
+			 * second traversal stops at the root and never reaches mismatches in
+			 * nested directories.
+			 */
+			if ((fn_parent_seqno_repair_apply_pass ||
+					fn_size_repair_apply_pass ||
+					index_reserved_repair_apply_pass) &&
+					ntfsck_is_directory(ie_fn)) {
+				dir = (struct dir *)calloc(1, sizeof(struct dir));
+				if (!dir) {
+					ntfs_log_error("Failed to allocate for subdir.\n");
+					ntfsck_close_inode(ni);
+					ret = STATUS_ERROR;
+					goto err_out;
+				}
+				dir->mft_no = ni->mft_no;
+				dir->system = (utils_is_system_metadata(ni) == 1) ||
+						((walking_system_dir ||
+						  (utils_is_system_metadata(ictx->ni) == 1)) &&
+						 (ictx->ni->mft_no != FILE_root));
+				ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
 			}
 			ntfsck_close_inode(ni);
 			return STATUS_OK;
 		}
 
-		/* checking for system files or not */
-		if ((utils_is_metadata(ni) == 1) ||
-				((utils_is_metadata(ictx->ni) == 1) &&
-				 (ictx->ni->mft_no != FILE_root))) {
+		/*
+		 * Checking for system files or not. Deliberately do not use
+		 * utils_is_metadata() here: it also matches ordinary user files carrying
+		 * SYSTEM|HIDDEN attributes (e.g. bootmgr, "System Volume Information").
+		 */
+		lenient = (utils_is_system_metadata(ni) == 1) ||
+				((walking_system_dir ||
+				  (utils_is_system_metadata(ictx->ni) == 1)) &&
+				 (ictx->ni->mft_no != FILE_root));
+		if (lenient) {
 			/*
 			 * Do not check return value because system files can be deleted.
 			 * this check may be already done in check system files.
@@ -3145,17 +6783,20 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			ret = ntfsck_check_system_inode(ni, ie, ictx);
 		} else {
 			ret = ntfsck_check_inode(ni, ie, ictx);
-			if (ret) {
-				ntfs_log_error("Failed to check inode(%"PRIu64") "
-						"in parent(%"PRIu64") index.\n",
-						ni->mft_no, ictx->ni->mft_no);
-
+			if (ret == STATUS_NOT_FOUND) {
+				corrupt_index_inode_validation_failures++;
 				NInoFileNameClearDirty(ni);
 				NInoAttrListClearDirty(ni);
 				NInoClearDirty(ni);
-				/* TODO: distinguish delete or not, as error type */
 
 				/* Do not clear bitmap on disk */
+				ntfsck_close_inode(ni);
+				goto remove_index;
+			} else if (ret) {
+				corrupt_index_inode_validation_failures++;
+				ntfs_log_debug("Failed to validate inode(%"PRIu64") "
+						"from parent(%"PRIu64").\n",
+						ni->mft_no, ictx->ni->mft_no);
 				ntfsck_close_inode(ni);
 				goto remove_index;
 			}
@@ -3171,41 +6812,30 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			}
 
 			dir->mft_no = ni->mft_no;
+			dir->system = lenient;
 			ntfsck_close_inode(ni);
 			ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
 		} else {
 			ret = ntfsck_close_inode_in_dir(ni, ictx->ni);
 			if (ret) {
+				corrupt_index_sync_failures++;
 				ntfs_log_error("Failed to close inode(%"PRIu64")\n",
 						ni->mft_no);
 				goto remove_index;
 			}
 		}
 	} else {
-		char *crtname;
-
-		ntfs_log_error("Failed to open inode(%"PRIu64")\n", mft_no);
-
+		corrupt_index_unopenable_inodes++;
 remove_index:
-		crtname = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
 		fsck_err_found();
-		pctx.filename = crtname;
-		if (ntfs_fix_problem(vol, PR_IDX_ENTRY_CORRUPTED, &pctx)) {
-			ictx->entry = ie;
-			ret = ntfs_index_rm(ictx);
-			if (ret) {
-				ntfs_log_error("Failed to remove index entry of inode(%"PRIu64":%s)\n",
-						mft_no, crtname);
-			} else {
-				ntfs_log_verbose("Index entry of inode(%"PRIu64":%s) is deleted\n",
-						mft_no, crtname);
-				ret = STATUS_FIXED;
-				fsck_err_fixed();
-				if (ictx->actx)
-					ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
-			}
-		}
-		free(crtname);
+		corrupt_index_entries++;
+		if (ntfsck_defer_index_repair(NTFSCK_DEFER_CORRUPT_ENTRY,
+				ictx->ni->mft_no, ie->indexed_file, ie_fn,
+				le16_to_cpu(ie->key_length), 0, 0,
+				ntfsck_cmp_parent_mft_sequence(ictx->ni, ie_fn)))
+			ret = STATUS_ERROR;
+		else
+			ret = STATUS_OK;
 	}
 
 err_out:
@@ -3222,6 +6852,9 @@ static int ntfsck_set_index_bitmap(ntfs_inode *ni, ntfs_index_context *ictx,
 	s64 vcn = -1;
 	s64 pos;	/* ib index of vcn */
 	u32 bpos;	/* byte position in bitmap for ib index of vcn */
+	u32 old_size;
+	u32 new_size;
+	u8 *new_ibm;
 	int i;
 
 	if (!ictx->ib)
@@ -3240,15 +6873,18 @@ static int ntfsck_set_index_bitmap(ntfs_inode *ni, ntfs_index_context *ictx,
 	bpos = pos >> NTFSCK_BYTE_TO_BITS;
 
 	if (ictx->ni->fsck_ibm_size < bpos + 1) {
-		ictx->ni->fsck_ibm = ntfs_realloc(ictx->ni->fsck_ibm,
-				(bm_na->data_size + 8) & ~7);
-		if (!ictx->ni->fsck_ibm) {
+		old_size = ictx->ni->fsck_ibm_size;
+		new_size = (bpos + 1 + 7) & ~7U;
+		new_ibm = ntfs_realloc(ictx->ni->fsck_ibm, new_size);
+		if (!new_ibm) {
 			ntfs_log_perror("Failed to realloc fsck_ibm(%"PRId64")",
-					bm_na->data_size);
+					(s64)new_size);
 			return STATUS_ERROR;
 		}
 
-		ictx->ni->fsck_ibm_size = (bm_na->data_size + 8) & ~7;
+		ictx->ni->fsck_ibm = new_ibm;
+		memset(ictx->ni->fsck_ibm + old_size, 0, new_size - old_size);
+		ictx->ni->fsck_ibm_size = new_size;
 	}
 
 	for (i = ictx->pindex; i > 0; i--) {
@@ -3264,8 +6900,11 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 {
 	s64 ibm_size = 0;
 	s64 wcnt = 0;
+	s64 old_size;
 	u8 *ni_ibm = NULL;	/* for index bitmap reading from disk: $BITMAP */
+	u8 *new_ibm = NULL;
 	ntfs_volume *vol;
+	int ret = STATUS_OK;
 	problem_context_t pctx = {0, };
 
 	if (!ni || !ni->fsck_ibm)
@@ -3284,17 +6923,38 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 	}
 
 	if (ibm_size != ni->fsck_ibm_size) {
-		/* FIXME: if ni->fsck_ibm_size is larger than ibm_size,
-		 * it could allocate cluster in ntfs_attr_pwrite() */
 		ntfs_log_error("\nBitmap changed during check_inodes\n");
 		fsck_err_found();
+
+		if (ni->fsck_ibm_size < ibm_size) {
+			old_size = ni->fsck_ibm_size;
+			new_ibm = ntfs_realloc(ni->fsck_ibm, ibm_size);
+			if (!new_ibm) {
+				ret = STATUS_ERROR;
+				goto out;
+			}
+			ni->fsck_ibm = new_ibm;
+			memset(ni->fsck_ibm + old_size, 0, ibm_size - old_size);
+			ni->fsck_ibm_size = ibm_size;
+		}
+
 		if (ntfs_fix_problem(vol, PR_IDX_BITMAP_SIZE_MISMATCH, &pctx)) {
-			wcnt = ntfs_attr_pwrite(bm_na, 0, ni->fsck_ibm_size, ni->fsck_ibm);
-			if (wcnt == ni->fsck_ibm_size)
+			if (ni->fsck_ibm_size > ibm_size) {
+				ntfs_log_error("Refusing to grow $BITMAP of inode(%"PRIu64") "
+						"during index bitmap verification\n",
+						ni->mft_no);
+				ret = STATUS_ERROR;
+				goto out;
+			}
+
+			wcnt = ntfs_attr_pwrite(bm_na, 0, ibm_size, ni->fsck_ibm);
+			if (wcnt == ibm_size)
 				fsck_err_fixed();
-			else
+			else {
 				ntfs_log_error("Can't write $BITMAP(%"PRId64") "
 						"of inode(%"PRIu64")\n", wcnt, ni->mft_no);
+				ret = STATUS_ERROR;
+			}
 		}
 		goto out;
 	}
@@ -3316,25 +6976,178 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 		}
 #endif
 		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_IDX_BITMAP_MISMATCH, &pctx)) {
-			wcnt = ntfs_attr_pwrite(bm_na, 0, ibm_size, ni->fsck_ibm);
-			if (wcnt == ibm_size)
-				fsck_err_fixed();
-			else
-				ntfs_log_error("Can't write $BITMAP(%"PRId64") "
-						"of inode(%"PRIu64")\n", wcnt, ni->mft_no);
-		}
+		index_bitmap_mismatches++;
+		if (ntfsck_defer_index_repair(NTFSCK_DEFER_INDEX_BITMAP,
+				ni->mft_no, 0, ni->fsck_ibm, ibm_size, 0, 0, FALSE))
+			ret = STATUS_ERROR;
 	}
 
 out:
 	free(ni_ibm);
 
+	return ret;
+}
+
+/*
+ * Zero the stale LSN of the index block at byte position @pos after a
+ * $LogFile reset. As with MFT records (see ntfsck_reset_mft_lsn()) the LSN is
+ * not multi sector protected, so it is poked in place: no fixup round trip,
+ * and blocks whose fixup or content is broken get scrubbed all the same.
+ */
+static void ntfsck_reset_ib_lsn(ntfs_attr *ia_na, s64 pos)
+{
+	INDEX_BLOCK ib;
+
+	/* magic through lsn: the first 16 bytes are enough */
+	if (ntfs_attr_pread(ia_na, pos,
+				offsetof(INDEX_BLOCK, index_block_vcn), &ib) !=
+			offsetof(INDEX_BLOCK, index_block_vcn))
+		return;
+	if (!ntfs_is_indx_record(ib.magic) || !ib.lsn)
+		return;
+	ib.lsn = const_cpu_to_sle64(0);
+	ntfs_attr_pwrite(ia_na, pos + offsetof(INDEX_BLOCK, lsn),
+			sizeof(ib.lsn), &ib.lsn);
+}
+
+/* Far beyond any tree the block/record size ratio can produce. */
+#define NTFSCK_MAX_INDEX_DEPTH	16
+
+/* ntfsck_check_entries_order() found two entries carrying the same key. */
+#define NTFSCK_ORDER_DUPLICATE	1
+
+/*
+ * State shared across one in-order index tree walk. The previously visited
+ * key is copied out of its node buffer because each level's buffer is freed
+ * on the way back up, while the comparison spans node boundaries.
+ */
+struct ntfsck_order_walk {
+	ntfs_index_context *ictx;
+	COLLATE collate;
+	u8 *prev_key;
+	u16 prev_key_len;
+	u8 *visited;	/* index blocks already descended into */
+	u64 max_ib_bits;
+	int depth;
+};
+
+static int ntfsck_check_subtree_order(struct ntfsck_order_walk *ow, VCN vcn);
+
+/*
+ * Walk the entries of one node in order, descending into a sub-node before
+ * its owning entry key is compared. A sorted tree hands the keys to
+ * @ow->collate in ascending order, so an inversion between entries that never
+ * share a node is caught the same as one between neighbours.
+ */
+static int ntfsck_check_entries_order(struct ntfsck_order_walk *ow,
+		u8 *entries, u8 *entries_end)
+{
+	ntfs_index_context *ictx = ow->ictx;
+	ntfs_volume *vol = ictx->ni->vol;
+	INDEX_ENTRY *ie = (INDEX_ENTRY *)entries;
+	u16 key_len;
+
+	for (;; ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
+		if ((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > entries_end ||
+				(u8 *)ie + le16_to_cpu(ie->length) > entries_end)
+			return STATUS_ERROR;
+
+		if (ie->ie_flags & INDEX_ENTRY_NODE) {
+			VCN sub_vcn = ntfs_ie_get_vcn(ie);
+			u64 bmp_bit;
+			int sub_ret;
+
+			if (sub_vcn < 0)
+				return STATUS_ERROR;
+			bmp_bit = ((u64)sub_vcn << ictx->vcn_size_bits) /
+					ictx->block_size;
+			/* A block referenced twice means a cycle. */
+			if (bmp_bit >= ow->max_ib_bits ||
+					ntfs_bit_get(ow->visited, bmp_bit))
+				return STATUS_ERROR;
+			ntfs_bit_set(ow->visited, bmp_bit, 1);
+			sub_ret = ntfsck_check_subtree_order(ow, sub_vcn);
+			if (sub_ret)
+				return sub_ret;
+		}
+
+		if (ie->ie_flags & INDEX_ENTRY_END)
+			break;
+
+		if (!le16_to_cpu(ie->length))
+			break;
+
+		key_len = le16_to_cpu(ie->key_length);
+		if ((u8 *)&ie->key + key_len >
+				(u8 *)ie + le16_to_cpu(ie->length))
+			return STATUS_ERROR;
+
+		if (ow->prev_key_len && key_len) {
+			int cmp = ow->collate(vol, ow->prev_key,
+					ow->prev_key_len, &ie->key, key_len);
+
+			if (cmp > 0)
+				return STATUS_ERROR;
+			if (!cmp)
+				return NTFSCK_ORDER_DUPLICATE;
+		}
+
+		memcpy(ow->prev_key, &ie->key, key_len);
+		ow->prev_key_len = key_len;
+	}
+
 	return STATUS_OK;
+}
+
+/*
+ * Read the index block at @vcn and continue the in-order walk inside it. The
+ * blocks already passed the per-node checks, but in no-repair mode nothing
+ * was written back, so the header fields feeding the entry bounds are guarded
+ * again.
+ */
+static int ntfsck_check_subtree_order(struct ntfsck_order_walk *ow, VCN vcn)
+{
+	ntfs_index_context *ictx = ow->ictx;
+	INDEX_BLOCK *ib;
+	u32 entries_offset, index_length;
+	int ret = STATUS_ERROR;
+
+	if (ow->depth >= NTFSCK_MAX_INDEX_DEPTH)
+		return STATUS_ERROR;
+
+	ib = ntfs_malloc(ictx->block_size);
+	if (!ib) {
+		ntfs_log_error("Failed to allocate ib buffer\n");
+		/* Verified as far as memory allows; never repair on OOM. */
+		return STATUS_OK;
+	}
+
+	if (ntfs_attr_mst_pread(ictx->ia_na, vcn << ictx->vcn_size_bits, 1,
+				ictx->block_size, ib) != 1)
+		goto out;
+
+	entries_offset = le32_to_cpu(ib->index.entries_offset);
+	index_length = le32_to_cpu(ib->index.index_length);
+	if (entries_offset < sizeof(INDEX_HEADER) ||
+			index_length < entries_offset ||
+			offsetof(INDEX_BLOCK, index) + index_length >
+			ictx->block_size)
+		goto out;
+
+	ow->depth++;
+	ret = ntfsck_check_entries_order(ow,
+			(u8 *)&ib->index + entries_offset,
+			(u8 *)&ib->index + index_length);
+	ow->depth--;
+out:
+	free(ib);
+	return ret;
 }
 
 static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		ntfs_index_context *ictx)
 {
+	problem_code_t init_problem = PR_INDEX_INITIALIZE;
 	ntfs_attr *bmp_na = NULL;
 	INDEX_ALLOCATION *ia;
 	INDEX_ENTRY *ie;
@@ -3343,48 +7156,92 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	ntfs_inode *ni = ictx->ni;
 	VCN vcn;
 	u32 ir_size = le32_to_cpu(ir->index.index_length);
+	u32 ir_entries_offset;
+	u32 ir_entries_len;
 	u8 *ir_buf = NULL, *ia_buf = NULL, *bmp_buf = NULL, *index_end;
 	u64 max_ib_bits;
 	u32 vcn_per_ib;
 	VCN max_vcn;
 	int ret = STATUS_OK;
+	int ie_ret;
+	BOOL ir_repaired = FALSE;
+	u64 reserved_entries = 0;
+	INDEX_ENTRY *prev_ie = NULL;
+	COLLATE collate;
 	problem_context_t pctx = {0, };
 
+	/* NULL for a collation rule without a comparator (e.g. SID). */
+	collate = ntfs_get_collate_function(ir->collation_rule);
+
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec, NULL, NULL);
+
+	/*
+	 * An index without $INDEX_ALLOCATION still has root entries to validate;
+	 * only give up on errors other than the attribute being absent. With no
+	 * allocation max_ib_bits stays zero, so any root entry claiming a sub-node
+	 * fails its bound check below.
+	 */
+	max_ib_bits = 0;
 	ictx->ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION,
 			ictx->name, ictx->name_len);
-	if (!ictx->ia_na)
+	if (!ictx->ia_na && errno != ENOENT)
 		return;
 
-	bmp_na = ntfs_attr_open(ictx->ni, AT_BITMAP, ictx->name, ictx->name_len);
-	if (!bmp_na) {
-		ntfs_log_error("Failed to open bitmap\n");
-		goto out;
+	if (ictx->ia_na) {
+		bmp_na = ntfs_attr_open(ictx->ni, AT_BITMAP,
+				ictx->name, ictx->name_len);
+		if (!bmp_na) {
+			ntfs_log_error("Failed to open bitmap\n");
+			goto out;
+		}
+
+		bmp_buf = malloc(bmp_na->data_size);
+		if (!bmp_buf) {
+			ntfs_log_error("Failed to allocate bitmap buffer\n");
+			goto out;
+		}
+
+		if (ntfs_attr_pread(bmp_na, 0, bmp_na->data_size, bmp_buf) !=
+				bmp_na->data_size) {
+			ntfs_log_perror("Failed to read $BITMAP");
+			goto out;
+		}
+
+		/* Needed by the sub-node bound checks in both walks below. */
+		max_ib_bits = bmp_na->data_size << NTFSCK_BYTE_TO_BITS;
 	}
 
-	bmp_buf = malloc(bmp_na->data_size);
-	if (!bmp_buf) {
-		ntfs_log_error("Failed to allocate bitmap buffer\n");
-		goto out;
+	/*
+	 * index_length is measured from the start of the INDEX_HEADER, so the
+	 * entries occupy only (index_length - entries_offset) bytes. Copy just that
+	 * region; using index_length as the copy length would over-read
+	 * entries_offset bytes past the last entry (and malloc(0) when index_length
+	 * is zero).
+	 */
+	ir_entries_offset = le32_to_cpu(ir->index.entries_offset);
+	if (ir_size < ir_entries_offset ||
+			ir_entries_offset < sizeof(INDEX_HEADER) ||
+			offsetof(INDEX_ROOT, index) + ir_size >
+			le32_to_cpu(ictx->actx->attr->value_length)) {
+		ntfs_log_error("INDEX_ROOT of inode %"PRIu64" has an invalid "
+				"index_length(%u)/entries_offset(%u)\n",
+				ni->mft_no, ir_size, ir_entries_offset);
+		goto initialize_index;
 	}
+	ir_entries_len = ir_size - ir_entries_offset;
 
-	if (ntfs_attr_pread(bmp_na, 0, bmp_na->data_size, bmp_buf) != bmp_na->data_size) {
-		ntfs_log_perror("Failed to read $BITMAP");
-		goto out;
-	}
-
-	ir_buf = malloc(le32_to_cpu(ir->index.index_length));
+	ir_buf = malloc(ir_entries_len ? ir_entries_len : 1);
 	if (!ir_buf) {
 		ntfs_log_error("Failed to allocate ir buffer\n");
 		goto out;
 	}
 
-	memcpy(ir_buf, (u8 *)&ir->index + le32_to_cpu(ir->index.entries_offset),
-			ir_size);
+	memcpy(ir_buf, (u8 *)&ir->index + ir_entries_offset, ir_entries_len);
 
 	/* check entries in INDEX_ROOT */
 	ie = (INDEX_ENTRY *)ir_buf;
 	ih = &ir->index;
-	index_end = (u8 *)ie + le32_to_cpu(ih->index_length);
+	index_end = (u8 *)ir_buf + ir_entries_len;
 	for (; (u8 *)ie < index_end;
 			ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
 		/* check length bound */
@@ -3397,11 +7254,20 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 		if (ie->ie_flags & INDEX_ENTRY_NODE) {
 			VCN vcn = ntfs_ie_get_vcn(ie);
-			u32 sub_bmp_pos;
+			u64 sub_bmp_pos;
 
-			/* check bitmap for sub-node */
-			sub_bmp_pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
-			if (!ntfs_bit_get(bmp_buf, sub_bmp_pos)) {
+			/*
+			 * Bound the sub-node VCN before the bitmap lookup:
+			 * ntfs_bit_get() takes no size, so a corrupt VCN would
+			 * read far outside bmp_buf.
+			 */
+			if (vcn < 0)
+				goto bad_root_subnode;
+			sub_bmp_pos = ((u64)vcn << ictx->vcn_size_bits) /
+					ictx->block_size;
+			if (sub_bmp_pos >= max_ib_bits ||
+					!ntfs_bit_get(bmp_buf, sub_bmp_pos)) {
+bad_root_subnode:
 				ntfs_log_error("Index allocation subnode of inode(%"PRIu64
 						") is in not allocated bitmap cluster\n",
 						ni->mft_no);
@@ -3409,12 +7275,31 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 			}
 		}
 
-		/* The file name must not overflow from the entry */
-		if (ntfs_index_entry_inconsistent(vol, ie, COLLATION_FILE_NAME,
-					ni->mft_no, NULL) < 0) {
+		/* The index key must not overflow from the entry. */
+		ie_ret = ntfs_index_entry_inconsistent(vol, ie,
+				ictx->ir->collation_rule, ni->mft_no, NULL);
+		if (ie_ret < 0) {
 			ntfs_log_error("Index entry(%p) of inode(%"PRIu64
 					") is inconsistent\n", ie, ni->mft_no);
 			goto initialize_index;
+		}
+		if (ie_ret > 0)
+			ir_repaired = TRUE;
+
+		/*
+		 * Every writer leaves the reserved header field zero and no
+		 * reader uses it; a stray value only marks a dirtied entry,
+		 * so clear it.
+		 */
+		if (ie->reserved) {
+			if (!index_reserved_repair_apply_pass)
+				reserved_entries++;
+			else if (index_reserved_repair_approved) {
+				ie->reserved = 0;
+				ir_repaired = TRUE;
+				fsck_err_fixed();
+				index_reserved_repairs_applied++;
+			}
 		}
 
 		/* The last entry cannot contain a name. */
@@ -3423,7 +7308,63 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 		if (!le16_to_cpu(ie->length))
 			break;
+
+		/*
+		 * The entries must be sorted by the index collation. A misplaced entry is
+		 * invisible to lookups even though the walk sees it - the driver reports
+		 * the name missing on a volume fsck called clean - and cannot be patched in
+		 * place, so rebuild the index.
+		 */
+		if (collate && prev_ie && le16_to_cpu(prev_ie->key_length) &&
+				le16_to_cpu(ie->key_length)) {
+			int cmp = collate(vol, &prev_ie->key,
+					le16_to_cpu(prev_ie->key_length),
+					&ie->key,
+					le16_to_cpu(ie->key_length));
+
+			if (cmp > 0) {
+				ntfs_log_error("Index entries of inode(%"PRIu64
+						") are out of order\n",
+						ni->mft_no);
+				goto initialize_index;
+			}
+			/*
+			 * At most one of two entries carrying the same key
+			 * is reachable by a lookup; which one is undefined.
+			 * Not repairable in place - rebuilding re-inserts
+			 * one entry per key.
+			 */
+			if (!cmp) {
+				ntfs_log_error("Index of inode(%"PRIu64") has "
+						"duplicate keys\n", ni->mft_no);
+				goto initialize_index;
+			}
+		}
+		prev_ie = ie;
 	}
+
+	/*
+	 * The entries were walked in a scratch copy, so a repair made by
+	 * ntfs_index_entry_inconsistent() lives only in ir_buf. Put it back in the
+	 * resident INDEX_ROOT and mark the inode dirty; otherwise every repair round
+	 * rediscovers the same entry, counts it as found and fixed, and writes
+	 * nothing -- fsck never converges.
+	 */
+	if (ir_repaired) {
+		memcpy((u8 *)&ir->index + ir_entries_offset, ir_buf,
+				ir_entries_len);
+		/*
+		 * INDEX_ROOT can be relocated into an extent record, in which
+		 * case ir points into that record, not into ni->mrec.
+		 */
+		if (ictx->actx && ictx->actx->ntfs_ino)
+			ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
+		ntfs_inode_mark_dirty(ni);
+	}
+
+	/* Root-only index: no blocks to check. */
+	if (!ictx->ia_na)
+		goto out;
 
 	ia_buf = ntfs_malloc(ictx->block_size);
 	if (!ia_buf) {
@@ -3431,13 +7372,14 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		goto out;
 	}
 
-	max_ib_bits = bmp_na->data_size << NTFSCK_BYTE_TO_BITS;
 	max_vcn = ictx->ia_na->data_size >> ictx->vcn_size_bits;
 	vcn_per_ib = ictx->block_size >> ictx->vcn_size_bits;
 
 	/* check index block and entries in INDEX_ALLOCATION */
 	for (vcn = 0; vcn < max_vcn; vcn += vcn_per_ib) {
 		u32 bmp_bit;	/* bit location in $BITMAP for vcn */
+		BOOL mst_salvaged = FALSE;
+		BOOL ib_repaired = FALSE;
 
 		/* one bit of $Bitmap represents one index block,
 		 * so if vcn size is smaller than ib, one bit represent
@@ -3446,16 +7388,29 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		if (max_ib_bits <= bmp_bit)
 			break;
 
+		/*
+		 * The journal any LSN refers to was reset in parse #1 and a stale value
+		 * would make a future log replay skip its redo of this block (see
+		 * ntfsck_reset_mft_lsn()). Poked before the bitmap test because allocated
+		 * blocks the index bitmap marks free never reach the checks below, yet they
+		 * too are re-initialized through the log once the index grows.
+		 */
+		if (logfile_was_reset)
+			ntfsck_reset_ib_lsn(ictx->ia_na,
+					vcn << ictx->vcn_size_bits);
+
 		if (!ntfs_bit_get(bmp_buf, bmp_bit))
 			continue;
 
-		if (ntfs_attr_mst_pread(ictx->ia_na,
-					ntfs_ib_vcn_to_pos(ictx, vcn), 1,
-					ictx->block_size, ia_buf) != 1) {
-			ntfs_log_error("Failed to read index blocks of inode(%"PRIu64"), %d",
+		if (ntfsck_read_index_block(ictx, vcn,
+				(INDEX_BLOCK *)ia_buf, &mst_salvaged)) {
+			ntfs_log_error("Failed to read index blocks of inode(%"PRIu64"), %d\n",
 					ictx->ni->mft_no, errno);
 			goto initialize_index;
 		}
+		if (ntfsck_repair_index_block(ictx, vcn,
+				(INDEX_BLOCK *)ia_buf, mst_salvaged))
+			goto initialize_index;
 
 		if (ntfs_index_block_inconsistent(vol, ictx->ia_na,
 					(INDEX_ALLOCATION *)ia_buf,
@@ -3472,14 +7427,30 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		ie = (INDEX_ENTRY *)((u8 *)&ia->index +
 				le32_to_cpu(ia->index.entries_offset));
 
+		prev_ie = NULL;
 		for (;; ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
+			/*
+			 * Check the entry bounds before dereferencing ie. Advancing by ie->length
+			 * can move ie past index_end (ntfs_index_block_inconsistent() only
+			 * validated the block header, not the entry chain), so reading
+			 * ie->ie_flags or the sub-node VCN first would over-read the index block
+			 * buffer.
+			 */
+			if (((u8 *)ie < (u8 *)ia) ||
+					((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end) ||
+					((u8 *)ie + le16_to_cpu(ie->length) > index_end)) {
+				ntfs_log_error("Index entry out of bounds in inode "
+						"(%"PRId64")\n", ni->mft_no);
+				goto initialize_index;
+			}
+
 			/* check bitmap for sub-node */
 			if (ie->ie_flags & INDEX_ENTRY_NODE) {
 				VCN vcn = ntfs_ie_get_vcn(ie);
 
 				/* calculate bit location in $Bitmap for vcn */
 				bmp_bit = (vcn << ictx->vcn_size_bits) / ictx->block_size;
-				if (max_ib_bits <= bmp_bit) {
+				if (vcn < 0 || max_ib_bits <= bmp_bit) {
 					ntfs_log_error("Subnode of inode(%"PRIu64
 							") is larger than max vcn\n",
 							ni->mft_no);
@@ -3494,21 +7465,27 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 				}
 			}
 
-			/* check length bound */
-			if (((u8 *)ie < (u8 *)ia) ||
-					((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end) ||
-					((u8 *)ie + le16_to_cpu(ie->length) > index_end)) {
-				ntfs_log_error("Index entry out of bounds in directory inode "
-						"(%"PRId64")\n", ni->mft_no);
-				goto initialize_index;
-			}
-
-			/* The file name must not overflow from the entry */
-			if (ntfs_index_entry_inconsistent(vol, ie,
-						COLLATION_FILE_NAME, ni->mft_no, NULL)) {
+			/* The index key must not overflow from the entry. */
+			ie_ret = ntfs_index_entry_inconsistent(vol, ie,
+					ictx->ir->collation_rule, ni->mft_no, NULL);
+			if (ie_ret < 0) {
 				ntfs_log_error("Index entry(%p) of inode(%"PRIu64
 						") is inconsistent\n", ie, ni->mft_no);
 				goto initialize_index;
+			}
+			if (ie_ret > 0)
+				ib_repaired = TRUE;
+
+			/* Zero reserved header field, as in the root above. */
+			if (ie->reserved) {
+				if (!index_reserved_repair_apply_pass)
+					reserved_entries++;
+				else if (index_reserved_repair_approved) {
+					ie->reserved = 0;
+					ib_repaired = TRUE;
+					fsck_err_fixed();
+					index_reserved_repairs_applied++;
+				}
 			}
 
 			/* The last entry cannot contain a name. */
@@ -3517,6 +7494,82 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 			if (!le16_to_cpu(ie->length))
 				break;
+
+			/* Sorted and unique within the node, as in the root. */
+			if (collate && prev_ie &&
+					le16_to_cpu(prev_ie->key_length) &&
+					le16_to_cpu(ie->key_length)) {
+				int cmp = collate(vol, &prev_ie->key,
+						le16_to_cpu(prev_ie->key_length),
+						&ie->key,
+						le16_to_cpu(ie->key_length));
+
+				if (cmp > 0) {
+					ntfs_log_error("Index entries of inode"
+							"(%"PRIu64") are out "
+							"of order\n",
+							ni->mft_no);
+					goto initialize_index;
+				}
+				if (!cmp) {
+					ntfs_log_error("Index of inode(%"PRIu64
+							") has duplicate "
+							"keys\n", ni->mft_no);
+					goto initialize_index;
+				}
+			}
+			prev_ie = ie;
+		}
+
+		/*
+		 * As with the root, an entry repaired above only exists in ia_buf. Write
+		 * the block back rather than rebuilding the whole index: the repair is
+		 * enough to make the block walkable, and a discarded one would be
+		 * rediscovered on every repair round.
+		 */
+		if (ib_repaired && ntfs_ib_write(ictx, (INDEX_BLOCK *)ia_buf))
+			goto initialize_index;
+	}
+
+	/*
+	 * The walks above compare only neighbouring entries inside one node, so an
+	 * entry that landed in the wrong block - sorted there, but colliding with
+	 * the separator keys around it - passes both. Redo the comparison as an
+	 * in-order traversal from the root, where any cross-node misplacement shows
+	 * up as an inversion.
+	 */
+	if (collate) {
+		struct ntfsck_order_walk ow = {
+			.ictx = ictx,
+			.collate = collate,
+			.max_ib_bits = max_ib_bits,
+		};
+		int order_ret = STATUS_OK;
+
+		ow.visited = ntfs_calloc(bmp_na->data_size);
+		/* Large enough for any key: key_length is 16 bits. */
+		ow.prev_key = ntfs_malloc(1 << 16);
+		if (ow.visited && ow.prev_key)
+			order_ret = ntfsck_check_entries_order(&ow, ir_buf,
+					ir_buf + ir_entries_len);
+		free(ow.visited);
+		free(ow.prev_key);
+		if (order_ret) {
+			if (order_ret == NTFSCK_ORDER_DUPLICATE)
+				ntfs_log_error("Index of inode(%"PRIu64") has "
+						"duplicate keys\n", ni->mft_no);
+			else
+				ntfs_log_error("Index entries of inode(%"PRIu64
+						") are out of order across "
+						"nodes\n", ni->mft_no);
+			goto initialize_index;
+		}
+	}
+	if (!index_reserved_repair_apply_pass) {
+		while (reserved_entries) {
+			reserved_entries--;
+			fsck_err_found();
+			index_reserved_entries++;
 		}
 	}
 
@@ -3542,15 +7595,20 @@ out:
 
 initialize_index:
 
+	if (ictx->name_len == 4 &&
+			!memcmp(ictx->name, NTFS_INDEX_I30, 4 * sizeof(ntfschar)))
+		init_problem = PR_DIR_IDX_INITIALIZE;
+
 	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec, NULL, NULL);
 	fsck_err_found();
-	if (!ntfs_fix_problem(vol, PR_DIR_IDX_INITIALIZE, &pctx))
+	if (!ntfs_fix_problem(vol, init_problem, &pctx))
 		goto out;
 
-	if (ni->mft_no == FILE_root)
+	if (ni->mft_no == FILE_root && init_problem == PR_DIR_IDX_INITIALIZE)
 		ret = ntfsck_initiaiize_root_index(ni, ictx);
 	else
-		ret = ntfsck_initialize_index_attr(ni);
+		ret = ntfsck_initialize_named_index_attr(ni,
+				ictx->name, ictx->name_len);
 
 	if (ret)
 		ntfs_log_perror("Failed to initialize index attributes of inode(%"PRIu64")\n",
@@ -3561,6 +7619,116 @@ initialize_index:
 	ntfs_log_info("inode(%"PRIu64") index is initialized\n", ni->mft_no);
 
 	goto out;
+}
+
+static int ntfsck_validate_named_index(ntfs_inode *ni,
+		ntfschar *name, u32 name_len)
+{
+	ntfs_attr_search_ctx *ctx = NULL;
+	ntfs_index_context *ictx = NULL;
+	INDEX_ROOT *ir;
+	ntfs_volume *vol;
+	int ret = STATUS_ERROR;
+
+	if (!ni || !name || !name_len)
+		return STATUS_ERROR;
+
+	vol = ni->vol;
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return STATUS_ERROR;
+
+	if (ntfs_attr_lookup(AT_INDEX_ROOT, name, name_len, CASE_SENSITIVE,
+				0, NULL, 0, ctx)) {
+		ntfs_log_perror("Index root attribute missing in inode %"PRId64"",
+				ni->mft_no);
+		goto out;
+	}
+	if (ntfsck_repair_named_index_root(ni, ctx))
+		goto out;
+
+	ictx = ntfs_index_ctx_get(ni, name, name_len);
+	if (!ictx)
+		goto out;
+
+	ir = (INDEX_ROOT *)((u8 *)ctx->attr +
+			le16_to_cpu(ctx->attr->value_offset));
+	ictx->ir = ir;
+	ictx->actx = ctx;
+	ctx = NULL;
+	ictx->parent_vcn[ictx->pindex] = VCN_INDEX_ROOT_PARENT;
+	ictx->is_in_root = TRUE;
+	ictx->parent_pos[ictx->pindex] = 0;
+
+	/*
+	 * In no-repair mode the header fix above was only counted, so
+	 * index_block_size may still hold a corrupt value; refuse to derive
+	 * block geometry from one that is out of range or not a power of two.
+	 */
+	ictx->block_size = le32_to_cpu(ir->index_block_size);
+	if (ictx->block_size < NTFS_BLOCK_SIZE ||
+			ictx->block_size > NTFSCK_MAX_INDEX_BLOCK_SIZE ||
+			(ictx->block_size & (ictx->block_size - 1))) {
+		ntfs_log_perror("Index block size (%d) is invalid "
+				"(sector size %d)", ictx->block_size,
+				NTFS_BLOCK_SIZE);
+		goto out;
+	}
+
+	if (vol->cluster_size <= ictx->block_size)
+		ictx->vcn_size_bits = vol->cluster_size_bits;
+	else
+		ictx->vcn_size_bits = NTFS_BLOCK_SIZE_BITS;
+
+	ntfsck_validate_index_blocks(vol, ictx);
+	ret = STATUS_OK;
+
+out:
+	if (ictx)
+		ntfs_index_ctx_put(ictx);
+	else if (ctx)
+		ntfs_attr_put_search_ctx(ctx);
+
+	return ret;
+}
+
+static int ntfsck_check_view_index(ntfs_inode *ni)
+{
+	struct named_index {
+		ntfschar *name;
+		u32 name_len;
+	};
+	static const struct named_index indexes[] = {
+		{ NTFS_INDEX_SII, 4 },
+		{ NTFS_INDEX_SDH, 4 },
+		{ NTFS_INDEX_Q, 2 },
+		{ NTFS_INDEX_O, 2 },
+		{ NTFS_INDEX_R, 2 },
+	};
+	int i;
+	BOOL found_index = FALSE;
+
+	if (!ni)
+		return STATUS_ERROR;
+
+	for (i = 0; i < (int)(sizeof(indexes) / sizeof(indexes[0])); i++) {
+		if (!ntfs_attr_exist(ni, AT_INDEX_ROOT,
+					indexes[i].name, indexes[i].name_len))
+			continue;
+
+		found_index = TRUE;
+		if (ntfsck_validate_named_index(ni,
+					indexes[i].name, indexes[i].name_len))
+			return STATUS_ERROR;
+	}
+
+	if (!found_index) {
+		ntfs_log_error("View index inode(%"PRIu64") has no known index root\n",
+				ni->mft_no);
+		return STATUS_ERROR;
+	}
+
+	return STATUS_OK;
 }
 
 static int ntfsck_remove_index(ntfs_inode *parent_ni, ntfs_index_context *ictx,
@@ -3707,6 +7875,13 @@ static ntfs_inode *ntfsck_check_root_inode(ntfs_volume *vol)
 	ntfs_inode *ni;
 
 	ni = ntfsck_open_inode(vol, FILE_root);
+	if (!ni)
+		/*
+		 * The root record is mandatory, so give it the same raw-record salvage
+		 * (fixup/BAAD repair, in-use flag) the MFT scan applies to every other
+		 * inode before giving up. It is always in use.
+		 */
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, FILE_root, TRUE);
 	if (!ni) {
 		ntfs_log_error("Couldn't open the root directory.\n");
 		goto err_out;
@@ -3720,14 +7895,20 @@ static ntfs_inode *ntfsck_check_root_inode(ntfs_volume *vol)
 			goto err_out;
 	}
 
+	/*
+	 * A structural failure of the root is fatal to the run, but bail out
+	 * gracefully instead of exit()ing from deep in a pass: returning NULL
+	 * lets the caller unwind and the top level report the volume as not
+	 * fully checked (and keep it dirty) rather than terminating abruptly.
+	 */
 	if (ntfsck_check_inode_non_resident(ni, 1)) {
 		ntfs_log_error("Failed to check non resident attribute of root directory.\n");
-		exit(STATUS_ERROR);
+		goto err_out;
 	}
 
 	if (ntfsck_check_directory(ni)) {
 		ntfs_log_error("Failed to check root directory.\n");
-		exit(STATUS_ERROR);
+		goto err_out;
 	}
 
 	ntfsck_set_mft_record_bitmap(ni, FALSE);
@@ -3772,16 +7953,20 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 	while (!ntfs_list_empty(&ntfs_dirs_list)) {
 
 		dir = ntfs_list_entry(ntfs_dirs_list.next, struct dir, list);
+		walking_system_dir = dir->system;
 		dir_ni = ntfsck_open_inode(vol, dir->mft_no);
 		if (!dir_ni) {
 			ntfs_log_perror("Failed to open inode (%"PRIu64")\n",
 					dir->mft_no);
+			namespace_walk_failed = TRUE;
 			goto err_continue;
 		}
 
 		ctx = ntfs_attr_get_search_ctx(dir_ni, NULL);
-		if (!ctx)
+		if (!ctx) {
+			namespace_walk_failed = TRUE;
 			goto err_continue;
+		}
 
 		/* Find the index root attribute in the mft record. */
 		if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4, CASE_SENSITIVE, 0, NULL,
@@ -3789,12 +7974,28 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			ntfs_log_perror("Index root attribute missing in directory inode "
 					"%"PRId64"", dir_ni->mft_no);
 			ntfs_attr_put_search_ctx(ctx);
+			namespace_walk_failed = TRUE;
+			goto err_continue;
+		}
+
+		/*
+		 * Repair INDEX_ROOT header fields (index_block_size,
+		 * clusters_per_index_block, collation_rule, entries_offset, index_length,
+		 * ...) before trusting ir->index_block_size below. View indexes get this
+		 * through ntfsck_validate_named_index(); the directory $I30 path needs the
+		 * same fix-up, otherwise a corrupt header makes the whole directory skip
+		 * repair.
+		 */
+		if (ntfsck_repair_named_index_root(dir_ni, ctx)) {
+			ntfs_attr_put_search_ctx(ctx);
+			namespace_walk_failed = TRUE;
 			goto err_continue;
 		}
 
 		ictx = ntfs_index_ctx_get(dir_ni, NTFS_INDEX_I30, 4);
 		if (!ictx) {
 			ntfs_attr_put_search_ctx(ctx);
+			namespace_walk_failed = TRUE;
 			goto err_continue;
 		}
 
@@ -3808,10 +8009,15 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		ictx->is_in_root = TRUE;
 		ictx->parent_pos[ictx->pindex] = 0;
 
+		/* See ntfsck_validate_named_index() on the extra bounds. */
 		ictx->block_size = le32_to_cpu(ir->index_block_size);
-		if (ictx->block_size < NTFS_BLOCK_SIZE) {
-			ntfs_log_perror("Index block size (%d) is smaller than the "
-					"sector size (%d)", ictx->block_size, NTFS_BLOCK_SIZE);
+		if (ictx->block_size < NTFS_BLOCK_SIZE ||
+				ictx->block_size > NTFSCK_MAX_INDEX_BLOCK_SIZE ||
+				(ictx->block_size & (ictx->block_size - 1))) {
+			ntfs_log_perror("Index block size (%d) is invalid "
+					"(sector size %d)", ictx->block_size,
+					NTFS_BLOCK_SIZE);
+			namespace_walk_failed = TRUE;
 			goto err_continue;
 		}
 
@@ -3833,11 +8039,12 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 					CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 			ntfs_log_perror("Index root attribute missing in directory inode "
 					"%"PRId64"", dir_ni->mft_no);
+			namespace_walk_failed = TRUE;
 			goto err_continue;
 		}
-		ictx->ir = ir;
 		ir = (INDEX_ROOT *)((u8 *)ctx->attr +
 				le16_to_cpu(ctx->attr->value_offset));
+		ictx->ir = ir;
 
 		/* The first index entry. */
 		next = (INDEX_ENTRY *)((u8 *)&ir->index +
@@ -3850,6 +8057,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			if (!ictx->ia_na) {
 				ntfs_log_perror("Failed to open index allocation of inode "
 						"%"PRIu64"", dir_ni->mft_no);
+				namespace_walk_failed = TRUE;
 				goto err_continue;
 			}
 
@@ -3858,6 +8066,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			if (!bm_na) {
 				ntfs_log_perror("Failed to open bitmap of inode "
 						"%"PRIu64"", dir_ni->mft_no);
+				namespace_walk_failed = TRUE;
 				goto err_continue;
 			}
 
@@ -3866,6 +8075,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 				dir_ni->fsck_ibm = ntfs_calloc(bm_na->data_size);
 				if (!dir_ni->fsck_ibm) {
 					ntfs_log_perror("Failed to allocate fsck_ibm memory\n");
+					namespace_walk_failed = TRUE;
 					goto err_continue;
 				}
 				dir_ni->fsck_ibm_size = bm_na->data_size;
@@ -3895,8 +8105,10 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
 			next = ntfs_index_walk_down(next, ictx);
-			if (!next)
+			if (!next) {
+				namespace_walk_failed = TRUE;
 				goto next_dir;
+			}
 		}
 
 		if (!(next->ie_flags & INDEX_ENTRY_END))
@@ -3905,14 +8117,16 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		while ((next = ntfs_index_next(next, ictx)) != NULL) {
 check_index:
 			if (!ntfs_fsck_mftbmp_get(vol,
-						MREF(le64_to_cpu(next->indexed_file))))
+					MREF(le64_to_cpu(next->indexed_file))))
 				progress_update(&prog, ++checked_cnt);
 
 			ret = ntfsck_check_index(vol, next, ictx);
 			if (ret) {
 				next = ictx->entry;
-				if (ret < 0 || !ictx->actx || !next)
+				if (ret < 0 || !ictx->actx || !next) {
+					namespace_walk_failed = TRUE;
 					break;
+				}
 				if (!(next->ie_flags & INDEX_ENTRY_END))
 					goto check_index;
 			}
@@ -3925,8 +8139,10 @@ check_index:
 next_dir:
 		/* compare index allocation bitmap between disk & fsck */
 		if (bm_na) {
-			if (ntfsck_check_index_bitmap(dir_ni, bm_na))
+			if (ntfsck_check_index_bitmap(dir_ni, bm_na)) {
+				namespace_walk_failed = TRUE;
 				goto err_continue;
+			}
 		}
 
 err_continue:
@@ -3965,7 +8181,7 @@ static int ntfsck_scan_index_entries(ntfs_volume *vol)
 {
 	int ret;
 
-	fsck_start_step("Check index entries in volume...");
+	fsck_start_step("Check index entries in volume.");
 
 	ret = ntfsck_scan_index_entries_btree(vol);
 
@@ -3976,8 +8192,20 @@ static int ntfsck_scan_index_entries(ntfs_volume *vol)
 static void ntfsck_check_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
+	struct unopenable_mft *entry;
+	problem_context_t pctx = {0, };
+	BOOL clear_unopenable_mft = FALSE;
 
-	fsck_start_step("Scan orphaned MFTs candidiates...");
+	fsck_start_step("Scan orphaned MFTs candidiates.");
+	ntfsck_clear_unopenable_mft_list();
+	orphan_mft_open_failures = 0;
+
+	if (namespace_walk_failed) {
+		fsck_err_found();
+		ntfs_print_problem(vol, PR_NAMESPACE_WALK_INCOMPLETE, &pctx);
+		fsck_end_step();
+		return;
+	}
 
 	// For each mft record, verify that it contains a valid file record.
 	nr_mft_records = vol->mft_na->initialized_size >>
@@ -3997,11 +8225,445 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 		ntfsck_verify_mft_record(vol, mft_num);
 		progress_update(&prog, mft_num + 1);
 	}
-
-	if (clear_mft_cnt)
-		ntfs_log_info("Clear MFT bitmap count:%"PRId64"\n", clear_mft_cnt);
-
 	fsck_end_step();
+
+	if (orphan_mft_open_failures) {
+		ntfs_log_error("  * Orphan MFT scan: %"PRIu64" allocated record(s)\n",
+				orphan_mft_open_failures);
+		ntfs_log_error("    could not be opened.\n");
+		ntfs_log_error("    Clear their MFT bitmap entries. Fix it? ");
+		clear_unopenable_mft = ntfs_ask_repair(vol);
+	}
+
+	while (!ntfs_list_empty(&unopenable_mft_list)) {
+		entry = ntfs_list_entry(unopenable_mft_list.next,
+				struct unopenable_mft, list);
+		ntfs_list_del(&entry->list);
+		if (clear_unopenable_mft) {
+			if (!ntfsck_check_mft_record_unused(vol, entry->mft_no) &&
+					!ntfs_bitmap_clear_bit(vol->mftbmp_na,
+						entry->mft_no)) {
+				ntfs_fsck_mftbmp_clear(vol, entry->mft_no);
+				check_mftrec_in_use(vol, entry->mft_no, 1);
+				clear_mft_cnt++;
+				fsck_err_fixed();
+			} else
+				ntfs_log_error("Failed to clear MFT bitmap of inode "
+						"%"PRIu64"\n", entry->mft_no);
+		}
+		free(entry);
+	}
+
+	if (clear_mft_cnt && clear_mft_cnt ==
+			(s64)vol->fsck_mft_not_in_use_flag_fix_count) {
+		ntfs_log_info("MFT records cleared from allocation: %"PRIu64"\n",
+				(u64)clear_mft_cnt);
+	} else {
+		if (clear_mft_cnt)
+			ntfs_log_info("MFT bitmap entries cleared: %"PRIu64"\n",
+					(u64)clear_mft_cnt);
+		if (vol->fsck_mft_not_in_use_flag_fix_count)
+			ntfs_log_info("MFT records marked not in use: %"PRIu64"\n",
+					vol->fsck_mft_not_in_use_flag_fix_count);
+	}
+}
+
+/*
+ * Return TRUE when a validated base inode's $ATTRIBUTE_LIST explicitly
+ * references @extent_no with @extent_seq. The list was structurally checked
+ * in pass 1; bounds are nevertheless repeated here because this predicate is
+ * used to decide whether an extent record may be released.
+ */
+static BOOL ntfsck_attr_list_references_extent(ntfs_inode *base_ni,
+		u64 extent_no, u16 extent_seq)
+{
+	u8 *pos;
+	u8 *end;
+
+	if (!base_ni || !base_ni->attr_list || !base_ni->attr_list_size)
+		return FALSE;
+
+	pos = base_ni->attr_list;
+	end = pos + base_ni->attr_list_size;
+	while (pos + offsetof(ATTR_LIST_ENTRY, name) <= end) {
+		ATTR_LIST_ENTRY *ale = (ATTR_LIST_ENTRY *)pos;
+		u16 length = le16_to_cpu(ale->length);
+		u16 name_bytes = ale->name_length * sizeof(ntfschar);
+
+		if (length < offsetof(ATTR_LIST_ENTRY, name) || (length & 7) ||
+				pos + length > end ||
+				ale->name_offset < offsetof(ATTR_LIST_ENTRY, name) ||
+				ale->name_offset + name_bytes > length)
+			return FALSE;
+
+		if (MREF_LE(ale->mft_reference) == extent_no &&
+				MSEQNO_LE(ale->mft_reference) == extent_seq)
+			return TRUE;
+		pos += length;
+	}
+
+	return FALSE;
+}
+
+/*
+ * Check every allocated extent record from the record side. Attaching the
+ * extents of a reachable base validates references present in its attribute
+ * list, but it cannot find an allocated extent which no list references.
+ */
+static void ntfsck_verify_extent_records(ntfs_volume *vol)
+{
+	MFT_RECORD *m;
+	s64 nr_mft_records;
+	s64 mft_no;
+
+	if (namespace_walk_failed)
+		return;
+
+	m = ntfs_malloc(vol->mft_record_size);
+	if (!m)
+		return;
+
+	nr_mft_records = vol->mft_na->initialized_size >>
+		vol->mft_record_size_bits;
+	for (mft_no = FILE_first_user; mft_no < nr_mft_records; mft_no++) {
+		ntfs_inode *base_ni = NULL;
+		MFT_REF base_ref;
+		u64 base_no;
+		u16 base_seq;
+		u16 extent_seq;
+		int base_used;
+		BOOL orphan = FALSE;
+		problem_context_t pctx = {0, };
+
+		if (check_mftrec_in_use(vol, mft_no, 0) <= 0)
+			continue;
+		if (ntfs_mft_record_read(vol, mft_no, m) ||
+				!ntfs_is_file_record(m->magic) ||
+				!(m->flags & MFT_RECORD_IN_USE))
+			continue;
+
+		base_ref = le64_to_cpu(m->base_mft_record);
+		base_no = MREF(base_ref);
+		if (!base_no)
+			continue;
+
+		base_seq = MSEQNO(base_ref);
+		extent_seq = le16_to_cpu(m->sequence_number);
+		base_used = base_no < (u64)nr_mft_records ?
+			check_mftrec_in_use(vol, base_no, 0) : 0;
+		if (base_no == (u64)mft_no || base_no >= (u64)nr_mft_records) {
+			orphan = TRUE;
+		} else if (base_used > 0) {
+			base_ni = ntfsck_open_inode(vol, base_no);
+			if (!base_ni) {
+				/* Preserve data when the alleged base cannot be verified. */
+				ntfs_log_error("Cannot verify base inode(%"PRIu64") "
+						"of extent record(%"PRId64").\n",
+						base_no, mft_no);
+				continue;
+			}
+
+			/*
+			 * Absence from a list is deletion proof only when the alleged base itself
+			 * was reached from root and the reference identifies its current
+			 * incarnation. Otherwise preserve the extent for the orphan pass;
+			 * corrupted base flags or stale references must never cascade into extent
+			 * loss.
+			 */
+			if (!ntfs_fsck_mftbmp_get(vol, base_no) || !base_seq ||
+					base_seq !=
+					le16_to_cpu(base_ni->mrec->sequence_number)) {
+				ntfsck_close_inode(base_ni);
+				continue;
+			}
+
+			if (MREF_LE(base_ni->mrec->base_mft_record) ||
+					!ntfsck_attr_list_references_extent(base_ni,
+						mft_no, extent_seq))
+				orphan = TRUE;
+		} else {
+			/* A free or unreadable base bitmap bit is not deletion proof. */
+			ntfs_log_error("Cannot verify extent base allocation; "
+					"preserving record.\n");
+			continue;
+		}
+
+		if (base_ni)
+			ntfsck_close_inode(base_ni);
+		if (!orphan)
+			continue;
+
+		pctx.inum = mft_no;
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_ORPHANED_EXTENT_RECORD, &pctx)) {
+			if (ntfsck_check_mft_record_unused(vol, mft_no))
+				continue;
+			if (!ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_no)) {
+				ntfs_fsck_mftbmp_clear(vol, mft_no);
+				check_mftrec_in_use(vol, mft_no, 1);
+				fsck_err_fixed();
+			} else {
+				ntfs_log_perror("Failed to clear extent record bitmap");
+			}
+		}
+	}
+
+	free(m);
+}
+
+static int ntfsck_verify_file_name_index(ntfs_inode *parent_ni,
+		ntfs_inode *ni, FILE_NAME_ATTR *fn)
+{
+	ntfs_index_context *ictx;
+	INDEX_ENTRY *ie;
+	FILE_NAME_ATTR *ie_fn;
+	int ret = STATUS_ERROR;
+
+	ictx = ntfs_index_ctx_get(parent_ni, NTFS_INDEX_I30, 4);
+	if (!ictx)
+		return STATUS_ERROR;
+
+	if (ntfs_index_lookup(fn, sizeof(FILE_NAME_ATTR), ictx)) {
+		if (errno == ENOENT)
+			ret = STATUS_NOT_FOUND;
+		goto out;
+	}
+
+	ie = ictx->entry;
+	if (!ie || MREF_LE(ie->indexed_file) != ni->mft_no ||
+			ntfsck_check_inode_fields(parent_ni, ni, ie, ictx))
+		goto out;
+
+	/*
+	 * Only the namespace identity is relevant here. The duplicated times and
+	 * sizes in an index $FILE_NAME are allowed to be stale (and commonly are on
+	 * Windows-created volumes), so the full metadata comparison used by the
+	 * forward index checker would produce false positives.
+	 */
+	ie_fn = &ie->key.file_name;
+	if (ie_fn->parent_directory != fn->parent_directory ||
+			ie_fn->file_name_type != fn->file_name_type ||
+			ie_fn->file_name_length != fn->file_name_length ||
+			memcmp(ie_fn->file_name, fn->file_name,
+				fn->file_name_length * sizeof(ntfschar)))
+		goto out;
+
+	ret = STATUS_OK;
+out:
+	ntfs_index_ctx_put(ictx);
+	return ret;
+}
+
+/*
+ * Verify the reverse half of the NTFS namespace invariant. The ordinary
+ * directory walk proves INDEX_ENTRY -> MFT/$FILE_NAME.
+ */
+static void ntfsck_verify_file_name_index_links(ntfs_volume *vol)
+{
+	s64 nr_mft_records;
+	s64 mft_no;
+
+	if (namespace_walk_failed)
+		return;
+
+	nr_mft_records = vol->mft_na->initialized_size >>
+		vol->mft_record_size_bits;
+	for (mft_no = FILE_first_user; mft_no < nr_mft_records; mft_no++) {
+		ntfs_inode *ni;
+		ntfs_attr_search_ctx *ctx;
+		u16 verified_links = 0;
+		u16 names = 0;
+		int walk_ret;
+		BOOL complete = TRUE;
+
+		if (check_mftrec_in_use(vol, mft_no, 0) <= 0)
+			continue;
+		ni = ntfsck_open_inode(vol, mft_no);
+		if (!ni)
+			continue;
+		if (MREF_LE(ni->mrec->base_mft_record)) {
+			ntfsck_close_inode(ni);
+			continue;
+		}
+
+		ctx = ntfs_attr_get_search_ctx(ni, NULL);
+		if (!ctx) {
+			ntfsck_close_inode(ni);
+			continue;
+		}
+
+		while (!(walk_ret = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+					CASE_SENSITIVE, 0, NULL, 0, ctx))) {
+			FILE_NAME_ATTR *fn;
+			FILE_NAME_ATTR *fn_copy;
+			ntfs_inode *parent_ni = NULL;
+			u64 parent_no;
+			u16 parent_seq;
+			u32 fn_len;
+			int ret = STATUS_ERROR;
+			BOOL linked = FALSE;
+			problem_context_t pctx = {0, };
+
+			fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
+					le16_to_cpu(ctx->attr->value_offset));
+			fn_len = sizeof(FILE_NAME_ATTR) +
+					fn->file_name_length * sizeof(ntfschar);
+			fn_copy = ntfs_malloc(fn_len);
+			if (!fn_copy) {
+				complete = FALSE;
+				continue;
+			}
+			memcpy(fn_copy, fn, fn_len);
+			names++;
+			parent_no = MREF_LE(fn_copy->parent_directory);
+			parent_seq = MSEQNO_LE(fn_copy->parent_directory);
+
+			if (parent_no < (u64)nr_mft_records && parent_no != ni->mft_no)
+				parent_ni = ntfsck_open_inode(vol, parent_no);
+			if (parent_ni && (parent_ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) &&
+					parent_seq && parent_seq ==
+					le16_to_cpu(parent_ni->mrec->sequence_number))
+				ret = ntfsck_verify_file_name_index(parent_ni, ni,
+						fn_copy);
+
+			if (ret == STATUS_OK) {
+				linked = TRUE;
+			} else if (ret == STATUS_NOT_FOUND && parent_ni &&
+					ntfs_fsck_mftbmp_get(vol, parent_ni->mft_no)) {
+				pctx.ni = ni;
+				pctx.fn = fn;
+				fsck_err_found();
+				if (ntfs_fix_problem(vol, PR_FN_INDEX_ENTRY_MISSING, &pctx) &&
+						!ntfsck_add_filename_to_parent(vol, parent_ni,
+							ni, fn_copy)) {
+					linked = TRUE;
+					fsck_err_fixed();
+				}
+			}
+
+			if (linked) {
+				verified_links++;
+				/* Reachability is inherited only from a reachable parent. */
+				if (parent_ni &&
+						ntfs_fsck_mftbmp_get(vol, parent_ni->mft_no))
+					ntfsck_set_mft_record_bitmap(ni, FALSE);
+			} else {
+				complete = FALSE;
+			}
+
+			if (parent_ni)
+				ntfsck_close_inode(parent_ni);
+			free(fn_copy);
+		}
+
+		if (walk_ret && errno != ENOENT)
+			complete = FALSE;
+		if (complete && names &&
+				verified_links != le16_to_cpu(ni->mrec->link_count)) {
+			problem_context_t pctx = {0, };
+
+			pctx.ni = ni;
+			pctx.dsize = verified_links;
+			fsck_err_found();
+			if (ntfs_fix_problem(vol, PR_NAMESPACE_LINK_COUNT_MISMATCH,
+						&pctx)) {
+				ni->mrec->link_count = cpu_to_le16(verified_links);
+				ntfs_inode_mark_dirty(ni);
+				fsck_err_fixed();
+			}
+		}
+
+		ntfs_attr_put_search_ctx(ctx);
+		ntfsck_close_inode(ni);
+	}
+}
+
+/*
+ * Final record-level invariant: every allocated base record must have been
+ * reached from the root (or seeded as mandatory metadata). This pass is
+ * deliberately verification-only; pass 4/5 performs recovery, while a
+ * residual here prevents ntfsck from claiming the namespace is clean.
+ */
+static void ntfsck_verify_namespace_reachability(ntfs_volume *vol)
+{
+	MFT_RECORD *m;
+	s64 nr_mft_records;
+	s64 mft_no;
+
+	if (namespace_walk_failed)
+		return;
+	m = ntfs_malloc(vol->mft_record_size);
+	if (!m)
+		return;
+
+	nr_mft_records = vol->mft_na->initialized_size >>
+		vol->mft_record_size_bits;
+	for (mft_no = FILE_MFT; mft_no < nr_mft_records; mft_no++) {
+		problem_context_t pctx = {0, };
+
+		if (check_mftrec_in_use(vol, mft_no, 0) <= 0 ||
+				ntfs_fsck_mftbmp_get(vol, mft_no))
+			continue;
+		if (ntfs_mft_record_read(vol, mft_no, m) ||
+				!ntfs_is_file_record(m->magic) ||
+				!(m->flags & MFT_RECORD_IN_USE) ||
+				MREF_LE(m->base_mft_record))
+			continue;
+
+		pctx.inum = mft_no;
+		fsck_err_found();
+		ntfs_print_problem(vol, PR_NAMESPACE_RECORD_UNREACHABLE, &pctx);
+	}
+	free(m);
+}
+
+/* Flush every pending device write to stable storage. */
+static int ntfsck_device_sync(ntfs_volume *vol)
+{
+	if (!vol || !vol->dev || !vol->dev->d_ops || !vol->dev->d_ops->sync)
+		return STATUS_OK;
+	return vol->dev->d_ops->sync(vol->dev);
+}
+
+static BOOL ntfsck_repair_enabled(void)
+{
+	return (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
+				NTFS_MNT_FS_ASK_REPAIR |
+				NTFS_MNT_FS_YES_REPAIR)) != 0;
+}
+
+/*
+ * ntfsck_begin_repair - open a crash-safe repair transaction.
+ *
+ * Before the first repair write, durably record on disk that a repair is in
+ * progress by making sure VOLUME_IS_DIRTY is set and flushed. If ntfsck is
+ * then interrupted, the volume stays marked dirty and is re-checked on the
+ * next run instead of being trusted as clean. This is the same fail-safe
+ * guarantee a write-ahead log provides - an interrupted repair never leaves
+ * the volume advertised as consistent - enforced here at the volume level.
+ * The matching commit is ntfsck_reset_dirty(), which only runs after all
+ * repair writes have been flushed (see main()).
+ */
+static int ntfsck_begin_repair(ntfs_volume *vol)
+{
+	if (!ntfsck_repair_enabled())
+		return STATUS_OK;
+
+	if (!(vol->flags & VOLUME_IS_DIRTY)) {
+		le16 flags = vol->flags | VOLUME_IS_DIRTY;
+
+		if (ntfs_volume_write_flags(vol, flags)) {
+			ntfs_log_error("Failed to mark volume dirty before "
+					"repair.\n");
+			return STATUS_ERROR;
+		}
+	}
+
+	/* Make the in-progress marker durable before touching metadata. */
+	if (ntfsck_device_sync(vol))
+		ntfs_log_verbose("Warning: could not flush the dirty marker.\n");
+
+	return STATUS_OK;
 }
 
 static int ntfsck_reset_dirty(ntfs_volume *vol)
@@ -4013,6 +8675,16 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 
 	ntfs_log_verbose("Resetting dirty flag.\n");
 
+	/*
+	 * Commit point of the repair transaction: every repair write must be
+	 * on stable storage before the volume is advertised clean, otherwise a
+	 * power loss between clearing the flag and flushing the data would
+	 * leave a "clean" but inconsistent volume.
+	 */
+	if (ntfsck_device_sync(vol))
+		ntfs_log_verbose("Warning: device sync before clearing dirty "
+				"flag failed.\n");
+
 	flags = vol->flags & ~VOLUME_IS_DIRTY;
 
 	if (ntfs_volume_write_flags(vol, flags)) {
@@ -4022,22 +8694,226 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 	return 0;
 }
 
-static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
+/*
+ * ntfsck_logfile_is_dirty - does $LogFile hold journal data that needs a reset?
+ *
+ * ntfsck cannot replay the journal, so its only recovery is to empty $LogFile.
+ * But an already empty journal, or one the last OS left cleanly closed, carries
+ * nothing to replay, and rewriting it every run just churns the disk and nags
+ * the operator. Return TRUE only when the journal is genuinely dirty:
+ *   - ntfs_check_logfile() found it inconsistent (unreadable restart pages);
+ *   - or it holds a restart area whose client list is still in use and which is
+ *     not flagged RESTART_VOLUME_IS_CLEAN (i.e. an unclean shutdown).
+ * An empty journal (NVolLogFileEmpty) or a clean restart area returns FALSE.
+ */
+static BOOL ntfsck_logfile_is_dirty(ntfs_volume *vol)
 {
-	fsck_start_step("Reset logfile...");
+	ntfs_inode *ni;
+	ntfs_attr *na;
+	RESTART_PAGE_HEADER *rp = NULL;
+	const RESTART_AREA *ra;
+	BOOL dirty = TRUE;
+
+	ni = ntfs_inode_open(vol, FILE_LogFile);
+	if (!ni)
+		return TRUE;
+	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
+	if (!na) {
+		ntfs_inode_close(ni);
+		return TRUE;
+	}
+
+	if (!ntfs_check_logfile(na, &rp)) {
+		/* Inconsistent journal: reset is the only way out. */
+		dirty = TRUE;
+	} else if (NVolLogFileEmpty(vol)) {
+		/* Already empty, nothing to replay. */
+		dirty = FALSE;
+	} else if (rp) {
+		ra = (const RESTART_AREA *)((const u8 *)rp +
+				le16_to_cpu(rp->restart_area_offset));
+		/* Clean iff no client is in use or the volume-clean bit is set. */
+		if (ra->client_in_use_list == LOGFILE_NO_CLIENT ||
+				(ra->flags & RESTART_VOLUME_IS_CLEAN))
+			dirty = FALSE;
+	} else {
+		/* Consistent journal with no restart area: treat as clean. */
+		dirty = FALSE;
+	}
+
+	free(rp);
+	ntfs_attr_close(na);
+	ntfs_inode_close(ni);
+	return dirty;
+}
+
+/*
+ * Zero the LSN a cached MFT record buffer carries, so that a later sync
+ * of the inode cannot write a stale value over what
+ * ntfsck_reset_mft_lsn() put on disk.
+ */
+static void ntfsck_zero_cached_lsn(ntfs_inode *ni)
+{
+	s32 i;
+
+	if (!ni)
+		return;
+
+	ni->mrec->lsn = const_cpu_to_sle64(0);
+	for (i = 0; i < ni->nr_extents; i++)
+		ni->extent_nis[i]->mrec->lsn = const_cpu_to_sle64(0);
+}
+
+/*
+ * Every LSN on the volume refers to the journal that was just thrown
+ * away. The next driver to mount initializes a fresh log whose LSNs
+ * restart low, and recovery decides "this update is already on disk" by
+ * comparing a record's LSN against a log record's LSN, so a stale large
+ * LSN makes a future replay silently skip its redo and corrupt the
+ * volume long after fsck ran. Zero the field in every MFT record, the
+ * state mkntfs creates alongside an empty journal.
+ *
+ * The LSN sits in the first sector and is no sector tail, so it is not
+ * multi sector protected: write it in place, with no fixup round trip.
+ * That also scrubs free records whose own fixup header is corrupted,
+ * which a protected write could never reach. Index blocks carry an LSN
+ * too; ntfsck_validate_index_blocks() pokes those the same way, as it
+ * is the one place every allocated index block already passes through.
+ *
+ * The long-lived inodes the mount opened still cache their records with
+ * the old LSN, so those buffers are scrubbed as well lest a later sync
+ * write the stale value back.
+ */
+static void ntfsck_reset_mft_lsn(ntfs_volume *vol)
+{
+	MFT_RECORD *mrec;
+	s64 nr_mft_records, mft_num, pos;
+	s64 reset_cnt = 0;
+
+	mrec = ntfs_malloc(vol->mft_record_size);
+	if (!mrec)
+		return;
+
+	nr_mft_records = vol->mft_na->initialized_size >>
+			vol->mft_record_size_bits;
+	for (mft_num = 0; mft_num < nr_mft_records; mft_num++) {
+		pos = mft_num << vol->mft_record_size_bits;
+		/* magic through lsn: the first 16 bytes are enough */
+		if (ntfs_attr_pread(vol->mft_na, pos,
+					offsetof(MFT_RECORD, sequence_number),
+					mrec) !=
+				offsetof(MFT_RECORD, sequence_number))
+			continue;
+		if (!ntfs_is_file_record(mrec->magic) || !mrec->lsn)
+			continue;
+		mrec->lsn = const_cpu_to_sle64(0);
+		if (ntfs_attr_pwrite(vol->mft_na,
+					pos + offsetof(MFT_RECORD, lsn),
+					sizeof(mrec->lsn), &mrec->lsn) !=
+				sizeof(mrec->lsn)) {
+			ntfs_log_error("Failed to reset LSN of mft record(%"
+					PRId64")\n", mft_num);
+			continue;
+		}
+		if (mft_num < vol->mftmirr_size)
+			ntfs_attr_pwrite(vol->mftmirr_na,
+					pos + offsetof(MFT_RECORD, lsn),
+					sizeof(mrec->lsn), &mrec->lsn);
+		reset_cnt++;
+	}
+	ntfs_free(mrec);
+
+	ntfsck_zero_cached_lsn(vol->mft_ni);
+	ntfsck_zero_cached_lsn(vol->mftmirr_ni);
+	ntfsck_zero_cached_lsn(vol->vol_ni);
+	ntfsck_zero_cached_lsn(vol->lcnbmp_ni);
+	ntfsck_zero_cached_lsn(vol->secure_ni);
+
+	ntfs_log_info("Reset LSN of %"PRId64" mft records\n", reset_cnt);
+}
+
+/*
+ * Zero the stale LSN of every block of one named index allocation.
+ * ntfsck_validate_index_blocks() covers the indexes the directory walk
+ * reaches, but $Secure never enters that walk (ntfsck_check_index()
+ * skips the inodes the mount holds open), so its $SDH/$SII blocks are
+ * swept here right after the $LogFile reset.
+ */
+static void ntfsck_reset_named_ia_lsn(ntfs_inode *ni, ntfschar *name,
+		u32 name_len)
+{
+	ntfs_attr_search_ctx *ctx;
+	INDEX_ROOT *ir;
+	ntfs_attr *ia_na;
+	u32 block_size;
+	s64 pos;
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return;
+	if (ntfs_attr_lookup(AT_INDEX_ROOT, name, name_len, CASE_SENSITIVE,
+				0, NULL, 0, ctx)) {
+		ntfs_attr_put_search_ctx(ctx);
+		return;
+	}
+	ir = (INDEX_ROOT *)((u8 *)ctx->attr +
+			le16_to_cpu(ctx->attr->value_offset));
+	block_size = le32_to_cpu(ir->index_block_size);
+	ntfs_attr_put_search_ctx(ctx);
+	if (block_size < NTFS_BLOCK_SIZE)
+		return;
+
+	ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, name, name_len);
+	if (!ia_na)
+		return;
+	for (pos = 0; pos + block_size <= ia_na->data_size; pos += block_size)
+		ntfsck_reset_ib_lsn(ia_na, pos);
+	ntfs_attr_close(ia_na);
+}
+
+static void ntfsck_reset_secure_lsn(ntfs_volume *vol)
+{
+	if (!vol->secure_ni)
+		return;
+
+	ntfsck_reset_named_ia_lsn(vol->secure_ni, NTFS_INDEX_SDH, 4);
+	ntfsck_reset_named_ia_lsn(vol->secure_ni, NTFS_INDEX_SII, 4);
+}
+
+static int ntfsck_replay_log(ntfs_volume *vol)
+{
 	problem_context_t pctx = {0, };
 
+	fsck_start_step("Reset logfile.");
+
 	/*
-	 * For now, Just reset logfile.
+	 * ntfsck cannot replay the journal, so a dirty $LogFile is emptied. A
+	 * journal that is already empty or was cleanly closed needs nothing, so
+	 * leave it untouched rather than resetting it on every run.
 	 */
+	if (!ntfsck_logfile_is_dirty(vol)) {
+		ntfs_log_verbose("$LogFile is empty or clean, no reset needed\n");
+		fsck_end_step();
+		return STATUS_OK;
+	}
 
-	ntfs_log_info("ntfsck does not support log replay, just reset it\n");
+	ntfs_log_info("ntfsck does not support log replay, $LogFile needs reset\n");
 
+	/*
+	 * The actual reset is gated on ntfs_fix_problem(): with -n it returns FALSE
+	 * (and the volume is read-only anyway), so $LogFile is left untouched. Only
+	 * announce the reset when it is really performed.
+	 */
 	if (ntfs_fix_problem(vol, PR_RESET_LOG_FILE, &pctx)) {
+		ntfs_log_info("Resetting $LogFile\n");
 		if (ntfs_logfile_reset(vol)) {
 			check_failed("ntfs logfile reset failed, errno : %d\n", errno);
+				fsck_end_step();
 			return STATUS_ERROR;
 		}
+		logfile_was_reset = TRUE;
+		ntfsck_reset_mft_lsn(vol);
+		ntfsck_reset_secure_lsn(vol);
 	}
 
 	fsck_end_step();
@@ -4084,6 +8960,667 @@ static ntfs_inode *ntfsck_get_opened_ni_vol(ntfs_volume *vol, s64 mft_num)
 	return ni;
 }
 
+/*
+ * $SDS layout constants. Security descriptors are stored in 0x40000-byte
+ * blocks that alternate primary / backup: block 0 is primary, block 1 holds
+ * the byte-for-byte backup of block 0, block 2 is primary again, and so on.
+ */
+#define NTFSCK_SDS_BLOCK	0x40000
+#define NTFSCK_SDS_ALIGN	16
+/* On-disk $SDS entry header size (before the embedded descriptor). */
+#define NTFSCK_SDS_HDR		((u32)offsetof(SDS_ENTRY, sid))
+
+/*
+ * ntfsck_security_hash - Windows security-descriptor hash.
+ *
+ * The hash accumulates 32-bit little-endian words of the self-relative
+ * descriptor with a rotate-left-by-3 between each step. This is the value
+ * cached in the $SDS entry header and mirrored in the $SII / $SDH indices.
+ */
+static le32 ntfsck_security_hash(const SECURITY_DESCRIPTOR_RELATIVE *sd, u32 len)
+{
+	const le32 *pos = (const le32 *)sd;
+	const le32 *end = pos + (len >> 2);
+	u32 hash = 0;
+
+	while (pos < end) {
+		hash = (hash << 3) | (hash >> (32 - 3));
+		hash += le32_to_cpu(*pos);
+		pos++;
+	}
+	return cpu_to_le32(hash);
+}
+
+/*
+ * ntfsck_check_secure_index - cross-check one $SDS entry against $SII or $SDH.
+ *
+ * The index must hold an entry for @key whose cached header
+ * {hash, security_id, offset, length} matches the $SDS entry @ref. A missing
+ * or disagreeing index entry means the security database is inconsistent.
+ * Read-only: inconsistencies are reported, never rewritten.
+ */
+static void ntfsck_check_secure_index(ntfs_volume *vol,
+		ntfs_index_context *ictx, const void *key, int key_len,
+		const SECURITY_DESCRIPTOR_HEADER *ref, problem_code_t pcode,
+		const char *idxname, problem_context_t *pctx)
+{
+	const INDEX_ENTRY *ie;
+	const SECURITY_DESCRIPTOR_HEADER *h;
+	u16 doff;
+
+	if (!ictx)
+		return;		/* index absent - already reported by caller */
+
+	ntfs_index_ctx_reinit(ictx);
+	if (ntfs_index_lookup(key, key_len, ictx)) {
+		fsck_err_found();
+		ntfs_log_error("$Secure %s: no index entry for security_id %u "
+				"(offset %"PRIu64")\n", idxname,
+				le32_to_cpu(ref->security_id),
+				le64_to_cpu(ref->offset));
+		ntfs_fix_problem(vol, pcode, pctx);
+		return;
+	}
+
+	/*
+	 * The entry data (a SECURITY_DESCRIPTOR_HEADER for both $SII and $SDH)
+	 * lives at ie->data_offset, not at ictx->data (which points at the key).
+	 */
+	ie = ictx->entry;
+	doff = le16_to_cpu(ie->data_offset);
+	if (doff + sizeof(*h) > le16_to_cpu(ie->length)) {
+		fsck_err_found();
+		ntfs_log_error("$Secure %s: index entry for security_id %u "
+				"has a truncated data record (offset %"PRIu64")\n",
+				idxname, le32_to_cpu(ref->security_id),
+				le64_to_cpu(ref->offset));
+		ntfs_fix_problem(vol, pcode, pctx);
+		return;
+	}
+
+	h = (const SECURITY_DESCRIPTOR_HEADER *)((const u8 *)ie + doff);
+	if (h->hash != ref->hash || h->security_id != ref->security_id ||
+			h->offset != ref->offset || h->length != ref->length) {
+		fsck_err_found();
+		ntfs_log_error("$Secure %s: index entry for security_id %u "
+				"disagrees with $SDS (offset %"PRIu64")\n",
+				idxname, le32_to_cpu(ref->security_id),
+				le64_to_cpu(ref->offset));
+		ntfs_fix_problem(vol, pcode, pctx);
+	}
+}
+
+/*
+ * ntfsck_secure_is_live - is this $SDS entry part of the authoritative live set?
+ *
+ * $SDS is not a densely packed array: Windows leaves gaps and stale descriptors
+ * between live entries as security_ids are added and retired, and only the $SII
+ * index (keyed by security_id) authoritatively enumerates the descriptors the
+ * filesystem actually uses. An entry is live iff $SII lists its security_id and
+ * points back at the very offset the entry occupies; anything else is dead space
+ * that must not be validated or reported as corrupt.
+ */
+static int ntfsck_secure_is_live(ntfs_index_context *sii, le32 sid, le64 offset)
+{
+	const INDEX_ENTRY *ie;
+	const SECURITY_DESCRIPTOR_HEADER *h;
+	SII_INDEX_KEY key;
+	u16 doff;
+
+	if (!sii)
+		return 0;
+
+	ntfs_index_ctx_reinit(sii);
+	key.security_id = sid;
+	if (ntfs_index_lookup(&key, sizeof(key), sii))
+		return 0;
+
+	ie = sii->entry;
+	doff = le16_to_cpu(ie->data_offset);
+	if (doff + sizeof(*h) > le16_to_cpu(ie->length))
+		return 0;
+
+	h = (const SECURITY_DESCRIPTOR_HEADER *)((const u8 *)ie + doff);
+	return h->offset == offset;
+}
+
+/*
+ * Does @ictx already hold an entry for @key whose cached header matches @ref?
+ * The read-only counterpart of ntfsck_check_secure_index(), used to decide
+ * whether $SDH needs rebuilding without reporting each descriptor.
+ */
+static BOOL ntfsck_secure_index_present(ntfs_index_context *ictx,
+		const void *key, int key_len,
+		const SECURITY_DESCRIPTOR_HEADER *ref)
+{
+	const INDEX_ENTRY *ie;
+	const SECURITY_DESCRIPTOR_HEADER *h;
+	u16 doff;
+
+	if (!ictx)
+		return FALSE;
+
+	ntfs_index_ctx_reinit(ictx);
+	if (ntfs_index_lookup(key, key_len, ictx))
+		return FALSE;
+
+	ie = ictx->entry;
+	doff = le16_to_cpu(ie->data_offset);
+	if (doff + sizeof(*h) > le16_to_cpu(ie->length))
+		return FALSE;
+
+	h = (const SECURITY_DESCRIPTOR_HEADER *)((const u8 *)ie + doff);
+	return h->hash == ref->hash && h->security_id == ref->security_id &&
+			h->offset == ref->offset && h->length == ref->length;
+}
+
+/*
+ * ntfsck_rebuild_secure_sdh - regenerate $Secure's $SDH index from $SDS/$SII.
+ *
+ * $SDH is a pure accelerator: it maps a descriptor's hash to the same
+ * {hash, security_id, offset, length} header $SII already holds, so it can be
+ * rebuilt losslessly from the two authoritative sources without touching a
+ * single access control entry. That is the only safe way to repair it -- the
+ * index block itself may be gone -- and it is exactly what an interrupted
+ * "add security descriptor" transaction leaves behind: $SDS and $SII updated,
+ * $SDH not.
+ *
+ * Empty $SDH (dropping its now corrupt index allocation and bitmap, resetting
+ * the root to a bare end entry), then walk $SDS and re-insert one entry for
+ * every descriptor $SII still lists as live. @sii must be present and sound;
+ * without it the live set is unknowable and the index must be left alone.
+ */
+static int ntfsck_rebuild_secure_sdh(ntfs_inode *ni, ntfs_index_context *sii)
+{
+	ntfs_attr *na = NULL;
+	u8 *pbuf = NULL;
+	u8 iebuf[sizeof(INDEX_ENTRY)];
+	INDEX_ENTRY *ie = (INDEX_ENTRY *)iebuf;
+	SDH_INDEX_DATA *sdh_data;
+	s64 data_size, base;
+	int ret = -1;
+
+	if (!sii)
+		return -1;
+
+	/* Empty $SDH so it can be repopulated from scratch. */
+	if (ntfsck_initialize_named_index_attr(ni, NTFS_INDEX_SDH, 4))
+		return -1;
+
+	na = ntfs_attr_open(ni, AT_DATA, STREAM_SDS, 4);
+	if (!na)
+		goto out;
+	data_size = na->data_size;
+
+	pbuf = ntfs_malloc(NTFSCK_SDS_BLOCK);
+	if (!pbuf)
+		goto out;
+
+	for (base = 0; base < data_size; base += 2 * NTFSCK_SDS_BLOCK) {
+		s64 plen = data_size - base;
+		s64 p;
+
+		if (plen > NTFSCK_SDS_BLOCK)
+			plen = NTFSCK_SDS_BLOCK;
+		if (ntfs_attr_pread(na, base, plen, pbuf) != plen)
+			goto out;
+
+		p = 0;
+		while (p + (s64)NTFSCK_SDS_HDR <= plen) {
+			SDS_ENTRY *e = (SDS_ENTRY *)(pbuf + p);
+			u32 length = le32_to_cpu(e->length);
+			ntfs_index_context *sdh;
+			int add_err;
+
+			if (!length && !le32_to_cpu(e->security_id))
+				break;
+			if (le64_to_cpu(e->offset) != (u64)(base + p) ||
+					length < NTFSCK_SDS_HDR ||
+					p + length > plen) {
+				p += NTFSCK_SDS_ALIGN;
+				continue;
+			}
+			if (!ntfsck_secure_is_live(sii, e->security_id, e->offset))
+				goto next;
+
+			/* One $SDH entry, laid out exactly as mkntfs builds it. */
+			memset(iebuf, 0, sizeof(iebuf));
+			ie->data_offset = const_cpu_to_le16(0x18);
+			ie->data_length = const_cpu_to_le16(0x14);
+			ie->reservedV = const_cpu_to_le32(0);
+			ie->length = const_cpu_to_le16(0x30);
+			ie->key_length = const_cpu_to_le16(0x08);
+			ie->ie_flags = const_cpu_to_le16(0);
+			ie->key.sdh.hash = e->hash;
+			ie->key.sdh.security_id = e->security_id;
+			sdh_data = (SDH_INDEX_DATA *)((u8 *)ie + 0x18);
+			sdh_data->hash = e->hash;
+			sdh_data->security_id = e->security_id;
+			sdh_data->offset = e->offset;
+			sdh_data->length = e->length;
+			sdh_data->reserved_II = const_cpu_to_le32(0x00490049);
+
+			/*
+			 * Use a fresh context per insert: ntfs_ie_add() leaves a
+			 * modified index block only marked dirty in icx->ib, and
+			 * a subsequent ntfs_index_lookup() on the same context
+			 * reads a fresh block from disk, discarding the pending
+			 * write. ntfs_index_ctx_put() flushes it, so scope each
+			 * add to its own get/put pair as ntfs_index_add_filename
+			 * does.
+			 */
+			sdh = ntfs_index_ctx_get(ni, NTFS_INDEX_SDH, 4);
+			if (!sdh)
+				goto out;
+			add_err = ntfs_ie_add(sdh, ie);
+			ntfs_index_ctx_put(sdh);
+			if (add_err)
+				goto out;
+next:
+			p = (p + length + NTFSCK_SDS_ALIGN - 1) &
+					~(s64)(NTFSCK_SDS_ALIGN - 1);
+		}
+	}
+
+	/*
+	 * Any index allocation the inserts promoted the root into was allocated
+	 * through ntfs_cluster_alloc(), which already recorded those clusters in
+	 * fsck's own lcn bitmap; re-marking them here would trip a false cluster
+	 * duplication and corrupt the freshly built runlist.
+	 */
+	if (ntfs_inode_sync(ni))
+		goto out;
+
+	ret = 0;
+out:
+	if (na)
+		ntfs_attr_close(na);
+	free(pbuf);
+	return ret;
+}
+
+/*
+ * ntfsck_check_secure - deep cross-validation of $Secure ($SDS).
+ *
+ * Walks the $SDS stream one primary/backup block pair at a time. Because $SDS
+ * legitimately contains gaps and retired descriptors between live entries, only
+ * the entries the $SII index still references are validated; dead space is
+ * skipped rather than mistaken for corruption. For every live descriptor it
+ * verifies:
+ *   - the entry's self-recorded offset matches its physical position;
+ *   - the entry length and descriptor stay within the stream;
+ *   - the descriptor revision is valid;
+ *   - the recomputed hash matches the hash cached in the entry header;
+ *   - the backup copy (primary offset + 0x40000) is byte-identical;
+ *   - the $SII and $SDH index entries for the descriptor exist and their
+ *     cached {hash, security_id, offset, length} header agrees with $SDS.
+ *
+ * This is a read-only integrity pass: the security database is never rewritten,
+ * because reconstructing $SDS / $SII / $SDH from partial data risks corrupting
+ * the access control of every file. Detected inconsistencies are reported so
+ * that an operator can decide how to recover.
+ */
+static void ntfsck_check_secure(ntfs_inode *ni)
+{
+	ntfs_volume *vol = ni->vol;
+	ntfs_attr *na;
+	ntfs_index_context *sii = NULL, *sdh = NULL;
+	u8 *pbuf = NULL, *bbuf = NULL;
+	s64 data_size, base;
+	int sdh_bad = 0;
+	problem_context_t pctx = {0, };
+
+	na = ntfs_attr_open(ni, AT_DATA, STREAM_SDS, 4);
+	if (!na)
+		return;		/* no $SDS stream - nothing to validate */
+
+	data_size = na->data_size;
+	if (data_size < (s64)NTFSCK_SDS_HDR)
+		goto out;
+
+	pbuf = ntfs_malloc(NTFSCK_SDS_BLOCK);
+	bbuf = ntfs_malloc(NTFSCK_SDS_BLOCK);
+	if (!pbuf || !bbuf)
+		goto out;
+
+	ntfs_init_problem_ctx(&pctx, ni, na, NULL, NULL, ni->mrec, NULL, NULL);
+
+	/* Index contexts for cross-checking each descriptor against $SII/$SDH. */
+	if (ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_SII, 4))
+		sii = ntfs_index_ctx_get(ni, NTFS_INDEX_SII, 4);
+	else {
+		fsck_err_found();
+		ntfs_log_error("$Secure: $SII index is missing\n");
+		ntfs_fix_problem(vol, PR_SECURE_SII_MISMATCH, &pctx);
+	}
+	if (ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_SDH, 4))
+		sdh = ntfs_index_ctx_get(ni, NTFS_INDEX_SDH, 4);
+	else {
+		fsck_err_found();
+		ntfs_log_error("$Secure: $SDH index is missing\n");
+		ntfs_fix_problem(vol, PR_SECURE_SDH_MISMATCH, &pctx);
+	}
+
+	/* Iterate over primary blocks; each has its backup 0x40000 later. */
+	for (base = 0; base < data_size; base += 2 * NTFSCK_SDS_BLOCK) {
+		s64 plen = data_size - base;
+		s64 blen;
+		s64 p;
+
+		if (plen > NTFSCK_SDS_BLOCK)
+			plen = NTFSCK_SDS_BLOCK;
+		if (ntfs_attr_pread(na, base, plen, pbuf) != plen)
+			break;
+
+		blen = data_size - (base + NTFSCK_SDS_BLOCK);
+		if (blen > NTFSCK_SDS_BLOCK)
+			blen = NTFSCK_SDS_BLOCK;
+		if (blen > 0) {
+			if (ntfs_attr_pread(na, base + NTFSCK_SDS_BLOCK, blen,
+					bbuf) != blen)
+				blen = 0;
+		} else
+			blen = 0;
+
+		p = 0;
+		while (p + (s64)NTFSCK_SDS_HDR <= plen) {
+			SDS_ENTRY *e = (SDS_ENTRY *)(pbuf + p);
+			u32 length = le32_to_cpu(e->length);
+			u32 descr_len;
+			SECURITY_DESCRIPTOR_RELATIVE *sd;
+			SECURITY_DESCRIPTOR_HEADER ref;
+			SII_INDEX_KEY siikey;
+			SDH_INDEX_KEY sdhkey;
+
+			/* A zero-length entry marks the end of this block. */
+			if (!length && !le32_to_cpu(e->security_id))
+				break;
+
+			/*
+			 * A live entry records its own stream offset and stays within the block.
+			 * Anything else at this 16-byte slot is a gap or a retired descriptor, so
+			 * resync onto the next slot instead of flagging dead space as corrupt.
+			 */
+			if (le64_to_cpu(e->offset) != (u64)(base + p) ||
+					length < NTFSCK_SDS_HDR ||
+					p + length > plen) {
+				p += NTFSCK_SDS_ALIGN;
+				continue;
+			}
+
+			/*
+			 * Only validate descriptors $SII still references; an
+			 * entry $SII does not point back to is retired and must
+			 * not be reported.
+			 */
+			if (!ntfsck_secure_is_live(sii, e->security_id,
+						e->offset))
+				goto next_entry;
+
+			descr_len = length - NTFSCK_SDS_HDR;
+			sd = (SECURITY_DESCRIPTOR_RELATIVE *)(pbuf + p +
+					NTFSCK_SDS_HDR);
+
+			if (descr_len < sizeof(SECURITY_DESCRIPTOR_RELATIVE) ||
+					sd->revision != SECURITY_DESCRIPTOR_REVISION) {
+				fsck_err_found();
+				ntfs_log_error("$Secure $SDS: descriptor at offset "
+						"%"PRId64" is invalid\n", base + p);
+				ntfs_fix_problem(vol,
+						PR_SECURE_SDS_ENTRY_CORRUPTED, &pctx);
+			} else if (ntfsck_security_hash(sd, descr_len) != e->hash) {
+				fsck_err_found();
+				ntfs_log_error("$Secure $SDS: hash mismatch at "
+						"offset %"PRId64" (id=%u)\n",
+						base + p,
+						le32_to_cpu(e->security_id));
+				ntfs_fix_problem(vol,
+						PR_SECURE_SDS_HASH_MISMATCH, &pctx);
+			}
+
+			/*
+			 * Compare against the backup copy when available. The
+			 * primary just passed its hash check, so it is the good
+			 * copy; restore the backup from it.
+			 */
+			if (blen >= p + (s64)length &&
+					memcmp(pbuf + p, bbuf + p, length)) {
+				fsck_err_found();
+				ntfs_log_error("$Secure $SDS: backup copy differs "
+						"at offset %"PRId64"\n", base + p);
+				if (ntfs_fix_problem(vol,
+						PR_SECURE_SDS_MIRROR_MISMATCH, &pctx)) {
+					if (ntfs_attr_pwrite(na,
+							base + NTFSCK_SDS_BLOCK + p,
+							length, pbuf + p) ==
+							(s64)length) {
+						memcpy(bbuf + p, pbuf + p, length);
+						fsck_err_fixed();
+					}
+				}
+			}
+
+			/* Cross-check the descriptor's $SII and $SDH entries. */
+			ref.hash = e->hash;
+			ref.security_id = e->security_id;
+			ref.offset = e->offset;
+			ref.length = e->length;
+
+			siikey.security_id = e->security_id;
+			ntfsck_check_secure_index(vol, sii, &siikey,
+					sizeof(siikey), &ref,
+					PR_SECURE_SII_MISMATCH, "$SII", &pctx);
+
+			/*
+			 * $SDH is derived, so a single wrong entry condemns the
+			 * whole index: aggregate here and rebuild once below
+			 * rather than report each descriptor.
+			 */
+			sdhkey.hash = e->hash;
+			sdhkey.security_id = e->security_id;
+			if (sdh && !ntfsck_secure_index_present(sdh, &sdhkey,
+						sizeof(sdhkey), &ref))
+				sdh_bad++;
+
+next_entry:
+			p = (p + length + NTFSCK_SDS_ALIGN - 1) &
+					~(s64)(NTFSCK_SDS_ALIGN - 1);
+		}
+	}
+
+	/*
+	 * Rebuild $SDH as a whole when it disagrees with $SDS, but only when
+	 * $SII is there to name the live set it must be rebuilt from.
+	 */
+	if (sdh_bad && sii) {
+		fsck_err_found();
+		ntfs_log_error("Inode(%"PRIu64"): $Secure $SDH index does not "
+				"match $SDS (%d descriptor%s)\n", ni->mft_no,
+				sdh_bad, sdh_bad > 1 ? "s" : "");
+		if (ntfs_fix_problem(vol, PR_SECURE_SDH_MISMATCH, &pctx)) {
+			ntfs_index_ctx_put(sdh);
+			sdh = NULL;
+			if (!ntfsck_rebuild_secure_sdh(ni, sii))
+				fsck_err_fixed();
+		}
+	}
+
+out:
+	if (sii)
+		ntfs_index_ctx_put(sii);
+	if (sdh)
+		ntfs_index_ctx_put(sdh);
+	free(pbuf);
+	free(bbuf);
+	ntfs_attr_close(na);
+}
+
+/*
+ * ntfsck_check_upcase - restore $UpCase to its canonical size.
+ *
+ * $UpCase/$DATA must hold the full 65536-character upcase table (131072
+ * bytes). ntfs_device_mount() already regenerates a table whose ASCII range
+ * is corrupt, but a size that is merely truncated -- with the low characters
+ * still intact -- passes that check and leaves the collation table short,
+ * which silently breaks case-insensitive name comparisons. When the on-disk
+ * size differs from the default, rewrite both the size and the contents from
+ * the standard table (this mirrors ntfs_upcase_repair()).
+ *
+ * $UpCase is not one of the inodes the volume keeps open, and the pass-2
+ * system-file loop skips inodes it does not already hold open, so this runs as
+ * a one-shot over its own freshly opened inode rather than per-inode.
+ * ntfs_device_mount() closes $UpCase after loading it, so opening it here
+ * cannot create a duplicate in-core inode.
+ */
+static void ntfsck_check_upcase(ntfs_volume *vol)
+{
+	ntfs_inode *ni;
+	ntfs_attr *na;
+	ntfschar *uc = NULL;
+	u32 uc_len;
+	s64 uc_bytes;
+	problem_context_t pctx = {0, };
+
+	ni = ntfs_inode_open(vol, FILE_UpCase);
+	if (!ni)
+		return;
+
+	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
+	if (!na) {
+		ntfs_inode_close(ni);
+		return;
+	}
+
+	uc_len = ntfs_upcase_build_default(&uc);
+	if (!uc_len || !uc) {
+		free(uc);
+		ntfs_attr_close(na);
+		ntfs_inode_close(ni);
+		return;
+	}
+	uc_bytes = (s64)uc_len << 1;
+
+	if (na->data_size != uc_bytes) {
+		ntfs_init_problem_ctx(&pctx, ni, na, NULL, NULL, ni->mrec,
+				NULL, NULL);
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_UPCASE_CORRUPTED, &pctx)) {
+			if (!ntfs_attr_truncate(na, uc_bytes) &&
+					ntfs_attr_pwrite(na, 0, uc_bytes, uc) ==
+						uc_bytes) {
+				/* Adopt the fresh table for the rest of fsck. */
+				free(vol->upcase);
+				vol->upcase = uc;
+				vol->upcase_len = uc_len;
+				uc = NULL;
+				ntfs_inode_mark_dirty(ni);
+				fsck_err_fixed();
+			}
+		}
+	}
+
+	free(uc);
+	ntfs_attr_close(na);
+	ntfs_inode_close(ni);
+}
+
+/*
+ * The number of mft records $MFTMirr mirrors, as ntfs_boot_sector_parse()
+ * derives it from the volume geometry. vol->mftmirr_size cannot be used: when
+ * $MFTMirr is short, ntfs_device_mount() lowers it to whatever could be read,
+ * so it describes the damage rather than the expected value.
+ */
+static int ntfsck_expected_mftmirr_size(const ntfs_volume *vol)
+{
+	if (vol->cluster_size <= 4 * vol->mft_record_size)
+		return 4;
+	return vol->cluster_size >> vol->mft_record_size_bits;
+}
+
+/*
+ * ntfsck_check_mftmirr - restore $MFTMirr to its canonical size.
+ *
+ * $MFTMirr/$DATA holds a copy of the first mftmirr_size mft records, a size
+ * fixed by the volume geometry. A truncated mirror still mounts -- the mount
+ * path just compares fewer records -- but ntfs_mft_records_write() then stops
+ * mirroring the records that fell off the end (it skips anything past
+ * initialized_size), so the mirror silently drifts from $MFT and is useless
+ * for the recovery it exists to provide.
+ *
+ * Resize the attribute and rewrite its contents from $MFT. Growing it back
+ * without refilling it would leave zeroed records behind, which the next mount
+ * would report as a $MFT/$MFTMirr mismatch.
+ */
+static void ntfsck_check_mftmirr(ntfs_volume *vol)
+{
+	ntfs_attr *na = vol->mftmirr_na;
+	int mirr_size = ntfsck_expected_mftmirr_size(vol);
+	s64 expected = (s64)mirr_size << vol->mft_record_size_bits;
+	problem_context_t pctx = {0, };
+	u8 *buf;
+
+	if (!na || na->data_size == expected)
+		return;
+
+	ntfs_init_problem_ctx(&pctx, vol->mftmirr_ni, na, NULL, NULL,
+			vol->mftmirr_ni->mrec, NULL, NULL);
+	pctx.dsize = expected;
+	fsck_err_found();
+	if (!ntfs_fix_problem(vol, PR_MFTMIRR_SIZE_MISMATCH, &pctx))
+		return;
+
+	if (ntfs_attr_truncate(na, expected)) {
+		ntfs_log_error("Failed to resize $MFTMirr to %"PRId64"\n",
+				expected);
+		return;
+	}
+
+	buf = ntfs_malloc(expected);
+	if (!buf)
+		return;
+
+	/*
+	 * Copy the records raw, update sequence array included. The mirror is
+	 * validated by a plain memcmp() against $MFT, and ntfs_attr_mst_pwrite()
+	 * would run its own pre-write fixup and leave every copied record with an
+	 * update sequence number one ahead of the original.
+	 */
+	if (ntfs_attr_pread(vol->mft_na, 0, expected, buf) != expected) {
+		ntfs_log_error("Failed to read the first %d records of $MFT\n",
+				mirr_size);
+		free(buf);
+		return;
+	}
+
+	if (ntfs_attr_pwrite(na, 0, expected, buf) != expected) {
+		ntfs_log_error("Failed to write %d records to $MFTMirr\n",
+				mirr_size);
+		free(buf);
+		return;
+	}
+	free(buf);
+
+	vol->mftmirr_size = mirr_size;
+
+	/*
+	 * Record 1 was copied from $MFT before the new size reached the disk,
+	 * so the mirror now holds a stale copy of the very inode being resized.
+	 * Sync it: the write goes through ntfs_mft_records_write(), which - now
+	 * that mftmirr_size and the mirror's initialized_size cover record 1 -
+	 * refreshes both $MFT and the mirror.
+	 *
+	 * It also cannot wait until unmount. __ntfs_volume_release() releases
+	 * vol->mft_na before syncing vol->mftmirr_ni, and ntfs_mft_records_write()
+	 * fails with EINVAL once mft_na is gone, so a dirty inode 1 is dropped.
+	 */
+	if (ntfs_inode_sync(vol->mftmirr_ni)) {
+		ntfs_log_perror("Failed to sync $MFTMirr");
+		return;
+	}
+
+	fsck_err_fixed();
+}
+
 static int ntfsck_validate_system_file(ntfs_inode *ni)
 {
 	ntfs_volume *vol = ni->vol;
@@ -4101,8 +9638,20 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 	case FILE_Secure:
 	case FILE_UpCase:
 	case FILE_Extend:
-		/* TODO: check sub-directory */
-		ntfsck_check_inode_non_resident(ni, 1);
+		if (ntfsck_check_inode_non_resident(ni, 1))
+			return -EIO;
+
+		if ((ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) &&
+				ntfsck_check_directory(ni))
+			return -EIO;
+
+		/* Deep cross-validation of the security database. */
+		if (ni->mft_no == FILE_Secure)
+			ntfsck_check_secure(ni);
+
+		/* The mirror's size follows from the volume geometry. */
+		if (ni->mft_no == FILE_MFTMirr)
+			ntfsck_check_mftmirr(vol);
 		break;
 	case FILE_Bitmap:
 		s64 max_lcnbmp_size;
@@ -4113,7 +9662,7 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 		}
 
 		/* Check cluster run of $DATA attribute */
-		if (ntfsck_check_runlist(vol->lcnbmp_na, 1, NULL, NULL)) {
+		if (ntfsck_check_runlist(vol->lcnbmp_na, 1, NULL, NULL, NULL)) {
 			ntfs_log_error("Failed to check and setbit runlist. "
 					"Leaving inconsistent metadata.\n");
 			return -EIO;
@@ -4167,19 +9716,22 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	ntfs_inode *sys_ni, *root_ni;
 	ntfs_attr_search_ctx *root_ctx, *sys_ctx;
 	ntfs_index_context *ictx;
+	INDEX_ENTRY *ie;
 	FILE_NAME_ATTR *fn;
+	FILE_NAME_ATTR *ie_fn;
 	s64 mft_num;
 	int ret = STATUS_ERROR;
 	int is_used;
 	BOOL trivial;	/* represent system file is trivial or not */
 
-	fsck_start_step("Check system files...");
+	fsck_start_step("Check system files.");
 
 	progress_init(&prog, 0, FILE_first_user, 1, pb_flags);
 
 	root_ni = ntfsck_check_root_inode(vol);
 	if (!root_ni) {
 		ntfs_log_error("Couldn't open the root directory.\n");
+		fsck_end_step();
 		return ret;
 	}
 
@@ -4194,6 +9746,9 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	/* check lost found here */
 	ntfsck_check_lost_found(vol, root_ni, ictx);
 	ntfs_index_ctx_reinit(ictx);
+
+	/* Restore a truncated $UpCase collation table to its full size. */
+	ntfsck_check_upcase(vol);
 
 	progress_update(&prog, 1);
 
@@ -4235,7 +9790,15 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 			goto check_trivial;
 		}
 
-		ntfs_inode_attach_all_extents(sys_ni);
+		if (sys_ni->attr_list && ntfsck_check_attr_list(sys_ni)) {
+			ntfsck_close_inode(sys_ni);
+			goto check_trivial;
+		}
+
+		if (ntfs_inode_attach_all_extents(sys_ni)) {
+			ntfsck_close_inode(sys_ni);
+			goto check_trivial;
+		}
 		ntfsck_set_mft_record_bitmap(sys_ni, FALSE);
 
 		/* do not check any more about reserved inode */
@@ -4277,17 +9840,61 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 		ret = ntfs_index_lookup(fn,
 				le32_to_cpu(sys_ctx->attr->value_length), ictx);
 		if (ret) {
-			/* TODO: add index filename to root?? not return error */
+			problem_context_t pctx = {0, };
+			int lookup_err = errno;
 
-			ntfs_log_error("There's no system file entry"
-					"(%"PRId64") in root\n", mft_num);
-			ntfs_attr_put_search_ctx(sys_ctx);
+			if (lookup_err != ENOENT) {
+				/*
+				 * A hard (non-ENOENT) lookup error means the root $I30 index itself is
+				 * corrupt, not that this one entry is missing. The system-file entries
+				 * cannot be verified against an unreadable index, and failing here would
+				 * abort the whole run before pass 3 (ntfsck_scan_index_entries) gets to
+				 * wipe and repopulate the root index.
+				 */
+				ntfs_log_error("Root $I30 index is unreadable; "
+						"deferring system-file entry checks "
+						"to the index rebuild pass\n");
+				ntfs_attr_put_search_ctx(sys_ctx);
+				ntfsck_close_inode(sys_ni);
+				ret = STATUS_OK;
+				goto put_index_ctx;
+			}
+
+			ntfs_init_problem_ctx(&pctx, sys_ni, NULL, NULL,
+					ictx, NULL, NULL, fn);
+			fsck_err_found();
+			if (!ntfs_fix_problem(vol,
+					PR_ROOT_MISSING_SYSTEM_FILE_ENTRY, &pctx) ||
+					ntfsck_add_filename_to_parent(vol, root_ni,
+						sys_ni, fn)) {
+				ntfs_attr_put_search_ctx(sys_ctx);
+				ntfsck_close_inode(sys_ni);
+				goto check_trivial;
+			}
+
+			ntfs_index_ctx_reinit(ictx);
+			ret = ntfs_index_lookup(fn,
+					le32_to_cpu(sys_ctx->attr->value_length), ictx);
+			if (ret) {
+				ntfs_log_error("Failed to restore system file entry"
+						"(%"PRId64") in root\n", mft_num);
+				ntfs_attr_put_search_ctx(sys_ctx);
+				ntfsck_close_inode(sys_ni);
+				goto check_trivial;
+			}
+			fsck_err_fixed();
+		}
+
+		ie = ictx->entry;
+		ie_fn = (FILE_NAME_ATTR *)&ie->key.file_name;
+		ntfs_attr_put_search_ctx(sys_ctx);
+
+		if (ntfsck_check_inode_fields(root_ni, sys_ni, ie, ictx) ||
+				ntfsck_check_file_type(sys_ni, ictx, ie_fn) < 0 ||
+				ntfsck_check_file_name_attr(sys_ni, ie_fn, ictx) < 0) {
 			ntfsck_close_inode(sys_ni);
 			goto check_trivial;
 		}
-		ntfs_attr_put_search_ctx(sys_ctx);
-
-		/* TODO: Validate index entry of system file */
 
 		ntfs_index_ctx_reinit(ictx);
 		if (ntfsck_opened_ni_vol(mft_num) == TRUE)
@@ -4320,19 +9927,181 @@ close_inode:
 
 typedef u8 *(*get_bmp_func)(ntfs_volume *, s64);
 
-static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func func, int wtype)
+/*
+ * Count clusters that the on-disk $Bitmap marks in-use but the fsck-computed
+ * bitmap marks free. These are the clusters a FINAL apply would release.
+ */
+static s64 ntfsck_bitmap_count_to_free(ntfs_volume *vol, ntfs_attr *na,
+		get_bmp_func func)
+{
+	s64 count, pos, total, remain, rcnt;
+	s64 to_free = 0;
+	u8 *disk_bm, *fsck_bm;
+	s64 j;
+
+	disk_bm = ntfs_calloc(NTFS_BUF_SIZE);
+	if (!disk_bm)
+		return -1;
+
+	pos = 0;
+	count = NTFS_BUF_SIZE;
+	total = na->data_size;
+	remain = total;
+	if (total < count)
+		count = total;
+
+	while (1) {
+		memset(disk_bm, 0, NTFS_BUF_SIZE);
+		rcnt = ntfs_attr_pread(na, pos, count, disk_bm);
+		if (rcnt != count) {
+			free(disk_bm);
+			return -1;
+		}
+
+		fsck_bm = func(vol, pos);
+		/* bits set on disk but clear in fsck => would be freed */
+		for (j = 0; j < count; j++) {
+			u8 b = disk_bm[j] & ~fsck_bm[j];
+
+			if (b)
+				to_free += __builtin_popcount((unsigned)b);
+		}
+
+		pos += count;
+		remain -= count;
+		if (remain && remain < NTFS_BUF_SIZE)
+			count = remain;
+		if (!remain)
+			break;
+	}
+
+	free(disk_bm);
+	return to_free;
+}
+
+/*
+ * Consensus barrier for a cluster $Bitmap mass-free. When the FINAL apply
+ * would release a large fraction of the volume, the scan that produced the
+ * fsck ground-truth must itself be trustworthy; otherwise we may be about to
+ * free clusters that belong to files we simply failed to read.
+ *
+ * Three independent indicators are evaluated; if two or more fail, the
+ * mass-free is refused (the caller keeps the on-disk bits set - the safe
+ * direction, which leaks space but never destroys data).
+ *
+ * Returns TRUE if the mass-free must be blocked.
+ */
+static BOOL ntfsck_bitmap_consensus_block(ntfs_volume *vol, s64 to_free)
+{
+	s64 nr_clusters = vol->nr_clusters;
+	int fails = 0;
+
+	/* Only engage for a genuine mass-free (> 5% of the volume). */
+	if (nr_clusters <= 0 || to_free * 20 < nr_clusters)
+		return FALSE;
+
+	/* Indicator 1: EIO rate during the MFT scan must be < 0.1%. */
+	if (total_inuse_mft > 0 && fsck_scan_eio * 1000 > total_inuse_mft)
+		fails++;
+
+	/* Indicator 2: MFT yield (opened / in-use) must be > 90%. */
+	if (total_inuse_mft > 0 &&
+			total_valid_mft * 100 < total_inuse_mft * 90)
+		fails++;
+
+	/* Indicator 3: lost-cluster ratio must be < 10% of the volume. */
+	if (to_free * 10 >= nr_clusters)
+		fails++;
+
+	if (fails >= 2) {
+		ntfs_log_error("Cluster bitmap consensus failed: to_free=%"PRId64
+				" of %"PRId64" clusters, in-use MFT=%"PRId64
+				", valid MFT=%"PRId64", scan EIO=%"PRId64
+				" (indicators failed=%d)\n",
+				to_free, nr_clusters, total_inuse_mft,
+				total_valid_mft, fsck_scan_eio, fails);
+		return TRUE;
+	}
+	return FALSE;
+}
+static int ntfsck_count_bitmap_mismatches(ntfs_volume *vol, ntfs_attr *na,
+		get_bmp_func func, u64 *mismatches)
+{
+	s64 count, pos, total, remain;
+	s64 rcnt;
+	u8 *disk_bm;
+	u8 *fsck_bm;
+
+	if (!mismatches || (na != vol->lcnbmp_na && na != vol->mftbmp_na))
+		return STATUS_ERROR;
+
+	disk_bm = ntfs_calloc(NTFS_BUF_SIZE);
+	if (!disk_bm)
+		return STATUS_ERROR;
+
+	pos = 0;
+	count = NTFS_BUF_SIZE;
+	total = na->data_size;
+	remain = total;
+	if (total < count)
+		count = total;
+
+	while (remain) {
+		rcnt = ntfs_attr_pread(na, pos, count, disk_bm);
+		if (rcnt != count) {
+			ntfs_log_error("Couldn't get $Bitmap while counting mismatches\n");
+			free(disk_bm);
+			return STATUS_ERROR;
+		}
+
+		fsck_bm = func(vol, pos);
+		if (memcmp(fsck_bm, disk_bm, count))
+			(*mismatches)++;
+
+		pos += count;
+		remain -= count;
+		if (remain && remain < NTFS_BUF_SIZE)
+			count = remain;
+	}
+
+	free(disk_bm);
+	return STATUS_OK;
+}
+
+static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func func,
+		int wtype, BOOL repair_decided, BOOL repair_approved)
 {
 	s64 count, pos, total, remain;
 	s64 rcnt, wcnt;
 	u8 *disk_bm;
 	u8 *fsck_bm;
+	u8 *dbmb;
+	u8 *fbmb;
+	s64 word_count;
+	s64 tail_bytes;
 	unsigned long i;
 	unsigned long *dbml;
 	unsigned long *fbml;
+	int ret = STATUS_OK;
+	BOOL block_mass_free = FALSE;
 	problem_context_t pctx = {0, };
 
 	if (na != vol->lcnbmp_na && na != vol->mftbmp_na)
 		return STATUS_ERROR;
+
+	/*
+	 * Before a FINAL cluster-bitmap apply, decide whether the scan is
+	 * trustworthy enough to free a large number of clusters. Only the cluster
+	 * bitmap is subject to this barrier - the MFT bitmap is validated
+	 * record-by-record elsewhere.
+	 */
+	if (na == vol->lcnbmp_na && wtype == FSCK_BMP_FINAL) {
+		s64 to_free = ntfsck_bitmap_count_to_free(vol, na, func);
+
+		if (to_free > 0)
+			block_mass_free = ntfsck_bitmap_consensus_block(vol,
+					to_free);
+	}
 
 	disk_bm = ntfs_calloc(NTFS_BUF_SIZE);
 	if (!disk_bm)
@@ -4347,6 +10116,12 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 		count = total;
 
 	ntfs_init_problem_ctx(&pctx, na->ni, na, NULL, NULL, na->ni->mrec, NULL, NULL);
+
+	if (block_mass_free) {
+		fsck_err_found();
+		ntfs_fix_problem(vol, PR_CLUSTER_BITMAP_CONSENSUS_FAIL, &pctx);
+	}
+
 	/* apply btimap(fsck OR lcnbmp) to disk */
 	while (1) {
 		/* read bitmap from disk */
@@ -4354,11 +10129,13 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 		rcnt = ntfs_attr_pread(na, pos, count, disk_bm);
 		if (rcnt == STATUS_ERROR) {
 			ntfs_log_error("Couldn't get $Bitmap $DATA");
+			ret = STATUS_ERROR;
 			break;
 		}
 
 		if (rcnt != count) {
 			ntfs_log_error("Couldn't get $Bitmap, read count error\n");
+			ret = STATUS_ERROR;
 			break;
 		}
 
@@ -4368,7 +10145,9 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 			goto next;
 
 		/* ondisk lcnbmp OR fsck lcnbmp */
-		for (i = 0; i < (count / sizeof(unsigned long)); i++) {
+		word_count = count / sizeof(unsigned long);
+		tail_bytes = count % sizeof(unsigned long);
+		for (i = 0; i < word_count; i++) {
 			dbml = (unsigned long *)disk_bm + i;
 			fbml = (unsigned long *)fsck_bm + i;
 			if (*dbml != *fbml) {
@@ -4388,13 +10167,27 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 			}
 		}
 
+		dbmb = disk_bm + (word_count * sizeof(unsigned long));
+		fbmb = fsck_bm + (word_count * sizeof(unsigned long));
+		for (i = 0; i < tail_bytes; i++)
+			dbmb[i] |= fbmb[i];
+
 		if (wtype == FSCK_BMP_FINAL)
 			fsck_err_found();
 
-		if (ntfs_fix_problem(vol, PR_CLUSTER_BITMAP_MISMATCH, &pctx)) {
+		if (repair_decided ? repair_approved :
+				ntfs_fix_problem(vol, na == vol->mftbmp_na ?
+					PR_MFT_BITMAP_MISMATCH :
+					PR_CLUSTER_BITMAP_MISMATCH, &pctx)) {
 			if (wtype == FSCK_BMP_INITIAL)
 				wcnt = ntfs_attr_pwrite(na, pos, count, disk_bm);
-			else if (wtype == FSCK_BMP_FINAL) {
+			else if (block_mass_free) {
+				/*
+				 * Consensus barrier tripped: write the OR of disk and fsck bitmaps so
+				 * that used clusters are still marked, but no cluster is freed.
+				 */
+				wcnt = ntfs_attr_pwrite(na, pos, count, disk_bm);
+			} else if (wtype == FSCK_BMP_FINAL) {
 				wcnt = ntfs_attr_pwrite(na, pos, count, fsck_bm);
 				fsck_err_fixed();
 			}
@@ -4419,7 +10212,7 @@ next:
 	}
 
 	free(disk_bm);
-	return STATUS_OK;
+	return ret;
 }
 
 static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
@@ -4427,19 +10220,44 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 	struct orphan_mft *entry = NULL;
 	ntfs_inode *root_ni;
 	u64 cnt = 1;
-	problem_context_t pctx = {0, };
+	u64 orphan_mft_no;
+	u64 bitmap_mismatches = 0;
+	BOOL repair_orphans = FALSE;
+	BOOL bitmap_repair_decided = FALSE;
+	BOOL repair_bitmaps = FALSE;
+	int ret = STATUS_OK;
 
-	fsck_start_step("Check orphaned mft...");
+	fsck_start_step("Check orphaned mft.");
 
-	ntfsck_apply_bitmap(vol, vol->lcnbmp_na,
-			ntfs_fsck_find_lcnbmp_block, FSCK_BMP_INITIAL);
-	ntfsck_apply_bitmap(vol, vol->mftbmp_na,
-			ntfs_fsck_find_mftbmp_block, FSCK_BMP_INITIAL);
+	if (ntfsck_count_bitmap_mismatches(vol, vol->lcnbmp_na,
+			ntfs_fsck_find_lcnbmp_block, &bitmap_mismatches) ||
+		ntfsck_count_bitmap_mismatches(vol, vol->mftbmp_na,
+			ntfs_fsck_find_mftbmp_block, &bitmap_mismatches)) {
+		fsck_end_step();
+		return STATUS_ERROR;
+	}
+	fsck_end_step();
+	if (bitmap_mismatches) {
+		ntfs_log_error("  * Found %"PRIu64" inconsistent bitmap block(s).\n",
+				bitmap_mismatches);
+		ntfs_log_error("    Apply bitmap updates to disk? ");
+		repair_bitmaps = ntfs_ask_repair(vol);
+		bitmap_repair_decided = TRUE;
+	}
+
+	if (ntfsck_apply_bitmap(vol, vol->lcnbmp_na,
+			ntfs_fsck_find_lcnbmp_block, FSCK_BMP_INITIAL,
+			bitmap_repair_decided, repair_bitmaps))
+		return STATUS_ERROR;
+	if (ntfsck_apply_bitmap(vol, vol->mftbmp_na,
+			ntfs_fsck_find_mftbmp_block, FSCK_BMP_INITIAL,
+			bitmap_repair_decided, repair_bitmaps))
+		return STATUS_ERROR;
 
 	progress_init(&prog, 0, orphan_cnt + 1, 1000, pb_flags);
 
 	/* check lost found directory */
-	if (!vol->lost_found) {
+	if (!vol->lost_found && orphan_cnt > 0) {
 		root_ni = ntfsck_open_inode(vol, FILE_root);
 		if (!root_ni) {
 			ntfs_log_error("Failed to open root inode\n");
@@ -4450,40 +10268,95 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 	}
 	progress_update(&prog, cnt);
 
+	/*
+	 * Relinking every orphan uses the same recovery policy. Ask once for the
+	 * complete candidate set instead of requiring an answer per MFT record, then
+	 * retain individual accounting for the actual work below.
+	 */
+	if (!ntfs_list_empty(&oc_list_head)) {
+		ntfs_log_error("  * Found %"PRIu64" orphaned file(s).\n", orphan_cnt);
+		ntfs_log_error("    Restore their index entries to the original "
+				"parents or lost+found. Fix it? ");
+		repair_orphans = ntfs_ask_repair(vol);
+	}
+
 	/* check orphaned mft */
 	while (!ntfs_list_empty(&oc_list_head)) {
 		entry = ntfs_list_entry(oc_list_head.next, struct orphan_mft, oc_list);
 
 		cnt++;
 
-		pctx.inum = entry->mft_no;
 		fsck_err_found();
-		if (ntfs_fix_problem(vol, PR_ORPHANED_MFT_REPAIR, &pctx)) {
+		if (repair_orphans) {
+			orphan_mft_no = entry->mft_no;
 			if (ntfsck_add_index_entry_orphaned_file(vol, entry)) {
 				/*
-				 * error returned.
-				 * inode is already freed and closed in that function,
+				 * The helper has moved and released this entry. Continue draining the
+				 * candidate list so no stale candidates survive into another repair pass,
+				 * but preserve the failed status.
 				 */
 				ntfs_log_error("failed to add entry(%"PRIu64
 						") orphaned file\n",
-						entry->mft_no);
-				return STATUS_ERROR;
+						orphan_mft_no);
+				ret = STATUS_ERROR;
+				continue;
 			}
 			fsck_err_fixed();
+			orphan_recovery_changed = TRUE;
 			progress_update(&prog, cnt);
 		} else {
 			ntfs_list_del(&entry->oc_list);
 			free(entry);
 		}
 	}
+	if (orphan_missing_parent_references || orphan_parent_add_failures) {
+		ntfs_log_error("Orphan recovery:");
+		if (orphan_missing_parent_references)
+			ntfs_log_error(" %"PRIu64" missing parent reference(s)",
+					orphan_missing_parent_references);
+		if (orphan_missing_parent_references && orphan_parent_add_failures)
+			ntfs_log_error(",");
+		if (orphan_parent_add_failures)
+			ntfs_log_error(" %"PRIu64" parent add failure(s)",
+					orphan_parent_add_failures);
+		if (orphan_parent_index_conflicts)
+			ntfs_log_error(" (%"PRIu64" conflicting parent index "
+					"reference(s))",
+					orphan_parent_index_conflicts);
+		ntfs_log_error("; %"PRIu64" filename(s) moved to lost+found",
+				orphan_lost_found_relinks);
+		if (orphan_filename_removals)
+			ntfs_log_error(", %"PRIu64" unrelinkable filename(s) "
+					"removed", orphan_filename_removals);
+		ntfs_log_error(".\n");
+	}
 
-	ntfsck_apply_bitmap(vol, vol->lcnbmp_na,
-			ntfs_fsck_find_lcnbmp_block, FSCK_BMP_FINAL);
-	ntfsck_apply_bitmap(vol, vol->mftbmp_na,
-			ntfs_fsck_find_mftbmp_block, FSCK_BMP_FINAL);
+	/* Orphan recovery can create new bitmap changes after the first count. */
+	if (!bitmap_repair_decided) {
+		if (ntfsck_count_bitmap_mismatches(vol, vol->lcnbmp_na,
+				ntfs_fsck_find_lcnbmp_block, &bitmap_mismatches) ||
+				ntfsck_count_bitmap_mismatches(vol, vol->mftbmp_na,
+				ntfs_fsck_find_mftbmp_block, &bitmap_mismatches))
+			return STATUS_ERROR;
+		if (bitmap_mismatches) {
+			ntfs_log_error("  * Found %"PRIu64" inconsistent bitmap block(s).\n",
+					bitmap_mismatches);
+			ntfs_log_error("    Apply bitmap updates to disk? ");
+			repair_bitmaps = ntfs_ask_repair(vol);
+			bitmap_repair_decided = TRUE;
+		}
+	}
 
-	fsck_end_step();
-	return STATUS_OK;
+	if (ntfsck_apply_bitmap(vol, vol->lcnbmp_na,
+			ntfs_fsck_find_lcnbmp_block, FSCK_BMP_FINAL,
+			bitmap_repair_decided, repair_bitmaps))
+		return STATUS_ERROR;
+	if (ntfsck_apply_bitmap(vol, vol->mftbmp_na,
+			ntfs_fsck_find_mftbmp_block, FSCK_BMP_FINAL,
+			bitmap_repair_decided, repair_bitmaps))
+		return STATUS_ERROR;
+
+	return ret;
 }
 
 static int _ntfsck_check_backup_boot(ntfs_volume *vol, s64 sector, u8 *buf)
@@ -4541,10 +10414,240 @@ static int ntfsck_check_backup_boot(ntfs_volume *vol)
 	return STATUS_ERROR;
 }
 
+/*
+ * The references that were minted while the record still had its real
+ * sequence number are the only place it survives. For a base record ask the
+ * directory index entry each $FILE_NAME points back to; for an extent record
+ * ask the $ATTRIBUTE_LIST entries naming it.
+ */
+static u16 ntfsck_recover_seq_no(ntfs_inode *base_ni, ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *actx;
+	FILE_NAME_ATTR *fn;
+	u16 seq_no = 0;
+
+	if (base_ni != ni) {
+		u8 *al = base_ni->attr_list;
+		u8 *al_end = al + base_ni->attr_list_size;
+		ATTR_LIST_ENTRY *ale;
+		u16 ale_len;
+
+		while (al + sizeof(ATTR_LIST_ENTRY) <= al_end) {
+			ale = (ATTR_LIST_ENTRY *)al;
+			ale_len = le16_to_cpu(ale->length);
+			if (ale_len < sizeof(ATTR_LIST_ENTRY) ||
+					al + ale_len > al_end)
+				break;
+			if (MREF_LE(ale->mft_reference) == ni->mft_no &&
+					MSEQNO_LE(ale->mft_reference))
+				return MSEQNO_LE(ale->mft_reference);
+			al += ale_len;
+		}
+		return 1;
+	}
+
+	actx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!actx)
+		return 1;
+	while (!seq_no && !ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+				CASE_SENSITIVE, 0, NULL, 0, actx)) {
+		ntfs_inode *parent_ni;
+		ntfs_index_context *ictx;
+
+		fn = (FILE_NAME_ATTR *)((u8 *)actx->attr +
+				le16_to_cpu(actx->attr->value_offset));
+		if (MREF_LE(fn->parent_directory) == ni->mft_no)
+			continue;
+		parent_ni = ntfsck_open_inode(ni->vol,
+				MREF_LE(fn->parent_directory));
+		if (!parent_ni)
+			continue;
+		ictx = ntfs_index_ctx_get(parent_ni, NTFS_INDEX_I30, 4);
+		if (ictx) {
+			if (!ntfs_index_lookup(fn, sizeof(FILE_NAME_ATTR),
+						ictx) &&
+					MREF_LE(ictx->entry->indexed_file) ==
+					ni->mft_no)
+				seq_no = MSEQNO_LE(ictx->entry->indexed_file);
+			ntfs_index_ctx_put(ictx);
+		}
+		ntfsck_close_inode(parent_ni);
+	}
+	ntfs_attr_put_search_ctx(actx);
+
+	return seq_no ? seq_no : 1;
+}
+
+/*
+ * A zero sequence number can never be caught as stale: reference checks skip
+ * validation when the sequence in the reference is zero, and the record free
+ * path refuses to increment a zero sequence, so references minted from such a
+ * record keep resolving to whatever occupies the slot later. Restore the
+ * sequence number a surviving reference still remembers (one when none does),
+ * together with the references that must match the record exactly: the
+ * $ATTRIBUTE_LIST entries naming this record and, for a base record, the back
+ * reference held by each extent record.
+ */
+static void ntfsck_fix_zero_seq_no(ntfs_inode *base_ni, ntfs_inode *ni)
+{
+	problem_context_t pctx = {0, };
+	u16 seq_no;
+	s32 i;
+
+	ntfs_init_problem_ctx(&pctx, ni, NULL, NULL, NULL, ni->mrec,
+			NULL, NULL);
+	fsck_err_found();
+	if (!ntfs_fix_problem(ni->vol, PR_MFT_SEQNO_ZERO, &pctx))
+		return;
+
+	seq_no = ntfsck_recover_seq_no(base_ni, ni);
+	ni->mrec->sequence_number = cpu_to_le16(seq_no);
+
+	if (base_ni->attr_list) {
+		u8 *al = base_ni->attr_list;
+		u8 *al_end = al + base_ni->attr_list_size;
+		ATTR_LIST_ENTRY *ale;
+		u16 ale_len;
+
+		while (al + sizeof(ATTR_LIST_ENTRY) <= al_end) {
+			ale = (ATTR_LIST_ENTRY *)al;
+			ale_len = le16_to_cpu(ale->length);
+			if (ale_len < sizeof(ATTR_LIST_ENTRY) ||
+					al + ale_len > al_end)
+				break;
+			if (MREF_LE(ale->mft_reference) == ni->mft_no &&
+					MSEQNO_LE(ale->mft_reference) !=
+					seq_no) {
+				ale->mft_reference =
+					MK_LE_MREF(ni->mft_no, seq_no);
+				NInoAttrListSetDirty(base_ni);
+			}
+			al += ale_len;
+		}
+	}
+
+	if (base_ni == ni) {
+		for (i = 0; i < ni->nr_extents; i++) {
+			ntfs_inode *eni = ni->extent_nis[i];
+
+			if (eni->mrec->base_mft_record ==
+					MK_LE_MREF(ni->mft_no, seq_no))
+				continue;
+			eni->mrec->base_mft_record =
+				MK_LE_MREF(ni->mft_no, seq_no);
+			ntfs_inode_mark_dirty(eni);
+		}
+	}
+
+	ntfs_inode_mark_dirty(ni);
+	fsck_err_fixed();
+}
+
+static void ntfsck_check_seq_no(ntfs_inode *ni)
+{
+	s32 i;
+
+	if (!ni->mrec->sequence_number)
+		ntfsck_fix_zero_seq_no(ni, ni);
+	for (i = 0; i < ni->nr_extents; i++) {
+		if (!ni->extent_nis[i]->mrec->sequence_number)
+			ntfsck_fix_zero_seq_no(ni, ni->extent_nis[i]);
+	}
+}
+
+/*
+ * ntfs_extent_inode_open() rejects an extent record whose sequence number no
+ * longer matches the $ATTRIBUTE_LIST reference, so an extent whose sequence
+ * number was wiped to zero makes the whole base inode unattachable and parse
+ * #2 would tear it down. The reference still remembers the real sequence
+ * number: restore it raw before retrying the attach (the field sits in the
+ * first sector of the record, outside the multi sector transfer protection).
+ */
+static int ntfsck_salvage_extent_seq_no(ntfs_inode *ni)
+{
+	ntfs_volume *vol = ni->vol;
+	u8 *al = ni->attr_list;
+	u8 *al_end = al + ni->attr_list_size;
+	ATTR_LIST_ENTRY *ale;
+	u16 ale_len;
+	int salvaged = 0;
+
+	if (!NVolFsck(vol) || !vol->mft_na || !al)
+		return STATUS_ERROR;
+
+	while (al + sizeof(ATTR_LIST_ENTRY) <= al_end) {
+		u64 mft_no;
+		u16 seq_no;
+		s64 pos;
+		u8 *pal;
+		MFT_RECORD mrec;
+		problem_context_t pctx = {0, };
+
+		ale = (ATTR_LIST_ENTRY *)al;
+		ale_len = le16_to_cpu(ale->length);
+		if (ale_len < sizeof(ATTR_LIST_ENTRY) || al + ale_len > al_end)
+			break;
+		al += ale_len;
+
+		mft_no = MREF_LE(ale->mft_reference);
+		seq_no = MSEQNO_LE(ale->mft_reference);
+		if (mft_no == ni->mft_no || !seq_no)
+			continue;
+		/* several entries name one extent: handle each record once */
+		for (pal = ni->attr_list; pal < (u8 *)ale;
+				pal += le16_to_cpu(
+					((ATTR_LIST_ENTRY *)pal)->length))
+			if (MREF_LE(((ATTR_LIST_ENTRY *)pal)->mft_reference) ==
+					mft_no)
+				break;
+		if (pal < (u8 *)ale)
+			continue;
+		if ((s64)mft_no + 1 > vol->mft_na->initialized_size >>
+				vol->mft_record_size_bits)
+			continue;
+
+		pos = (s64)mft_no << vol->mft_record_size_bits;
+		if (ntfs_attr_pread(vol->mft_na, pos, sizeof(mrec), &mrec) !=
+				sizeof(mrec))
+			continue;
+		if (!ntfs_is_file_record(mrec.magic) ||
+				mrec.sequence_number ||
+				!(mrec.flags & MFT_RECORD_IN_USE) ||
+				MREF_LE(mrec.base_mft_record) != ni->mft_no)
+			continue;
+
+		pctx.inum = mft_no;
+		fsck_err_found();
+		if (!ntfs_fix_problem(vol, PR_MFT_SEQNO_ZERO, &pctx))
+			continue;
+
+		mrec.sequence_number = cpu_to_le16(seq_no);
+		if (ntfs_attr_pwrite(vol->mft_na,
+					pos + offsetof(MFT_RECORD, sequence_number),
+					sizeof(mrec.sequence_number),
+					&mrec.sequence_number) !=
+				sizeof(mrec.sequence_number)) {
+			ntfs_log_error("Failed to restore the sequence number "
+					"of mft record(%"PRIu64")\n", mft_no);
+			continue;
+		}
+		if ((s64)mft_no < vol->mftmirr_size)
+			ntfs_attr_pwrite(vol->mftmirr_na,
+					pos + offsetof(MFT_RECORD, sequence_number),
+					sizeof(mrec.sequence_number),
+					&mrec.sequence_number);
+		fsck_err_fixed();
+		salvaged++;
+	}
+
+	return salvaged ? STATUS_OK : STATUS_ERROR;
+}
+
 static int ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	ntfs_inode *ni = NULL;
 	int is_used;
+	BOOL raw_retry_done = FALSE;
 
 	is_used = check_mftrec_in_use(vol, mft_num, 0);
 	if (is_used < 0) {
@@ -4559,19 +10662,34 @@ static int ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
 		return STATUS_ERROR;
 	}
 
+	/* The bitmap says this record is allocated (in-use). */
+	total_inuse_mft++;
+
 	ni = ntfsck_open_inode(vol, mft_num);
+	if (!ni) {
+		if (errno == EIO)
+			fsck_scan_eio++;
+		raw_retry_done = TRUE;
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num,
+				is_used > 0);
+	}
 	if (!ni)
 		return STATUS_ERROR;
 
 	total_valid_mft++;
 
+	retry_validate:
 	if (ni->attr_list) {
 		if (ntfsck_check_attr_list(ni))
 			goto err_check_inode;
 
-		if (ntfs_inode_attach_all_extents(ni))
+		if (ntfs_inode_attach_all_extents(ni) &&
+				(ntfsck_salvage_extent_seq_no(ni) ||
+				 ntfs_inode_attach_all_extents(ni)))
 			goto err_check_inode;
 	}
+
+	ntfsck_check_seq_no(ni);
 
 	/*
 	 * TODO:
@@ -4586,6 +10704,15 @@ static int ntfsck_scan_mft_record(ntfs_volume *vol, s64 mft_num)
 err_check_inode:
 	ntfs_log_trace("Delete orphaned candidate inode(%"PRIu64")\n", ni->mft_no);
 	ntfsck_close_inode(ni);
+	ni = NULL;
+
+	if (!raw_retry_done) {
+		raw_retry_done = TRUE;
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, mft_num,
+				is_used > 0);
+		if (ni)
+			goto retry_validate;
+	}
 
 	ntfsck_check_mft_record_unused(vol, mft_num);
 	ntfs_fsck_mftbmp_clear(vol, mft_num);
@@ -4593,12 +10720,275 @@ err_check_inode:
 	return STATUS_ERROR;
 }
 
+/*
+ * The last mft record between $MFT/$DATA's initialized_size and @max_size that
+ * was ever written: its multi sector transfer fixup verifies, it carries the
+ * FILE magic, and it names itself. Returns -1 when there is no such record.
+ *
+ * $MFT/$BITMAP would be the obvious oracle and it is the wrong one. The bits
+ * between the record count and the byte-rounded end of the bitmap are padding,
+ * and on volumes Windows wrote they are not always zero; reading them as
+ * evidence grows $MFT over records nobody ever created.
+ */
+static s64 ntfsck_last_written_mft_record(ntfs_volume *vol, s64 reach,
+		s64 max_size)
+{
+	ntfs_attr *na = vol->mft_na;
+	s64 saved_init = na->initialized_size;
+	s64 saved_data = na->data_size;
+	BOOL saved_warn = NVolNoFixupWarn(vol);
+	s64 rec, end, last = -1;
+	MFT_RECORD *m;
+
+	m = ntfs_malloc(vol->mft_record_size);
+	if (!m)
+		return -1;
+
+	rec = reach >> vol->mft_record_size_bits;
+	end = max_size >> vol->mft_record_size_bits;
+
+	/* Most of what we are about to read is not an mft record at all. */
+	NVolSetNoFixupWarn(vol);
+
+	/*
+	 * ntfs_attr_pread() stops at data_size and serves zeroes above
+	 * initialized_size rather than touching the disk, and above them is
+	 * precisely where we need to look. The bump is in memory and lasts only for
+	 * the scan.
+	 */
+	na->data_size = max_size;
+	na->initialized_size = max_size;
+
+	for (; rec < end; rec++) {
+		if (ntfs_attr_mst_pread(na, rec << vol->mft_record_size_bits, 1,
+					vol->mft_record_size, m) != 1)
+			continue;
+		if (!ntfs_is_file_record(m->magic))
+			continue;
+		/*
+		 * Only allocated records can be hidden to any effect. A freed record keeps
+		 * its FILE magic, and often even its stale MFT_RECORD_IN_USE flag (delete
+		 * clears the $MFT/$BITMAP bit, not necessarily the record header), so the
+		 * record's own flag is not trustworthy here.
+		 */
+		if (check_mftrec_in_use(vol, rec, 1) <= 0)
+			continue;
+		if (le32_to_cpu(m->bytes_allocated) != vol->mft_record_size)
+			continue;
+		if (le32_to_cpu(m->bytes_in_use) > vol->mft_record_size)
+			continue;
+		/*
+		 * Only an ntfs 3.1 record carries its own number, and without it a stale
+		 * record cannot be told from a live one. Leave the older layouts alone
+		 * rather than guess.
+		 */
+		if (le16_to_cpu(m->usa_ofs) < 0x30 ||
+				le32_to_cpu(m->mft_record_number) != rec)
+			continue;
+		last = rec;
+	}
+
+	na->initialized_size = saved_init;
+	na->data_size = saved_data;
+	if (!saved_warn)
+		NVolClearNoFixupWarn(vol);
+	free(m);
+	return last;
+}
+
+/*
+ * Rewrite $MFT/$DATA's own size fields. $MFT is being walked by everything
+ * else, so update the attribute record, the open attribute and the inode
+ * together, and get the record on disk before pass 1 reads it back.
+ */
+static int ntfsck_set_mft_size(ntfs_volume *vol, s64 data_size, s64 init_size)
+{
+	ntfs_attr_search_ctx *ctx;
+
+	ctx = ntfs_attr_get_search_ctx(vol->mft_ni, NULL);
+	if (!ctx)
+		return -1;
+
+	if (ntfs_attr_lookup(AT_DATA, AT_UNNAMED, 0, CASE_SENSITIVE, 0, NULL, 0,
+				ctx)) {
+		ntfs_log_perror("Failed to look up $MFT/$DATA");
+		ntfs_attr_put_search_ctx(ctx);
+		return -1;
+	}
+
+	ctx->attr->data_size = cpu_to_sle64(data_size);
+	ctx->attr->initialized_size = cpu_to_sle64(init_size);
+	ntfs_inode_mark_dirty(ctx->ntfs_ino);
+	ntfs_attr_put_search_ctx(ctx);
+
+	vol->mft_na->data_size = data_size;
+	vol->mft_na->initialized_size = init_size;
+	vol->mft_ni->data_size = data_size;
+
+	if (ntfs_inode_sync(vol->mft_ni)) {
+		ntfs_log_perror("Failed to sync $MFT");
+		return -1;
+	}
+
+	return 0;
+}
+
+/*
+ * ntfsck_check_mft_size - make $MFT/$DATA describe the records it really holds.
+ *
+ * Nothing can reach a record past initialized_size, nor past data_size: reads
+ * stop at the one and are served zeroes above the other, so the inode cannot be
+ * opened, and pass 3 then reads every index entry naming it as a dangling
+ * reference and deletes it. A $DATA short by a few records costs the entire
+ * directory tree below them.
+ *
+ * Those records are intact, though. They sit inside the runlist that mount
+ * already validated against allocated_size, so find the last one that was ever
+ * written and grow $DATA back over it. Growing further would be guesswork: the
+ * space above holds nothing anyone wrote, and a $DATA that already reaches
+ * beyond it is just an $MFT with freed records at the end.
+ *
+ * In the other direction the runlist is the authority. Mount rejects an
+ * allocated_size that disagrees with it, so bytes past the allocation are not
+ * addressable at all and a size claiming them can only be wrong.
+ */
+static void ntfsck_check_mft_size(ntfs_volume *vol)
+{
+	ntfs_attr *na = vol->mft_na;
+	problem_context_t pctx = {0, };
+	s64 last, expected, max_size, reach;
+
+	max_size = (na->allocated_size >> vol->mft_record_size_bits) <<
+		vol->mft_record_size_bits;
+
+	if (na->data_size > max_size || na->initialized_size > max_size) {
+		s64 init_size = na->initialized_size > max_size ?
+			max_size : na->initialized_size;
+
+		ntfs_init_problem_ctx(&pctx, vol->mft_ni, na, NULL, NULL,
+				vol->mft_ni->mrec, NULL, NULL);
+		fsck_err_found();
+		if (ntfs_fix_problem(vol, PR_MFT_SIZE_EXCEEDS_ALLOCATION, &pctx) &&
+				!ntfsck_set_mft_size(vol, max_size, init_size))
+			fsck_err_fixed();
+	}
+
+	/* A record is reachable only below both sizes. */
+	reach = na->data_size < na->initialized_size ?
+		na->data_size : na->initialized_size;
+	if (reach >= max_size)
+		return;
+
+	last = ntfsck_last_written_mft_record(vol, reach, max_size);
+	if (last < 0)
+		return;
+
+	expected = (last + 1) << vol->mft_record_size_bits;
+	if (reach >= expected)
+		return;
+
+	ntfs_init_problem_ctx(&pctx, vol->mft_ni, na, NULL, NULL,
+			vol->mft_ni->mrec, NULL, NULL);
+	pctx.dsize = expected;
+	fsck_err_found();
+	if (ntfs_fix_problem(vol, PR_MFT_SIZE_HIDES_RECORDS, &pctx) &&
+			!ntfsck_set_mft_size(vol,
+				na->data_size > expected ? na->data_size : expected,
+				expected))
+		fsck_err_fixed();
+}
+
+/*
+ * ntfsck_check_mft_bitmap_size - make $MFT/$BITMAP cover every mft record.
+ *
+ * A record past the end of $MFT/$BITMAP reads as free: pass 1 skips it, so
+ * its clusters are never accounted and the final cluster-bitmap apply frees
+ * them, while a record the directory walk still reaches keeps its in-use bit
+ * only in fsck's memory - the bitmap applies stop at data_size, the bit is
+ * silently dropped, and record allocation can hand the record out again.
+ * So the bitmap must reach full coverage before pass 1 decides anything.
+ *
+ * The extension cannot be plain zeroes: the bits it restores are the very
+ * in-use information that was lost. Rebuild them from the record headers -
+ * a record whose header carries a record magic and MFT_RECORD_IN_USE is
+ * marked allocated, and pass 1 then validates or clears it like any other;
+ * the reverse guess would silently abandon live records.
+ */
+static void ntfsck_check_mft_bitmap_size(ntfs_volume *vol)
+{
+	ntfs_attr *bm_na = vol->mftbmp_na;
+	MFT_RECORD mrec;
+	problem_context_t pctx = {0, };
+	s64 nr_recs, end, expected, aligned, covered, tail_size, rec;
+	u8 *tail;
+
+	nr_recs = vol->mft_na->data_size >> vol->mft_record_size_bits;
+	expected = (nr_recs + 7) >> 3;
+	if (bm_na->data_size >= expected)
+		return;
+
+	ntfs_init_problem_ctx(&pctx, vol->mft_ni, bm_na, NULL, NULL,
+			vol->mft_ni->mrec, NULL, NULL);
+	pctx.dsize = expected;
+	fsck_err_found();
+	if (!ntfs_fix_problem(vol, PR_MFT_BITMAP_SIZE_MISMATCH, &pctx))
+		return;
+
+	/* NTFS keeps the bitmap in 8-byte units; grow to the next boundary. */
+	aligned = (expected + 7) & ~7;
+	covered = bm_na->data_size << 3;
+	tail_size = aligned - bm_na->data_size;
+	tail = ntfs_calloc(tail_size);
+	if (!tail)
+		return;
+
+	/* Records above initialized_size were never written and stay free. */
+	end = vol->mft_na->initialized_size >> vol->mft_record_size_bits;
+	if (end > nr_recs)
+		end = nr_recs;
+
+	/*
+	 * Only the header is inspected, and its fields all sit before the
+	 * first update sequence slot, so a plain read is enough.
+	 */
+	for (rec = covered; rec < end; rec++) {
+		if (ntfs_attr_pread(vol->mft_na,
+					rec << vol->mft_record_size_bits,
+					offsetof(MFT_RECORD, bytes_in_use),
+					&mrec) !=
+				offsetof(MFT_RECORD, bytes_in_use)) {
+			ntfs_log_error("Failed to read mft record(%"PRId64
+					") header\n", rec);
+			free(tail);
+			return;
+		}
+
+		if ((ntfs_is_file_record(mrec.magic) ||
+					ntfs_is_baad_record(mrec.magic)) &&
+				(mrec.flags & MFT_RECORD_IN_USE))
+			ntfs_bit_set(tail, rec - covered, 1);
+	}
+
+	if (ntfs_attr_pwrite(bm_na, bm_na->data_size, tail_size, tail) !=
+			tail_size) {
+		ntfs_log_error("Failed to extend $MFT/$BITMAP to %"PRId64
+				" bytes\n", aligned);
+		free(tail);
+		return;
+	}
+	free(tail);
+
+	/* The in-use cache may hold the window the extension just rewrote. */
+	check_mftrec_in_use(vol, covered, 1);
+	fsck_err_fixed();
+}
+
 static void ntfsck_scan_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
 	problem_context_t pctx = {0, };
 
-	fsck_start_step("Scan mft entries in volume...");
+	fsck_start_step("Scan mft entries in volume.");
 
 	// For each mft record, verify that it contains a valid file record.
 	nr_mft_records = vol->mft_na->initialized_size >>
@@ -4622,6 +11012,523 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 	fsck_end_step();
 }
 
+/*
+ * Upper bound on repair rounds. Each round strictly reduces the number of
+ * errors left (see the loop in main()), so a handful of rounds is plenty; the
+ * cap only guards against a pathological volume that never settles.
+ */
+#define NTFSCK_MAX_REPAIR_ROUNDS	8
+
+static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol,
+		BOOL corrupt_only)
+{
+	struct ntfs_list_head *pos;
+	u64 failed_corrupt_entries = 0;
+
+	/* Restore checked allocation bitmaps before removals mutate the trees. */
+	ntfs_list_for_each(pos, &ntfsck_deferred_index_repairs) {
+		struct ntfsck_deferred_index *repair;
+		ntfs_inode *ni;
+		ntfs_attr *na;
+		s64 written;
+
+		repair = ntfs_list_entry(pos, struct ntfsck_deferred_index, list);
+		if (corrupt_only)
+			continue;
+		if (repair->type != NTFSCK_DEFER_INDEX_BITMAP ||
+				!index_bitmap_repair_approved)
+			continue;
+		ni = ntfsck_open_inode(vol, repair->parent_mft_no);
+		if (!ni)
+			continue;
+		na = ntfs_attr_open(ni, AT_BITMAP, NTFS_INDEX_I30, 4);
+		if (!na) {
+			ntfsck_close_inode(ni);
+			continue;
+		}
+		written = ntfs_attr_pwrite(na, 0, repair->data_len,
+				repair->data);
+		ntfs_attr_close(na);
+		ntfsck_close_inode(ni);
+		if (written == repair->data_len)
+			fsck_err_fixed();
+		else
+			ntfs_log_error("Can't write $BITMAP of inode(%"PRIu64")\n",
+					repair->parent_mft_no);
+	}
+
+	ntfs_list_for_each(pos, &ntfsck_deferred_index_repairs) {
+		struct ntfsck_deferred_index *repair;
+		ntfs_inode *parent_ni;
+		ntfs_index_context *ictx;
+		BOOL fixed = FALSE;
+
+		repair = ntfs_list_entry(pos, struct ntfsck_deferred_index, list);
+		if (corrupt_only !=
+				(repair->type == NTFSCK_DEFER_CORRUPT_ENTRY))
+			continue;
+		if (repair->type == NTFSCK_DEFER_INDEX_BITMAP)
+			continue;
+		if (!corrupt_index_repair_approved)
+			continue;
+
+		parent_ni = ntfsck_open_inode(vol, repair->parent_mft_no);
+		if (!parent_ni) {
+			failed_corrupt_entries++;
+			continue;
+		}
+		if (ntfs_inode_attach_all_extents(parent_ni)) {
+			ntfsck_close_inode(parent_ni);
+			failed_corrupt_entries++;
+			continue;
+		}
+		ictx = ntfs_index_ctx_get(parent_ni, NTFS_INDEX_I30, 4);
+		if (!ictx) {
+			ntfsck_close_inode(parent_ni);
+			failed_corrupt_entries++;
+			continue;
+		}
+		if (!ntfs_index_lookup(repair->data, repair->data_len, ictx) &&
+				ictx->entry->indexed_file == repair->indexed_file) {
+			if (!ntfs_index_rm(ictx)) {
+				fixed = TRUE;
+				ntfs_inode_mark_dirty(parent_ni);
+				ntfs_index_entry_mark_dirty(ictx);
+			}
+		}
+		ntfs_index_ctx_put(ictx);
+		ntfsck_close_inode(parent_ni);
+		if (fixed) {
+			fsck_err_fixed();
+			if (repair->parent_seqno_mismatch &&
+					fn_parent_seqno_repairs_applied <
+					fn_parent_seqno_mismatches) {
+				fsck_err_fixed();
+				fn_parent_seqno_repairs_applied++;
+			}
+		} else
+			failed_corrupt_entries++;
+	}
+	if (failed_corrupt_entries) {
+		ntfs_log_error("  * Deferred directory index repairs could not be "
+				"applied.\n");
+		ntfs_log_error("    Corrupted entries not removed: %"PRIu64"\n",
+				failed_corrupt_entries);
+	}
+
+	/*
+	 * Size repairs must use the live traversal context. Looking each key up
+	 * again after the count pass fails on damaged directory B-trees even when
+	 * their sequential walk is still usable.
+	 */
+	if (!corrupt_only &&
+			((fn_size_repair_approved &&
+				(fn_allocated_size_mismatches || fn_data_size_mismatches)) ||
+			 (fn_parent_seqno_repair_approved &&
+				fn_parent_seqno_mismatches) ||
+			 (index_reserved_repair_approved && index_reserved_entries))) {
+		u64 expected = fn_allocated_size_mismatches +
+				fn_data_size_mismatches;
+		u64 expected_parent_seqno = fn_parent_seqno_mismatches;
+		u64 expected_reserved = index_reserved_entries;
+
+		fn_size_repairs_applied = 0;
+		index_reserved_repairs_applied = 0;
+		fn_size_repair_apply_pass = TRUE;
+		fn_parent_seqno_repair_apply_pass = TRUE;
+		index_reserved_repair_apply_pass = TRUE;
+		if (ntfsck_scan_index_entries_btree(vol))
+			ntfs_log_error("  * Deferred directory index repair traversal "
+					"failed.\n");
+		fn_size_repair_apply_pass = FALSE;
+		fn_parent_seqno_repair_apply_pass = FALSE;
+		index_reserved_repair_apply_pass = FALSE;
+		if (fn_size_repairs_applied < expected)
+			ntfs_log_error("  * FILE_NAME sizes not updated: %"PRIu64"\n",
+					expected - fn_size_repairs_applied);
+		if (index_reserved_repairs_applied < expected_reserved)
+			ntfs_log_error("  * Index reserved fields not cleared: %"PRIu64"\n",
+					expected_reserved - index_reserved_repairs_applied);
+		if (fn_parent_seqno_repairs_applied < expected_parent_seqno)
+			ntfs_log_error("  * FILE_NAME parent references not updated: %"PRIu64"\n",
+					expected_parent_seqno - fn_parent_seqno_repairs_applied);
+	}
+}
+
+static void ntfsck_apply_deferred_reparse_repairs(ntfs_volume *vol)
+{
+	struct ntfs_list_head *pos;
+
+	if (!reparse_index_repair_approved)
+		return;
+	ntfs_list_for_each(pos, &ntfsck_deferred_reparse_repairs) {
+		struct ntfsck_deferred_reparse *repair;
+		ntfs_inode *ni;
+
+		repair = ntfs_list_entry(pos, struct ntfsck_deferred_reparse,
+				list);
+		ni = ntfsck_open_inode(vol, repair->mft_no);
+		if (!ni)
+			continue;
+		if (ntfs_reparse_index_check(ni, repair->reparse_tag, TRUE) == 1)
+			fsck_err_fixed();
+		else
+			ntfs_log_error("Failed to add $Reparse entry of inode(%"PRIu64
+					")\n", repair->mft_no);
+		ntfsck_close_inode(ni);
+	}
+}
+
+static void ntfsck_ask_index_repairs(ntfs_volume *vol)
+{
+	if (index_bitmap_mismatches) {
+		if (index_bitmap_repair_decided)
+			goto corrupt_entries;
+		ntfs_log_error("  * Directory index bitmap: %"PRIu64" mismatch(es) "
+				"were found.\n", index_bitmap_mismatches);
+		ntfs_log_error("    Apply the checked bitmaps to disk. Fix it? ");
+		index_bitmap_repair_approved = ntfs_ask_repair(vol);
+		index_bitmap_repair_decided = TRUE;
+	}
+corrupt_entries:
+	if (corrupt_index_entries) {
+		if (corrupt_index_repair_decided)
+			goto file_name_sizes;
+		ntfs_log_error("  * Directory index: %"PRIu64" corrupted entry(ies)\n",
+				corrupt_index_entries);
+		if (corrupt_index_unopenable_inodes)
+			ntfs_log_error("    %"PRIu64" entry(ies) reference an inode "
+					"that could not be opened.\n",
+					corrupt_index_unopenable_inodes);
+		if (corrupt_index_reference_failures)
+			ntfs_log_error("    %"PRIu64" entry(ies) disagree with their "
+					"inode or $FILE_NAME reference.\n",
+					corrupt_index_reference_failures);
+		if (corrupt_index_inode_validation_failures)
+			ntfs_log_error("    %"PRIu64" entry(ies) point to an inode "
+					"which failed validation.\n",
+					corrupt_index_inode_validation_failures);
+		if (corrupt_index_sync_failures)
+			ntfs_log_error("    %"PRIu64" entry(ies) could not be "
+					"synchronized after validation.\n",
+					corrupt_index_sync_failures);
+		if (stale_index_sequence_entries) {
+			ntfs_log_error("    (%"PRIu64" stale sequence-number "
+					"reference(s))\n",
+					stale_index_sequence_entries);
+			ntfs_log_error("    were found. ");
+		} else
+			ntfs_log_error("    were found. ");
+		ntfs_log_error("Remove them from their parents. "
+				"Fix it? ");
+		corrupt_index_repair_approved = ntfs_ask_repair(vol);
+		corrupt_index_repair_decided = TRUE;
+	}
+file_name_sizes:
+	if (fn_allocated_size_mismatches || fn_data_size_mismatches) {
+		if (fn_size_repair_decided)
+			goto index_reserved;
+		else {
+			ntfs_log_error("  * FILE_NAME size: %"PRIu64" allocated-size "
+					"mismatch(es).\n", fn_allocated_size_mismatches);
+			ntfs_log_error("    %"PRIu64" data-size mismatch(es) were found.\n",
+					fn_data_size_mismatches);
+			ntfs_log_error("    Update their directory index entries. "
+					"Fix it? ");
+			fn_size_repair_approved = ntfs_ask_repair(vol);
+			fn_size_repair_decided = TRUE;
+		}
+	}
+index_reserved:
+	if (index_reserved_entries && !index_reserved_repair_decided) {
+		ntfs_log_error("  * Index entry reserved field: %"PRIu64" non-zero "
+				"field(s) were found.\n", index_reserved_entries);
+		ntfs_log_error("    Clear them. Fix it? ");
+		index_reserved_repair_approved = ntfs_ask_repair(vol);
+		index_reserved_repair_decided = TRUE;
+	}
+	if (fn_parent_seqno_mismatches && !fn_parent_seqno_repair_decided) {
+		ntfs_log_error("  * FILE_NAME parent sequence: %"PRIu64
+				" mismatch(es) were found.\n",
+				fn_parent_seqno_mismatches);
+		ntfs_log_error("    Update their parent references. Fix it? ");
+		fn_parent_seqno_repair_approved = ntfs_ask_repair(vol);
+		fn_parent_seqno_repair_decided = TRUE;
+	}
+}
+
+static void ntfsck_ask_reparse_index_repairs(ntfs_volume *vol)
+{
+	if (!missing_reparse_index_entries || reparse_index_repair_decided)
+		return;
+
+	ntfs_log_error("  * $Extend/$Reparse index: %"PRIu64" missing entry(ies)\n",
+			missing_reparse_index_entries);
+	ntfs_log_error("    were found. Add them to the index. Fix it? ");
+	reparse_index_repair_approved = ntfs_ask_repair(vol);
+	reparse_index_repair_decided = TRUE;
+}
+
+static void ntfsck_ask_cluster_dup_repairs(ntfs_volume *vol)
+{
+	if (!(cluster_dup_affected_attrs || vol->fsck_lcn_range_dup_count) ||
+			cluster_dup_repair_decided)
+		return;
+
+	ntfs_log_error("  * Cluster duplication:\n");
+	if (cluster_dup_affected_attrs) {
+		ntfs_log_error("    Duplicated clusters: %"PRIu64"\n",
+				cluster_dup_clusters);
+		ntfs_log_error("    Affected attributes: %"PRIu64"\n",
+				cluster_dup_affected_attrs);
+	}
+	if (vol->fsck_lcn_range_dup_count)
+		ntfs_log_error("    Cluster conflicts outside runlist scans: %"PRIu64
+				"\n", vol->fsck_lcn_range_dup_count);
+	if (!cluster_dup_affected_attrs) {
+		ntfs_log_error("    Automatic runlist repair is unavailable.\n");
+		cluster_dup_repair_decided = TRUE;
+		return;
+	}
+	ntfs_log_error("    Repair and apply the affected attribute runlists to disk.\n");
+	ntfs_log_error("    Fix it? ");
+	cluster_dup_repair_approved = ntfs_ask_repair(vol);
+	cluster_dup_repair_decided = TRUE;
+	cluster_dup_repair_retry = cluster_dup_repair_approved;
+}
+
+/*
+ * ntfsck_run_repair_passes - run the whole check/repair sequence once.
+ *
+ * Returns 0 when every pass ran to completion, -1 on a critical error that
+ * makes continuing pointless. Accumulates into the global fsck_errors /
+ * fsck_fixes counters; the caller resets those (and re-mounts) between rounds.
+ *
+ * @orphan_changed, when non-NULL, is set TRUE if orphan recovery (pass 5)
+ * applied any fix this round. That pass relinks inodes and can leave new,
+ * uncounted on-disk corruption behind -- a relinked inode's INDEX_ROOT header
+ * -- which only the next round's checks would find, so the caller must
+ * re-verify rather than stop on errors==fixes when it happened.
+ */
+static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
+{
+	int ret = 0;
+	BOOL saved_fixup_suppress;
+
+	if (orphan_changed)
+		*orphan_changed = FALSE;
+	ntfsck_clear_deferred_repairs();
+	free(fixup_candidate_bitmap);
+	fixup_candidate_bitmap = NULL;
+	fixup_candidate_bitmap_size = 0;
+	fixup_salvage_candidates = 0;
+	fixup_salvaged_records = 0;
+	fn_size_repair_apply_pass = FALSE;
+	fn_allocated_size_mismatches = 0;
+	fn_data_size_mismatches = 0;
+	fn_size_repairs_applied = 0;
+	fn_parent_seqno_repair_apply_pass = FALSE;
+	fn_parent_seqno_mismatches = 0;
+	fn_parent_seqno_repairs_applied = 0;
+	index_reserved_repair_apply_pass = FALSE;
+	index_reserved_entries = 0;
+	index_reserved_repairs_applied = 0;
+	corrupt_index_entries = 0;
+	stale_index_sequence_entries = 0;
+	corrupt_index_unopenable_inodes = 0;
+	corrupt_index_reference_failures = 0;
+	corrupt_index_inode_validation_failures = 0;
+	corrupt_index_sync_failures = 0;
+	index_bitmap_mismatches = 0;
+	missing_reparse_index_entries = 0;
+	cluster_dup_affected_attrs = 0;
+	cluster_dup_clusters = 0;
+	cluster_dup_attr_list_incomplete = FALSE;
+	ntfsck_clear_cluster_dup_attrs();
+	vol->fsck_mft_next_attr_instance_fix_count = 0;
+	vol->fsck_mft_in_use_flag_fix_count = 0;
+	vol->fsck_mft_not_in_use_flag_fix_count = 0;
+	vol->fsck_missing_standard_information_count = 0;
+	vol->fsck_corrupt_mft_record_count = 0;
+	vol->fsck_mft_seqno_mismatch_count = 0;
+	clear_mft_cnt = 0;
+	orphan_missing_parent_references = 0;
+	orphan_parent_add_failures = 0;
+	orphan_parent_index_conflicts = 0;
+	orphan_lost_found_relinks = 0;
+	orphan_filename_removals = 0;
+	orphan_recovery_changed = FALSE;
+	ntfsck_clear_orphan_list();
+	ntfsck_clear_rebuilt_indexes();
+	orphan_cnt = 0;
+	corrupt_nonresident_runlists = 0;
+	saved_fixup_suppress = NVolFsckSuppressFixupWarn(vol);
+	NVolSetFsckSuppressFixupWarn(vol);
+
+	/*
+	 * Journal handling comes first, before any MFT record is trusted or
+	 * modified. ntfsck cannot replay $LogFile, so it resets a genuinely dirty
+	 * journal here rather than leaving a stale one for the later passes to work
+	 * around. $LogFile (inode 2) always lives in the head of $MFT, so it stays
+	 * reachable regardless of a truncated $MFT/$DATA that
+	 * ntfsck_check_mft_size() repairs next.
+	 */
+	if (ntfsck_replay_log(vol)) {
+		ret = -1;
+		goto out;
+	}
+
+	/* $MFT must be whole before pass 1 decides which records exist. */
+	ntfsck_check_mft_size(vol);
+
+	/* And its bitmap must cover every record the sizes now describe. */
+	ntfsck_check_mft_bitmap_size(vol);
+
+	/*
+	 * Clear $Extend/$Deleted before pass 1 counts anything: it holds files
+	 * left by a POSIX delete (unlink of an open file) that a crash cut short
+	 * before the final close. chkdsk empties it at boot; doing the same here
+	 * frees those records and clusters before the bitmaps are built from them.
+	 */
+	ntfsck_empty_deleted_dir(vol);
+
+	/* pass 1 */
+	ntfsck_scan_mft_records(vol);
+
+	/* pass 2 */
+	if (ntfsck_check_system_files(vol)) {
+		ret = -1;
+		goto out;
+	}
+
+	mrec_temp_buf = ntfs_malloc(vol->sector_size);
+	if (!mrec_temp_buf) {
+		ntfs_log_perror("Couldn't allocate mrec_temp_buf buffer");
+		ret = -1;
+		goto out;
+	}
+
+	/* pass 3 */
+	namespace_walk_failed = FALSE;
+	if (ntfsck_scan_index_entries(vol)) {
+		ntfs_log_error("Stop processing fsck due to critical problems\n");
+		ret = -1;
+		goto out;
+	}
+	ntfsck_ask_index_repairs(vol);
+	/*
+	 * Repair duplicated index-allocation clusters before any deferred index
+	 * removal can mutate a block shared by two directory inodes.
+	 */
+	ntfsck_ask_cluster_dup_repairs(vol);
+	if (cluster_dup_repair_approved && cluster_dup_affected_attrs) {
+		if (ntfsck_repair_cluster_dup_attrs(vol)) {
+			ntfs_log_error("Failed to separate duplicated cluster runlists.\n");
+			ret = -1;
+			goto out;
+		}
+		cluster_dup_repair_retry = FALSE;
+	}
+
+	/*
+	 * Validate extent records from the reverse direction. This catches an
+	 * allocated extent which no base $ATTRIBUTE_LIST claims, a case the normal
+	 * attach-all-extents path cannot discover.
+	 */
+	ntfsck_verify_extent_records(vol);
+
+	/* pass 4 */
+	/* apply mft bitmap & cluster bitmap to disk */
+	ntfsck_check_mft_records(vol);
+	if (namespace_walk_failed) {
+		ret = -1;
+		goto out;
+	}
+	ntfsck_apply_deferred_index_repairs(vol, TRUE);
+
+	/* pass 5 */
+	if (ntfsck_check_orphaned_mft(vol)) {
+		ret = -1;
+		goto out;
+	}
+	/* Apply non-corrupt deferred index repairs after orphan recovery. */
+	ntfsck_apply_deferred_index_repairs(vol, FALSE);
+
+	/*
+	 * The pass-3 reachability bitmap predates orphan recovery. Validate it only
+	 * when this round made no orphan changes; otherwise the mandatory
+	 * remount/recheck round rebuilds it from the repaired namespace first.
+	 */
+	if (!orphan_recovery_changed) {
+		ntfsck_verify_file_name_index_links(vol);
+		ntfsck_verify_namespace_reachability(vol);
+	}
+	if (orphan_changed)
+		*orphan_changed = orphan_recovery_changed;
+
+	/*
+	 * After the orphan pass settled which records survive, sweep the
+	 * $Extend/$Reparse index for entries left behind by records that
+	 * did not.
+	 */
+	ntfsck_check_reparse_index(vol);
+	ntfsck_ask_reparse_index_repairs(vol);
+	ntfsck_apply_deferred_reparse_repairs(vol);
+
+out:
+	if (corrupt_nonresident_runlists) {
+		ntfs_log_error("  * Non-resident cluster run: %"PRIu64" corrupted "
+				"attribute(s) were found.\n",
+				corrupt_nonresident_runlists);
+	}
+	if (vol->fsck_corrupt_mft_record_count) {
+		ntfs_log_error("  * Corrupted MFT records: %"PRIu64" occurrence(s) "
+				"were found.\n", vol->fsck_corrupt_mft_record_count);
+	}
+	if (vol->fsck_mft_seqno_mismatch_count)
+		ntfs_log_error("  * MFT SeqNo mismatches: %"PRIu64".\n",
+				vol->fsck_mft_seqno_mismatch_count);
+	if (vol->fsck_mft_next_attr_instance_fix_count) {
+		ntfs_log_error("  * MFT next attribute instance: %"PRIu64" corrupted "
+				"record(s) were fixed.\n",
+				vol->fsck_mft_next_attr_instance_fix_count);
+	}
+	if (vol->fsck_mft_in_use_flag_fix_count) {
+		ntfs_log_error("  * MFT in-use flag: %"PRIu64" record(s) were restored "
+				"from the MFT bitmap.\n",
+				vol->fsck_mft_in_use_flag_fix_count);
+	}
+	if (vol->fsck_missing_standard_information_count) {
+		ntfs_log_error("  * STANDARD_INFORMATION: %"PRIu64" base record(s) "
+				"are missing the attribute.\n",
+				vol->fsck_missing_standard_information_count);
+	}
+	if (fixup_salvage_candidates) {
+		ntfs_log_error("NTFS fixup: %"PRIu64" salvageable MFT record(s) "
+				"were found", fixup_salvage_candidates);
+		if (!fixup_repair_decided) {
+			ntfs_log_error(", recover them. Fix it? ");
+			fixup_repair_approved = ntfs_ask_repair(vol);
+			fixup_repair_decided = TRUE;
+			fixup_repair_retry = fixup_repair_approved;
+		} else if (fixup_repair_approved)
+			ntfs_log_error("; %"PRIu64" recovered using the previous "
+					"approval.\n", fixup_salvaged_records);
+		else
+			ntfs_log_error("; repair was not approved.\n");
+	}
+		ntfsck_clear_deferred_repairs();
+	ntfsck_clear_cluster_dup_attrs();
+	if (!saved_fixup_suppress)
+		NVolClearFsckSuppressFixupWarn(vol);
+	/* the volume is re-mounted between rounds; drop the cached $SII ctx */
+	ntfsck_put_sii_ctx();
+	ntfsck_usnjrnl_size = NTFSCK_USNJRNL_UNKNOWN;
+	free(mrec_temp_buf);
+	mrec_temp_buf = NULL;
+	return ret;
+}
+
 /**
  * main - Does just what C99 claim it does.
  *
@@ -4632,6 +11539,12 @@ int main(int argc, char **argv)
 	ntfs_volume *vol = NULL;
 	const char *path = NULL;
 	int c, errors = 0, ret;
+	/*
+	 * fsck_errors/fsck_fixes are reset between repair rounds, so they only
+	 * ever describe the final round. Accumulate every round into these to
+	 * report what the whole run did.
+	 */
+	int total_errors = 0, total_fixes = 0;
 	unsigned long mnt_flags;
 	BOOL check_dirty_only = FALSE;
 
@@ -4639,12 +11552,13 @@ int main(int argc, char **argv)
 
 	ntfs_log_set_levels(NTFS_LOG_LEVEL_INFO);
 	ntfs_log_clear_levels(NTFS_LOG_LEVEL_TRACE|NTFS_LOG_LEVEL_ENTER|NTFS_LOG_LEVEL_LEAVE);
-	pb_flags = NTFS_PROGBAR;
+	/* Parse headers carry the final completion status; suppress transient bars. */
+	pb_flags = 0;
 	option.verbose = 0;
 	opterr = 0;
 	option.flags = NTFS_MNT_FSCK | NTFS_MNT_IGNORE_HIBERFILE;
 
-	while ((c = getopt_long(argc, argv, "aCnpqryhvV", opts, NULL)) != EOF) {
+	while ((c = getopt_long(argc, argv, "aCfnpqryhSvVD:", opts, NULL)) != EOF) {
 		switch (c) {
 		case 'a':
 		case 'p':
@@ -4685,6 +11599,16 @@ conflict_option:
 			break;
 		case 'q':
 			pb_flags |= ~NTFS_PROGBAR;
+			break;
+		case 'S':
+			opt_salvage = TRUE;
+			break;
+		case 'f':
+			opt_force = TRUE;
+			break;
+		case 'D':
+			/* Consumed by libntfs ntfs_fsck_mount() via getenv(). */
+			setenv("NTFSCK_SCRATCH_DIR", optarg, 1);
 			break;
 		case 'r':
 			if (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
@@ -4730,6 +11654,36 @@ conflict_option:
 					NTFS_MNT_FS_ASK_REPAIR |
 					NTFS_MNT_FS_YES_REPAIR))) {
 		option.flags |= NTFS_MNT_FS_ASK_REPAIR;
+	}
+
+	/*
+	 * Salvage-aggressive mode only makes sense together with a repair mode: it
+	 * performs destructive recovery (e.g. sparsing out compression units that
+	 * will not decompress). With a read-only check it has nothing to act on, so
+	 * warn and disable it rather than silently doing extra work.
+	 */
+	if (opt_salvage) {
+		if (option.flags & (NTFS_MNT_FS_NO_REPAIR | NTFS_MNT_RDONLY) ||
+				check_dirty_only == TRUE) {
+			ntfs_log_warning("Salvage mode (-S) has no effect without "
+					"a repair mode; ignoring it.\n");
+			opt_salvage = FALSE;
+		} else {
+			ntfs_log_warning("Salvage-aggressive mode enabled: "
+					"unrecoverable data may be discarded to "
+					"make the volume usable.\n");
+		}
+	}
+
+	/*
+	 * Force mode only matters to the repair modes: the read-only checks
+	 * proceed on a hibernated volume anyway.
+	 */
+	if (opt_force && ((option.flags & NTFS_MNT_FS_NO_REPAIR) ||
+				check_dirty_only == TRUE)) {
+		ntfs_log_warning("Force mode (-f) has no effect without a "
+				"repair mode; ignoring it.\n");
+		opt_force = FALSE;
 	}
 
 	if (optind != argc - 1)
@@ -4788,49 +11742,191 @@ conflict_option:
 		}
 	}
 
-	ntfsck_check_backup_boot(vol);
-
-	/* pass 1 */
-	ntfsck_scan_mft_records(vol);
-
-	/* pass 2 */
-	if (ntfsck_check_system_files(vol))
-		goto err_out;
-
-	if (ntfsck_replay_log(vol))
-		goto err_out;
-
-	mrec_temp_buf = ntfs_malloc(vol->sector_size);
-	if (!mrec_temp_buf) {
-		ntfs_log_perror("Couldn't allocate mrec_temp_buf buffer");
-		goto err_out;
+	/*
+	 * A hibernated Windows (including one shut down with fast startup) keeps a
+	 * memory image in hiberfil.sys and expects the volume to be exactly as it
+	 * left it: any repair corrupts the volume the moment Windows resumes. Refuse
+	 * the repair modes and let only the read-only check proceed.
+	 */
+	errno = 0;
+	if (ntfs_volume_check_hiberfile(vol, 0) < 0 && errno == EPERM) {
+		if (ntfsck_repair_enabled() && !opt_force) {
+			ntfs_log_error("Windows is hibernated on %s. Resume and "
+					"shut down Windows fully (no hibernation "
+					"or fast restarting), then run ntfsck "
+					"again, or force the repair with -f "
+					"(discards the hibernated state).\n",
+					path);
+			ntfs_fsck_umount(vol);
+			return RETURN_OPERATIONAL_ERROR;
+		}
+		if (ntfsck_repair_enabled()) {
+			ntfs_log_warning("Windows is hibernated on %s; forced "
+					"repair requested, discarding the "
+					"hibernation image.\n", path);
+			if (ntfs_volume_invalidate_hiberfile(vol))
+				ntfs_log_perror("Failed to invalidate "
+						"hiberfil.sys; Windows may "
+						"try to resume from it");
+		} else
+			ntfs_log_warning("Windows is hibernated; the volume "
+					"reflects the state of a suspended "
+					"system.\n");
 	}
 
-	/* pass 3 */
-	if (ntfsck_scan_index_entries(vol)) {
-		ntfs_log_error("Stop processing fsck due to critical problems\n");
-		goto err_out;
+	/*
+	 * Run the check/repair sequence until the volume stops changing. A single
+	 * sweep is not always enough: a later pass can legitimately disturb
+	 * something an earlier pass already validated -- most notably orphan
+	 * recovery (pass 5) re-links inodes into directories the index scan (pass 3)
+	 * has already walked, and reparse/index removals touch view indexes checked
+	 * earlier in the run.
+	 */
+	{
+		int max_rounds = ntfsck_repair_enabled() ?
+				NTFSCK_MAX_REPAIR_ROUNDS : 1;
+		int prev_fixes = -1;
+		u64 prev_orphan_candidates = 0;
+		BOOL have_prev_orphan_candidates = FALSE;
+		int round;
+
+		fixup_repair_decided = FALSE;
+		fixup_repair_approved = FALSE;
+		fixup_repair_retry = FALSE;
+		fn_size_repair_decided = FALSE;
+		fn_size_repair_approved = FALSE;
+		fn_parent_seqno_repair_decided = FALSE;
+		fn_parent_seqno_repair_approved = FALSE;
+		corrupt_index_repair_decided = FALSE;
+		corrupt_index_repair_approved = FALSE;
+		index_bitmap_repair_decided = FALSE;
+		index_bitmap_repair_approved = FALSE;
+		index_reserved_repair_decided = FALSE;
+		index_reserved_repair_approved = FALSE;
+		reparse_index_repair_decided = FALSE;
+		reparse_index_repair_approved = FALSE;
+		stale_reparse_repair_decided = FALSE;
+		stale_reparse_repair_approved = FALSE;
+		cluster_dup_repair_decided = FALSE;
+		cluster_dup_repair_approved = FALSE;
+		cluster_dup_repair_retry = FALSE;
+		for (round = 0; ; round++) {
+			BOOL orphan_changed = FALSE;
+			u64 deferred_errors;
+
+			vol->fsck_lcn_range_dup_count = 0;
+			ntfsck_check_backup_boot(vol);
+
+			/* Open a crash-safe repair transaction before any write. */
+			ntfsck_begin_repair(vol);
+
+			if (ntfsck_run_repair_passes(vol, &orphan_changed))
+				goto err_out;
+			if (orphan_changed) {
+				if (have_prev_orphan_candidates &&
+						orphan_cnt >= prev_orphan_candidates) {
+					ntfs_log_error("Orphan recovery did not converge: "
+							"%"PRIu64" candidate(s) remain after "
+							"the previous repair round.\n", orphan_cnt);
+					fsck_err_found();
+					break;
+				}
+				prev_orphan_candidates = orphan_cnt;
+				have_prev_orphan_candidates = TRUE;
+			}
+			if (fixup_repair_retry || cluster_dup_repair_retry) {
+				/*
+				 * MFT salvage is the one aggregate repair that still needs a raw reread
+				 * after remount. Do not include its preflight candidates in the whole-run
+				 * totals because the retry counts and fixes them together.
+				 */
+				deferred_errors = 0;
+				if (fixup_repair_retry)
+					deferred_errors += fixup_salvage_candidates;
+				if (cluster_dup_repair_retry)
+					deferred_errors += cluster_dup_affected_attrs;
+				if (deferred_errors >= (u64)fsck_errors)
+					fsck_errors = 0;
+				else
+					fsck_errors -= deferred_errors;
+				fixup_repair_retry = FALSE;
+				cluster_dup_repair_retry = FALSE;
+				goto next_round;
+			}
+
+			/*
+			 * A round that repaired everything it found leaves
+			 * nothing for another round to do. A round that repaired
+			 * nothing cannot do better next time either: what is left
+			 * is what this build cannot fix. Only a round that fixed
+			 * some but not all of what it found is worth repeating --
+			 * an earlier repair may have unblocked a check that could
+			 * not run the first time.
+			 *
+			 * The one exception is orphan recovery: it relinks inodes
+			 * and can leave a fresh, uncounted inconsistency behind (a
+			 * relinked inode's INDEX_ROOT header), so a round that
+			 * fixed everything it found but did rebuild an orphan must
+			 * still be re-verified. Otherwise this never re-verifies a
+			 * repair: a fix that is counted but never written back, or
+			 * one that disturbs a structure an earlier pass already
+			 * accepted, ends the run reporting success and only the
+			 * next invocation finds it.
+			 */
+			if (fsck_errors == fsck_fixes && !orphan_changed)
+				break;			/* nothing left to repair */
+			if (fsck_fixes == 0)
+				break;			/* nothing changed; the rest is unfixable */
+			if (round + 1 >= max_rounds)
+				break;			/* iteration cap reached */
+			if (prev_fixes >= 0 && fsck_fixes >= prev_fixes &&
+					(fsck_errors - fsck_fixes) > 0)
+				break;			/* not converging: give up */
+			prev_fixes = fsck_fixes;
+
+	next_round:
+			ntfs_log_info("Repairs applied; re-checking the volume "
+					"(round %d)...\n", round + 2);
+
+			/* Re-mount for a fresh, self-consistent fsck state. */
+			ntfs_fsck_umount(vol);
+			vol = NULL;
+			total_errors += fsck_errors;
+			total_fixes += fsck_fixes;
+			fsck_errors = 0;
+			fsck_fixes = 0;
+			total_cnt = 0;
+			checked_cnt = 0;
+
+			vol = ntfs_fsck_mount(path, option.flags);
+			if (!vol) {
+				ntfs_log_error("Failed to re-mount %s for repair "
+						"round %d (errno %d)\n", path,
+						round + 2, errno);
+				fsck_err_found();
+				goto err_out;
+			}
+		}
 	}
-
-	/* pass 4 */
-	/* apply mft bitmap & cluster bitmap to disk */
-	ntfsck_check_mft_records(vol);
-
-	/* pass 5 */
-	ntfsck_check_orphaned_mft(vol);
-
-	free(mrec_temp_buf);
 
 err_out:
+	/*
+	 * Errors left are the ones the final round could not fix; the rounds before
+	 * it ended with their own errors already repaired. The found and fixed
+	 * totals, though, span the whole run -- reporting only the final round would
+	 * hide every repair that made the volume clean.
+	 */
 	errors = fsck_errors - fsck_fixes;
+	total_errors += fsck_errors;
+	total_fixes += fsck_fixes;
 	if (errors) {
 		ntfs_log_info("%d errors left (errors:%d, fixed:%d)\n",
-				errors, fsck_errors, fsck_fixes);
+				errors, total_errors, total_fixes);
 		ret = RETURN_FS_ERRORS_LEFT_UNCORRECTED;
 	} else {
 		ntfs_log_info("Clean, No errors found or left (errors:%d, fixed:%d)\n",
-				fsck_errors, fsck_fixes);
-		if (fsck_fixes)
+				total_errors, total_fixes);
+		if (total_fixes)
 			ret = RETURN_FS_ERRORS_CORRECTED;
 		else
 			ret = RETURN_FS_NO_ERRORS;

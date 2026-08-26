@@ -559,11 +559,39 @@ ntfs_attr *ntfs_attr_open(ntfs_inode *ni, const ATTR_TYPES type,
 	if (na->type == AT_DATA && na->name == AT_UNNAMED &&
 			(((a->flags & ATTR_IS_SPARSE)     && !NAttrSparse(na)) ||
 			 (!(a->flags & ATTR_IS_ENCRYPTED)  != !NAttrEncrypted(na)))) {
-		errno = EIO;
-		ntfs_log_perror("Inode %lld has corrupt attribute flags "
-				"(0x%x <> 0x%x)",(unsigned long long)ni->mft_no,
-				le16_to_cpu(a->flags), le32_to_cpu(na->ni->flags));
-		goto put_err_out;
+		/*
+		 * The stream is the authority on its own state; the $STANDARD_INFORMATION
+		 * flags are only a cached copy. Under fsck resync the inode flags instead
+		 * of refusing the open: the refusal would end with the whole file discarded
+		 * over a repairable one-bit mismatch.
+		 */
+		if (NVolFsck(ni->vol)) {
+			problem_context_t pctx = {0, };
+
+			pctx.ni = ni;
+			pctx.a = a;
+			fsck_err_found();
+			if (!ntfs_fix_problem(ni->vol, PR_ATTR_SI_FLAG_MISMATCH,
+						&pctx)) {
+				errno = EIO;
+				goto put_err_out;
+			}
+			if (a->flags & ATTR_IS_SPARSE)
+				ni->flags |= FILE_ATTR_SPARSE_FILE;
+			if (a->flags & ATTR_IS_ENCRYPTED)
+				ni->flags |= FILE_ATTR_ENCRYPTED;
+			else
+				ni->flags &= ~FILE_ATTR_ENCRYPTED;
+			ntfs_inode_mark_dirty(ni);
+			NInoFileNameSetDirty(ni);
+			fsck_err_fixed();
+		} else {
+			errno = EIO;
+			ntfs_log_perror("Inode %lld has corrupt attribute flags "
+					"(0x%x <> 0x%x)",(unsigned long long)ni->mft_no,
+					le16_to_cpu(a->flags), le32_to_cpu(na->ni->flags));
+			goto put_err_out;
+		}
 	}
 
 	if (a->non_resident) {
@@ -579,23 +607,38 @@ ntfs_attr *ntfs_attr_open(ntfs_inode *ni, const ATTR_TYPES type,
 			goto put_err_out;
 		}
 		if ((a->flags & ATTR_COMPRESSION_MASK)
-				&& !a->compression_unit) {
-			errno = EIO;
-			ntfs_log_perror("Compressed inode %lld attr 0x%x has "
-					"no compression unit",
-					(unsigned long long)ni->mft_no, le32_to_cpu(type));
-			goto put_err_out;
-		}
-		if ((a->flags & ATTR_COMPRESSION_MASK)
 				&& (a->compression_unit
 					!= STANDARD_COMPRESSION_UNIT)) {
-			errno = EIO;
-			ntfs_log_perror("Compressed inode %lld attr 0x%lx has "
-					"an unsupported compression unit %d",
-					(unsigned long long)ni->mft_no,
-					(long)le32_to_cpu(type),
-					(int)a->compression_unit);
-			goto put_err_out;
+			/*
+			 * STANDARD_COMPRESSION_UNIT is the only value Windows
+			 * ever writes, so under fsck restore it instead of
+			 * refusing the attribute, which would end with the
+			 * file discarded over one corrupt byte.
+			 */
+			if (NVolFsck(ni->vol)) {
+				problem_context_t pctx = {0, };
+
+				pctx.ni = ni;
+				pctx.a = a;
+				fsck_err_found();
+				if (!ntfs_fix_problem(ni->vol,
+						PR_ATTR_COMPRESSION_UNIT_CORRUPTED,
+						&pctx)) {
+					errno = EIO;
+					goto put_err_out;
+				}
+				a->compression_unit = STANDARD_COMPRESSION_UNIT;
+				ntfs_inode_mark_dirty(ctx->ntfs_ino);
+				fsck_err_fixed();
+			} else {
+				errno = EIO;
+				ntfs_log_perror("Compressed inode %lld attr 0x%lx "
+						"has an invalid compression unit %d",
+						(unsigned long long)ni->mft_no,
+						(long)le32_to_cpu(type),
+						(int)a->compression_unit);
+				goto put_err_out;
+			}
 		}
 		ntfs_attr_init(na, TRUE, a->flags,
 				a->flags & ATTR_IS_ENCRYPTED,
@@ -899,57 +942,6 @@ err_out:
 out:
 	ntfs_log_leave("\n");
 	return ret;
-}
-
-/**
- * ntfs_attr_vcn_to_lcn - convert a vcn into a lcn given an ntfs attribute
- * @na:		ntfs attribute whose runlist to use for conversion
- * @vcn:	vcn to convert
- *
- * Convert the virtual cluster number @vcn of an attribute into a logical
- * cluster number (lcn) of a device using the runlist @na->rl to map vcns to
- * their corresponding lcns.
- *
- * If the @vcn is not mapped yet, attempt to map the attribute extent
- * containing the @vcn and retry the vcn to lcn conversion.
- *
- * Since lcns must be >= 0, we use negative return values with special meaning:
- *
- * Return value		Meaning / Description
- * ==========================================
- *  -1 = LCN_HOLE	Hole / not allocated on disk.
- *  -3 = LCN_ENOENT	There is no such vcn in the attribute.
- *  -4 = LCN_EINVAL	Input parameter error.
- *  -5 = LCN_EIO	Corrupt fs, disk i/o error, or not enough memory.
- */
-LCN ntfs_attr_vcn_to_lcn(ntfs_attr *na, const VCN vcn)
-{
-	LCN lcn;
-	BOOL is_retry = FALSE;
-
-	if (!na || !NAttrNonResident(na) || vcn < 0)
-		return (LCN)LCN_EINVAL;
-
-	ntfs_log_trace("Entering for inode 0x%llx, attr 0x%x.\n", (unsigned long
-				long)na->ni->mft_no, le32_to_cpu(na->type));
-retry:
-	/* Convert vcn to lcn. If that fails map the runlist and retry once. */
-	lcn = ntfs_rl_vcn_to_lcn(na->rl, vcn);
-	if (lcn >= 0)
-		return lcn;
-	if (!is_retry && !ntfs_attr_map_runlist(na, vcn)) {
-		is_retry = TRUE;
-		goto retry;
-	}
-	/*
-	 * If the attempt to map the runlist failed, or we are getting
-	 * LCN_RL_NOT_MAPPED despite having mapped the attribute extent
-	 * successfully, something is really badly wrong...
-	 */
-	if (!is_retry || lcn == (LCN)LCN_RL_NOT_MAPPED)
-		return (LCN)LCN_EIO;
-	/* lcn contains the appropriate error code. */
-	return lcn;
 }
 
 /**
@@ -2695,6 +2687,7 @@ s64 ntfs_attr_mst_pread(ntfs_attr *na, const s64 pos, const s64 bk_cnt,
 	s64 br;
 	u8 *end;
 	BOOL warn;
+	BOOL fsck_suppress = FALSE;
 
 	ntfs_log_trace("Entering for inode 0x%llx, attr type 0x%x, pos 0x%llx.\n",
 			(unsigned long long)na->ni->mft_no, le32_to_cpu(na->type),
@@ -2708,11 +2701,15 @@ s64 ntfs_attr_mst_pread(ntfs_attr *na, const s64 pos, const s64 bk_cnt,
 	if (br <= 0)
 		return br;
 	br /= bk_size;
-	/* log errors unless silenced */
-	warn = !na->ni || !na->ni->vol || !NVolNoFixupWarn(na->ni->vol);
+	/* Log errors unless silenced or summarized by fsck. */
+	if (na->ni && na->ni->vol)
+		fsck_suppress = NVolFsckSuppressFixupWarn(na->ni->vol);
+	warn = !na->ni || !na->ni->vol ||
+		(!NVolNoFixupWarn(na->ni->vol) && !fsck_suppress);
 	for (end = (u8*)dst + br * bk_size; (u8*)dst < end; dst = (u8*)dst +
-			bk_size)
+			bk_size) {
 		ntfs_mst_post_read_fixup_warn((NTFS_RECORD*)dst, bk_size, warn);
+	}
 	/* Finally, return the number of blocks read. */
 	return br;
 }
@@ -3000,9 +2997,10 @@ static int ntfs_attr_find(const ATTR_TYPES type, const ntfschar *name,
 		}
 	}
 	errno = EIO;
-	ntfs_log_perror("%s: Corrupt inode (%lld:%d)", __FUNCTION__,
-			ctx->ntfs_ino ? (long long)ctx->ntfs_ino->mft_no : -1,
-			type);
+	if (!ctx->ntfs_ino || !NVolFsck(ctx->ntfs_ino->vol))
+		ntfs_log_perror("%s: Corrupt inode (%lld:%d)", __FUNCTION__,
+				ctx->ntfs_ino ? (long long)ctx->ntfs_ino->mft_no : -1,
+				type);
 	return -1;
 }
 
@@ -3464,6 +3462,103 @@ not_found:
 	}
 }
 
+static int ntfs_attr_check_standard_information(ntfs_volume *vol,
+		BOOL is_fsck, ATTR_RECORD *a, u64 inum, BOOL *fixed)
+{
+	static const u32 valid_si_flags = const_le32_to_cpu(FILE_ATTR_VALID_FLAGS) |
+			const_le32_to_cpu(FILE_ATTR_VIEW_INDEX_PRESENT) |
+			const_le32_to_cpu(FILE_ATTR_I30_INDEX_PRESENT) |
+			const_le32_to_cpu(FILE_ATTR_TXF_INTERNAL);
+	static const u8 zero12[12];
+	STANDARD_INFORMATION *si;
+	u32 value_len, eff_len;
+	u32 file_attributes;
+	BOOL bad_len, bad_reserved, bad_flags;
+	problem_context_t pctx = {0, };
+
+	value_len = le32_to_cpu(a->value_length);
+	if (a->non_resident || value_len < offsetof(STANDARD_INFORMATION, v1_end)) {
+		ntfs_log_error("Corrupt STANDARD_INFORMATION in MFT record %lld: "
+				"non-resident or too short (%u)\n",
+				(long long)inum, value_len);
+		errno = EIO;
+		return -1;
+	}
+
+	si = (STANDARD_INFORMATION *)((u8 *)a + le16_to_cpu(a->value_offset));
+
+	/* Decide every repair first; nothing is modified until agreed to. */
+	eff_len = value_len;
+	bad_len = (value_len != offsetof(STANDARD_INFORMATION, v1_end) &&
+			value_len != offsetof(STANDARD_INFORMATION, v3_end));
+	if (bad_len)
+		eff_len = (value_len < offsetof(STANDARD_INFORMATION, v3_end)) ?
+			offsetof(STANDARD_INFORMATION, v1_end) :
+			offsetof(STANDARD_INFORMATION, v3_end);
+
+	bad_reserved = (eff_len == offsetof(STANDARD_INFORMATION, v1_end) &&
+			memcmp(si->reserved12, zero12, sizeof(si->reserved12)));
+
+	file_attributes = le32_to_cpu(si->file_attributes);
+	bad_flags = !!(file_attributes & ~valid_si_flags);
+
+	if (!is_fsck) {
+		if (bad_len || bad_reserved || bad_flags) {
+			ntfs_log_error("Corrupt STANDARD_INFORMATION in MFT "
+					"record %lld: value_length %u, "
+					"file_attributes 0x%x\n",
+					(long long)inum, value_len,
+					file_attributes);
+			errno = EIO;
+			return -1;
+		}
+	}
+
+	if (eff_len >= offsetof(STANDARD_INFORMATION, v3_end) &&
+			!le32_to_cpu(si->maximum_versions) &&
+			le32_to_cpu(si->version_number)) {
+		/*
+		 * Windows does not always reset version_number to zero when
+		 * maximum_versions is cleared. Treat as stale, not corrupt.
+		 */
+		ntfs_log_debug("Inode(%llu): version_number=%u with maximum_versions=0"
+				" (stale, ignored)\n",
+				(unsigned long long)inum,
+				le32_to_cpu(si->version_number));
+	}
+
+	if (!is_fsck || !(bad_len || bad_reserved || bad_flags))
+		return 0;
+
+	/*
+	 * Attribute checks for $MFT/$MFTMirr run with the volume's fsck state
+	 * cleared, which suppresses every prompt; keep repairing those two silently
+	 * as part of bringing the volume up. All other records go through the
+	 * regular problem flow, so no-repair mode neither modifies the record nor
+	 * lets the caller write it back.
+	 */
+	if (NVolFsck(vol)) {
+		pctx.inum = inum;
+		pctx.a = a;
+		fsck_err_found();
+		if (!ntfs_fix_problem(vol, PR_MFT_SI_FIELDS_CORRUPTED, &pctx))
+			return 0;
+	} else if (NVolFsNoRepair(vol))
+		return 0;
+
+	if (bad_len)
+		a->value_length = cpu_to_le32(eff_len);
+	if (bad_reserved)
+		memset(si->reserved12, 0, sizeof(si->reserved12));
+	if (bad_flags)
+		si->file_attributes = cpu_to_le32(file_attributes & valid_si_flags);
+	*fixed = TRUE;
+	if (NVolFsck(vol))
+		fsck_err_fixed();
+
+	return 0;
+}
+
 /*
  *		Check the consistency of an attribute
  *
@@ -3546,7 +3641,7 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 			if (NVolFsck(vol)) {
 				fsck_err_found();
 				if (ntfs_fix_problem(vol, PR_ATTR_VALUE_OFFSET_BADLY_ALIGNED, &pctx)) {
-					value_off += 7 & ~7;
+					value_off = (value_off + 7) & ~7;
 					a->value_offset = cpu_to_le16(value_off);
 					*fixed = TRUE;
 					fsck_err_fixed();
@@ -3670,8 +3765,15 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 					ret = -1;
 				}
 
-				if (!ret && a->resident_flags != RESIDENT_ATTR_IS_INDEXED &&
-						!(fn->file_attributes & FILE_ATTR_NOT_CONTENT_INDEXED)) {
+				/*
+				 * Every $FILE_NAME is a key in the parent's $I30 index, so its
+				 * resident_flags must carry RESIDENT_ATTR_IS_INDEXED.
+				 * FILE_ATTR_NOT_CONTENT_INDEXED is unrelated -- it only excludes the
+				 * file's contents from the Windows search index -- so it must not gate
+				 * this repair, or the flag never gets fixed on the many files that set
+				 * it.
+				 */
+				if (!ret && a->resident_flags != RESIDENT_ATTR_IS_INDEXED) {
 					if (NVolFsck(vol)) {
 						fsck_err_found();
 						if (ntfs_fix_problem(vol, PR_ATTR_FN_FLAG_MISMATCH, &pctx)) {
@@ -3692,6 +3794,27 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 				/* Check root index is resident and does not overflow */
 				ir = (INDEX_ROOT *)((const u8 *)a +
 						le16_to_cpu(a->value_offset));
+
+				/*
+				 * Under fsck every INDEX_ROOT header fault is repaired field by field
+				 * later on (see ntfsck_repair_index_root_fields()); rejecting the record
+				 * here would instead discard the whole directory over one fixable header
+				 * byte. Refuse only what that repair cannot work with: a non-resident
+				 * attribute or a value too short to hold even an empty index.
+				 */
+				if (is_fsck) {
+					if (a->non_resident
+							|| (le32_to_cpu(a->value_length)
+								< sizeof(INDEX_ROOT)
+								+ sizeof(INDEX_ENTRY_HEADER))) {
+						ntfs_log_error("Corrupt index root"
+								" in MFT record %lld.\n",
+								(long long)inum);
+						errno = EIO;
+						ret = -1;
+					}
+					break;
+				}
 
 				/* index.allocated_size may overflow while resizing */
 				if (a->non_resident
@@ -3718,39 +3841,21 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 					ret = -1;
 				}
 
-				/* Is it needed? */
 				if (!ret && le32_to_cpu(ir->index_block_size) !=
 						vol->indx_record_size) {
-					if (NVolFsck(vol)) {
-						fsck_err_found();
-						if (ntfs_fix_problem(vol, PR_ATTR_IR_SIZE_MISMATCH, &pctx)) {
-							ir->index_block_size = le32_to_cpu(vol->indx_record_size);
-							*fixed = TRUE;
-							fsck_err_fixed();
-						}
-					} else {
-						ntfs_log_error("Corrupt index block size(%u %u) "
-								"in MFT record %llu.\n",
-								le32_to_cpu(ir->index_block_size),
-								vol->indx_record_size,
-								(unsigned long long)inum);
-						errno = EIO;
-						ret = -1;
-					}
+					ntfs_log_error("Corrupt index block size(%u %u) "
+							"in MFT record %llu.\n",
+							le32_to_cpu(ir->index_block_size),
+							vol->indx_record_size,
+							(unsigned long long)inum);
+					errno = EIO;
+					ret = -1;
 				}
 
 				break;
 			case AT_STANDARD_INFORMATION :
-				if (a->non_resident
-						|| (le32_to_cpu(a->value_length)
-							< offsetof(STANDARD_INFORMATION,
-								v1_end))) {
-					ntfs_log_error("Corrupt standard information"
-							" in MFT record %lld\n",
-							(long long)inum);
-					errno = EIO;
-					ret = -1;
-				}
+				ret = ntfs_attr_check_standard_information(vol,
+						is_fsck, mod_a, inum, fixed);
 				break;
 			case AT_OBJECT_ID :
 				if (a->non_resident

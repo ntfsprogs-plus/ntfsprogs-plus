@@ -27,11 +27,13 @@ You should have GNU Build system (autoconf, automake, libtool)
 and some libraries to build ntfsprogs-plus. If you don't have them,
 you should install them.
 
-For ubuntu
+For ubuntu or debian
 ```
-sudo apt install build-essential automake autoconf libtool
-sudo apt install libgcrypt20-dev libasan8
+sudo apt install build-essential automake autoconf libtool pkgconf uuid-dev libgcrypt20-dev
+sudo apt install libasan8 # only install when on x86/arm architecture
 ```
+On Debian you can also just `apt install ntfsprogs-plus` with experimental.
+
 For redhat
 ```
 yum install automake autoconf libtool
@@ -136,6 +138,11 @@ You can look into more detail information of inode that consist of inode:
 ```
 ntfsinfo -i <inode number> <device>
 ```
+
+# Reporting Issues
+If you encounter an issue, please report it to the
+[NTFS mailing list](mailto:ntfs@lists.linux.dev) or open an issue on
+[GitHub Issues](https://github.com/ntfsprogs-plus/ntfsprogs-plus/issues).
 
 # License
 ntfsprogs-plus is published under GPLv2 license.

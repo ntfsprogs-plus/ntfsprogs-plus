@@ -24,11 +24,9 @@ MAINTAINERCLEANFILES=\
 	$(srcdir)/m4/lt~obsolete.m4 \
 	$(srcdir)/m4/ltoptions.m4
 
-SUBDIRS = include libntfs src
+SUBDIRS = include libntfs src manpages
 
 doc_DATA = README.md
-
-README: README.md
 
 dist-hook:
 	$(MKDIR_P) "$(distdir)/m4"

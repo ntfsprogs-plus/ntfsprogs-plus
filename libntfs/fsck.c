@@ -47,7 +47,184 @@
 #include "runlist.h"
 #include "problem.h"
 
+/*
+ * Optional disk-backed cluster shadow bitmap. On Linux the literal (partially
+ * filled) blocks can be carried in a memory-mapped, immediately-unlinked
+ * scratch file instead of the heap, so the resident set is bounded by the
+ * kernel page cache rather than by the number of literal blocks.
+ */
+#if defined(__linux__)
+#include <sys/mman.h>
+#define NTFSCK_HAVE_SCRATCH	1
+/* Below this projected arena size the RAM backend is used (scratch not worth it). */
+#define NTFSCK_SCRATCH_MIN	(64LL << 20)
+/* System page size; MADV_DONTNEED is only used when a block spans whole pages. */
+static long fsck_scratch_page;
+#endif
+
 u8 zero_bm[NTFS_BUF_SIZE];
+
+/*
+ * All-ones sentinel for the fsck cluster (lcn) shadow bitmap. A slot in
+ * vol->fsck_lcn_bitmap[] can be: NULL - block is entirely free (reads share
+ * read-only zero_bm) FB_ONES - block is entirely allocated (reads share
+ * read-only ones_bm) other ptr - a private literal NTFS_BUF_SIZE block
+ * (partially filled) The two sentinels cost no per-block storage, which
+ * collapses the common "large contiguous allocation / mostly-used volume"
+ * cases from ~1 bit per cluster down to almost nothing.
+ */
+static u8 ones_bm[NTFS_BUF_SIZE];
+#define FB_ONES		((u8 *)ones_bm)
+/* Number of cluster bits represented by one NTFS_BUF_SIZE bitmap block. */
+#define FB_BLOCK_BITS	(1 << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS))
+
+/*
+ * Ensure fsck_lcn_bitmap[idx] is a private, writable literal block,
+ * converting either sentinel (all-free NULL or all-allocated FB_ONES) into
+ * real storage. When a scratch arena is active the storage is a fixed slice
+ * of the mmap'd file (arena + idx * NTFS_BUF_SIZE) rather than the heap.
+ */
+static u8 *ntfs_fsck_lcnbmp_materialize(ntfs_volume *vol, s64 idx)
+{
+	u8 *buf = vol->fsck_lcn_bitmap[idx];
+
+	/* Already a literal block. */
+	if (buf && buf != FB_ONES)
+		return buf;
+
+	if (vol->fsck_lcn_arena) {
+		u8 *slot = vol->fsck_lcn_arena + (size_t)idx * NTFS_BUF_SIZE;
+
+		/* The arena slice may hold stale data from a collapsed block, so
+		 * always initialize on the sentinel -> literal transition. */
+		memset(slot, (buf == FB_ONES) ? 0xff : 0x00, NTFS_BUF_SIZE);
+		vol->fsck_lcn_setcnt[idx] = (buf == FB_ONES) ? FB_BLOCK_BITS : 0;
+		vol->fsck_lcn_bitmap[idx] = slot;
+		return slot;
+	}
+
+	if (buf == FB_ONES) {
+		buf = (u8 *)ntfs_malloc(NTFS_BUF_SIZE);
+		if (!buf)
+			return NULL;
+		memset(buf, 0xff, NTFS_BUF_SIZE);
+		vol->fsck_lcn_setcnt[idx] = FB_BLOCK_BITS;
+	} else {
+		buf = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
+		if (!buf)
+			return NULL;
+		vol->fsck_lcn_setcnt[idx] = 0;
+	}
+	vol->fsck_lcn_bitmap[idx] = buf;
+	return buf;
+}
+
+/*
+ * Collapse a fully-set literal block into the all-ones sentinel, releasing
+ * its NTFS_BUF_SIZE storage. No-op unless every bit in the block is set.
+ */
+static void ntfs_fsck_lcnbmp_try_collapse(ntfs_volume *vol, s64 idx)
+{
+	u8 *buf = vol->fsck_lcn_bitmap[idx];
+
+	if (!buf || buf == FB_ONES ||
+			vol->fsck_lcn_setcnt[idx] != FB_BLOCK_BITS)
+		return;
+
+#ifdef NTFSCK_HAVE_SCRATCH
+	if (vol->fsck_lcn_arena) {
+		/*
+		 * Drop the arena slice's resident pages. Only when a block is a whole
+		 * number of pages, so this can never disturb a neighbouring block that
+		 * shares a page (large-page systems).
+		 */
+		if (fsck_scratch_page > 0 && (NTFS_BUF_SIZE % fsck_scratch_page) == 0)
+			madvise(buf, NTFS_BUF_SIZE, MADV_DONTNEED);
+	} else
+#endif
+		free(buf);
+	vol->fsck_lcn_bitmap[idx] = FB_ONES;
+}
+
+/*
+ * Set up (or decline) the disk-backed scratch arena for the cluster shadow
+ * bitmap. On any failure the RAM backend is left in place (arena == NULL).
+ */
+static void ntfs_fsck_scratch_init(ntfs_volume *vol, const char *dir)
+{
+	vol->fsck_lcn_arena = NULL;
+	vol->fsck_lcn_arena_size = 0;
+	vol->fsck_lcn_arena_fd = -1;
+
+#ifdef NTFSCK_HAVE_SCRATCH
+	{
+		char tmpl[PATH_MAX];
+		s64 size = (s64)vol->max_flb_cnt * NTFS_BUF_SIZE;
+		void *arena;
+		int fd, ret;
+
+		if (!dir || !*dir)
+			return;			/* not requested */
+		if (size < NTFSCK_SCRATCH_MIN)
+			return;			/* too small to be worth it */
+
+		fsck_scratch_page = sysconf(_SC_PAGESIZE);
+
+		snprintf(tmpl, sizeof(tmpl), "%s/ntfsck-lcnbmp-XXXXXX", dir);
+		fd = mkstemp(tmpl);
+		if (fd < 0) {
+			ntfs_log_perror("fsck scratch: mkstemp(%s) failed, "
+					"using RAM cluster bitmap", dir);
+			return;
+		}
+		/* Unlink immediately: nothing is left behind on a crash or an
+		 * unplug, and the space is reclaimed when the fd is closed. */
+		unlink(tmpl);
+
+		/* Reserve the whole arena up front. A later page fault can then
+		 * never hit ENOSPC, which on an mmap would raise SIGBUS and abort
+		 * the repair mid-flight. */
+		ret = posix_fallocate(fd, 0, size);
+		if (ret) {
+			errno = ret;
+			ntfs_log_perror("fsck scratch: cannot reserve %lld bytes "
+					"in %s, using RAM cluster bitmap",
+					(long long)size, dir);
+			close(fd);
+			return;
+		}
+
+		arena = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+		if (arena == MAP_FAILED) {
+			ntfs_log_perror("fsck scratch: mmap failed, "
+					"using RAM cluster bitmap");
+			close(fd);
+			return;
+		}
+
+		vol->fsck_lcn_arena = (u8 *)arena;
+		vol->fsck_lcn_arena_size = size;
+		vol->fsck_lcn_arena_fd = fd;
+		ntfs_log_info("fsck: using %lld MiB disk-backed cluster bitmap "
+				"under %s\n", (long long)(size >> 20), dir);
+	}
+#else
+	(void)dir;
+#endif
+}
+
+static void ntfs_fsck_scratch_free(ntfs_volume *vol)
+{
+#ifdef NTFSCK_HAVE_SCRATCH
+	if (vol->fsck_lcn_arena)
+		munmap(vol->fsck_lcn_arena, vol->fsck_lcn_arena_size);
+#endif
+	if (vol->fsck_lcn_arena_fd >= 0)
+		close(vol->fsck_lcn_arena_fd);
+	vol->fsck_lcn_arena = NULL;
+	vol->fsck_lcn_arena_size = 0;
+	vol->fsck_lcn_arena_fd = -1;
+}
 
 /*
  * function to set fsck mft bitmap value
@@ -117,16 +294,18 @@ u8 *ntfs_fsck_find_mftbmp_block(ntfs_volume *vol, s64 pos)
 	return vol->fsck_mft_bitmap[bm_i];
 }
 
-void ntfs_fsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit)
-{
-	while (length--)
-		ntfs_bit_set(bm, pos++, bit);
-}
-
 u8 *ntfs_fsck_find_lcnbmp_block(ntfs_volume *vol, s64 pos)
 {
 	u32 bm_i = FB_ROUND_DOWN(pos);
 	u32 last_idx = FB_ROUND_DOWN((vol->nr_clusters - 1) >> NTFSCK_BYTE_TO_BITS);
+
+	/*
+	 * Fully-allocated block: return the shared read-only all-ones buffer.
+	 * The trailing-pad fill-up (fill_unused) only sets bits to 1, so it is
+	 * redundant here and is skipped.
+	 */
+	if (bm_i < vol->max_flb_cnt && vol->fsck_lcn_bitmap[bm_i] == FB_ONES)
+		return ones_bm;
 
 	if (bm_i >= vol->max_flb_cnt || !vol->fsck_lcn_bitmap[bm_i]) {
 		memset(zero_bm, 0, NTFS_BUF_SIZE);
@@ -144,6 +323,158 @@ u8 *ntfs_fsck_find_lcnbmp_block(ntfs_volume *vol, s64 pos)
 				vol->fsck_lcn_bitmap[bm_i]);
 
 	return vol->fsck_lcn_bitmap[bm_i];
+}
+
+/*
+ * The occupancy oracle (vol->fsck_alloc_bitmap) is a set-only twin of the
+ * cluster shadow bitmap. The pass-1 MFT scan marks every cluster a valid
+ * inode references so ntfs_cluster_alloc() can avoid them (see
+ * ntfs_fsck_or_alloc_lcnbmp()).
+ */
+static u8 *ntfs_fsck_alloc_materialize(ntfs_volume *vol, s64 idx)
+{
+	u8 *buf = vol->fsck_alloc_bitmap[idx];
+
+	if (buf && buf != FB_ONES)
+		return buf;
+
+	if (buf == FB_ONES) {
+		buf = (u8 *)ntfs_malloc(NTFS_BUF_SIZE);
+		if (!buf)
+			return NULL;
+		memset(buf, 0xff, NTFS_BUF_SIZE);
+		vol->fsck_alloc_setcnt[idx] = FB_BLOCK_BITS;
+	} else {
+		buf = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
+		if (!buf)
+			return NULL;
+		vol->fsck_alloc_setcnt[idx] = 0;
+	}
+	vol->fsck_alloc_bitmap[idx] = buf;
+	return buf;
+}
+
+/* Collapse a fully-set literal oracle block back into the FB_ONES sentinel. */
+static void ntfs_fsck_alloc_try_collapse(ntfs_volume *vol, s64 idx)
+{
+	u8 *buf = vol->fsck_alloc_bitmap[idx];
+
+	if (!buf || buf == FB_ONES || vol->fsck_alloc_setcnt[idx] != FB_BLOCK_BITS)
+		return;
+	free(buf);
+	vol->fsck_alloc_bitmap[idx] = FB_ONES;
+}
+
+/*
+ * Mark [lcn, lcn+length) occupied in the oracle. Set-only: a bit that is
+ * already set is simply left set (two inodes overlapping is a real
+ * duplication, but it is detected against the shadow bitmap elsewhere; here
+ * over-marking is exactly the safe direction for an allocator barrier).
+ */
+int ntfs_fsck_set_alloc_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length)
+{
+	s64 last_lcn = lcn + length - 1;
+	s64 s_idx = FB_ROUND_DOWN(lcn >> NTFSCK_BYTE_TO_BITS);
+	s64 e_idx = FB_ROUND_DOWN(last_lcn >> NTFSCK_BYTE_TO_BITS);
+	s64 idx_slcn;
+	s64 rel_slcn = lcn;
+	s64 remain_length;
+	s64 rel_length;
+	s64 idx;
+	u8 *buf;
+	u8 *cur;
+	BOOL full_cover;
+	int i;
+
+	if (length <= 0)
+		return -EINVAL;
+
+	remain_length = length;
+	for (idx = s_idx; idx <= e_idx; idx++) {
+		cur = vol->fsck_alloc_bitmap[idx];
+
+		idx_slcn = idx << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
+		if (rel_slcn)
+			rel_slcn -= idx_slcn;
+
+		rel_length = (1 << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS)) - rel_slcn;
+		if (remain_length < rel_length)
+			rel_length = remain_length;
+
+		full_cover = (rel_slcn == 0 && rel_length == FB_BLOCK_BITS);
+
+		if (cur == FB_ONES)
+			goto next_block;		/* already all-ones */
+
+		if (!cur && full_cover) {
+			vol->fsck_alloc_bitmap[idx] = FB_ONES;
+			goto next_block;
+		}
+
+		buf = ntfs_fsck_alloc_materialize(vol, idx);
+		if (!buf)
+			return -ENOMEM;
+
+		for (i = 0; i < rel_length; i++) {
+			if (!ntfs_bit_get_and_set(buf, rel_slcn + i, 1))
+				vol->fsck_alloc_setcnt[idx]++;
+		}
+		ntfs_fsck_alloc_try_collapse(vol, idx);
+
+next_block:
+		remain_length -= rel_length;
+		if (remain_length <= 0)
+			break;
+		rel_slcn = 0;
+	}
+	return 0;
+}
+
+/*
+ * Return the NTFS_BUF_SIZE oracle block covering byte offset @byte_pos of the
+ * cluster bitmap. Unlike ntfs_fsck_find_lcnbmp_block() there is no trailing
+ * fill_unused: the allocator already bounds its search by nr_clusters.
+ */
+static u8 *ntfs_fsck_find_alloc_lcnbmp_block(ntfs_volume *vol, s64 byte_pos)
+{
+	u32 bm_i = FB_ROUND_DOWN(byte_pos);
+
+	if (bm_i >= vol->max_flb_cnt || !vol->fsck_alloc_bitmap[bm_i]) {
+		memset(zero_bm, 0, NTFS_BUF_SIZE);
+		return zero_bm;
+	}
+	if (vol->fsck_alloc_bitmap[bm_i] == FB_ONES)
+		return ones_bm;
+
+	return vol->fsck_alloc_bitmap[bm_i];
+}
+
+/*
+ * OR the oracle's occupancy bits for byte range [byte_pos, byte_pos+nbytes)
+ * of the cluster bitmap into @dst. The range can straddle two oracle blocks,
+ * so walk it a block at a time.
+ */
+void ntfs_fsck_or_alloc_lcnbmp(ntfs_volume *vol, s64 byte_pos, s64 nbytes, u8 *dst)
+{
+	s64 done = 0;
+
+	while (done < nbytes) {
+		s64 cur = byte_pos + done;
+		s64 blk_start = (cur >> NTFS_BUF_SIZE_BITS) << NTFS_BUF_SIZE_BITS;
+		s64 off = cur - blk_start;
+		s64 chunk = NTFS_BUF_SIZE - off;
+		u8 *src;
+		s64 i;
+
+		if (chunk > nbytes - done)
+			chunk = nbytes - done;
+
+		src = ntfs_fsck_find_alloc_lcnbmp_block(vol, cur);
+		for (i = 0; i < chunk; i++)
+			dst[done + i] |= src[off + i];
+
+		done += chunk;
+	}
 }
 
 /*
@@ -223,6 +554,7 @@ runlist *ntfs_fsck_make_dup_runlist(runlist *orig_dup_rl, runlist *new_dup_rl)
 	runlist *dup_rl;
 	int orig_size;
 	int i;
+	size_t new_size;
 
 	ntfs_log_debug("make dup runlist orig_dup_rl dump\n");
 	if (!orig_dup_rl) {
@@ -249,7 +581,27 @@ runlist *ntfs_fsck_make_dup_runlist(runlist *orig_dup_rl, runlist *new_dup_rl)
 
 	ntfs_log_debug("orig_dup_rl\n");
 	ntfs_debug_runlist_dump(orig_dup_rl);
-	dup_rl = ntfs_rl_replace(orig_dup_rl, orig_size, new_dup_rl, 1, orig_size - 1);
+	if (orig_size > 1 &&
+			orig_dup_rl[orig_size - 2].vcn +
+			orig_dup_rl[orig_size - 2].length == new_dup_rl->vcn &&
+			orig_dup_rl[orig_size - 2].lcn +
+			orig_dup_rl[orig_size - 2].length == new_dup_rl->lcn) {
+		orig_dup_rl[orig_size - 2].length += new_dup_rl->length;
+		orig_dup_rl[orig_size - 1].vcn =
+				orig_dup_rl[orig_size - 2].vcn +
+				orig_dup_rl[orig_size - 2].length;
+		dup_rl = orig_dup_rl;
+	} else {
+		new_size = (size_t)(orig_size + 1) * sizeof(*dup_rl);
+		new_size = (new_size + 0xfff) & ~(size_t)0xfff;
+		dup_rl = realloc(orig_dup_rl, new_size);
+		if (!dup_rl)
+			return NULL;
+		dup_rl[orig_size - 1] = *new_dup_rl;
+		dup_rl[orig_size].vcn = new_dup_rl->vcn + new_dup_rl->length;
+		dup_rl[orig_size].lcn = LCN_ENOENT;
+		dup_rl[orig_size].length = 0;
+	}
 
 	ntfs_log_debug("appended dup_rl\n");
 	ntfs_debug_runlist_dump(dup_rl);
@@ -312,6 +664,8 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
 
 	s64 idx;
 	u8 *buf;
+	u8 *cur;
+	BOOL full_cover;
 	int i;
 
 	if (length <= 0)
@@ -319,13 +673,7 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
 
 	remain_length = length;
 	for (idx = s_idx; idx <= e_idx; idx++) {
-		if (!vol->fsck_lcn_bitmap[idx]) {
-			vol->fsck_lcn_bitmap[idx] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
-			if (!vol->fsck_lcn_bitmap[idx])
-				return -ENOMEM;
-		}
-
-		buf = vol->fsck_lcn_bitmap[idx];
+		cur = vol->fsck_lcn_bitmap[idx];
 
 		idx_slcn = idx << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
 		if (rel_slcn)
@@ -335,14 +683,39 @@ int ntfs_fsck_set_lcnbmp_range(ntfs_volume *vol, s64 lcn, s64 length, u8 bit)
 		if (remain_length < rel_length)
 			rel_length = remain_length;
 
-		for (i = 0; i < rel_length; i++) {
-			if (ntfs_bit_get_and_set(buf, rel_slcn + i, bit)) {
-				if (bit)
-					ntfs_log_error("Cluster Duplication %"PRIu64" - do not fix\n",
-							(idx_slcn + rel_slcn) + i);
+		full_cover = (rel_slcn == 0 && rel_length == FB_BLOCK_BITS);
+
+		if (bit) {
+			if (!cur && full_cover) {
+				/* whole empty block becomes all-ones: no storage */
+				vol->fsck_lcn_bitmap[idx] = FB_ONES;
+				goto next_block;
+			}
+
+			buf = ntfs_fsck_lcnbmp_materialize(vol, idx);
+			if (!buf)
+				return -ENOMEM;
+
+			for (i = 0; i < rel_length; i++) {
+				if (!ntfs_bit_get_and_set(buf, rel_slcn + i, bit))
+					vol->fsck_lcn_setcnt[idx]++;
+				else
+					vol->fsck_lcn_range_dup_count++;
+			}
+			ntfs_fsck_lcnbmp_try_collapse(vol, idx);
+		} else if (cur) {
+			/* clear: an already-free (NULL) block needs no work */
+			buf = ntfs_fsck_lcnbmp_materialize(vol, idx);
+			if (!buf)
+				return -ENOMEM;
+
+			for (i = 0; i < rel_length; i++) {
+				if (ntfs_bit_get_and_set(buf, rel_slcn + i, bit))
+					vol->fsck_lcn_setcnt[idx]--;
 			}
 		}
 
+next_block:
 		remain_length -= rel_length;
 		if (remain_length <= 0)
 			break;
@@ -403,15 +776,7 @@ runlist *ntfs_fsck_check_and_set_lcnbmp(ntfs_volume *vol, ntfs_attr *na, int rl_
 	tmp_rl[0].lcn = -1;
 	checked_vcn = 0;
 	for (idx = s_idx; idx <= e_idx; idx++) {
-		if (!vol->fsck_lcn_bitmap[idx]) {
-			vol->fsck_lcn_bitmap[idx] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
-			if (!vol->fsck_lcn_bitmap[idx]) {
-				ntfs_log_error("Can't allocate lcn_bitmap buffer\n");
-				return dup_rl;
-			}
-		}
-
-		buf = vol->fsck_lcn_bitmap[idx];
+		BOOL full_cover;
 
 		/* calculate first lcn of fsck_lcn_bitmap[idx] */
 		idx_slcn = idx << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
@@ -422,16 +787,39 @@ runlist *ntfs_fsck_check_and_set_lcnbmp(ntfs_volume *vol, ntfs_attr *na, int rl_
 		if (remain_length < rel_length)
 			rel_length = remain_length;
 
+		full_cover = (rel_slcn == 0 && rel_length == FB_BLOCK_BITS);
+
+		/*
+		 * Fast path: marking a wholly-unset block as fully allocated.
+		 * No prior bits were set, so no duplicates are possible and no
+		 * literal storage is needed.
+		 */
+		if (bit && !vol->fsck_lcn_bitmap[idx] && full_cover) {
+			vol->fsck_lcn_bitmap[idx] = FB_ONES;
+			goto next_block;
+		}
+
+		/* clearing an already-free block is a no-op */
+		if (!bit && !vol->fsck_lcn_bitmap[idx])
+			goto next_block;
+
+		buf = ntfs_fsck_lcnbmp_materialize(vol, idx);
+		if (!buf) {
+			ntfs_log_error("Can't allocate lcn_bitmap buffer\n");
+			return dup_rl;
+		}
+
 		for (i = 0; i < rel_length; i++) {
-			if (!ntfs_bit_get_and_set(buf, rel_slcn + i, bit))
+			if (!ntfs_bit_get_and_set(buf, rel_slcn + i, bit)) {
+				if (bit)
+					vol->fsck_lcn_setcnt[idx]++;
 				continue;
+			}
 
-			if (!bit)
+			if (!bit) {
+				vol->fsck_lcn_setcnt[idx]--;
 				continue;
-
-			/* duplicated */
-			ntfs_log_error("Cluster Duplication %"PRIu64"\n",
-					(idx_slcn + rel_slcn) + i);
+			}
 
 #ifdef TRUNCATE_DATA
 			/* handle duplicated cluster of AT_DATA */
@@ -461,6 +849,9 @@ runlist *ntfs_fsck_check_and_set_lcnbmp(ntfs_volume *vol, ntfs_attr *na, int rl_
 			}
 		}
 
+		ntfs_fsck_lcnbmp_try_collapse(vol, idx);
+
+next_block:
 		remain_length -= rel_length;
 		checked_vcn += rel_length;
 		if (remain_length <= 0)
@@ -490,6 +881,9 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 	if (!vol)
 		return NULL;
 
+	/* Read-only all-ones payload shared by every FB_ONES sentinel block. */
+	memset(ones_bm, 0xff, NTFS_BUF_SIZE);
+
 	/* Initialize fsck lcn bitmap buffer array */
 	vol->max_flb_cnt = FB_ROUND_DOWN((vol->nr_clusters - 1) >>
 			NTFSCK_BYTE_TO_BITS) + 1;
@@ -499,11 +893,50 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 		return NULL;
 	}
 
-	/* Initialize fsck mft bitmap buffer array */
-	vol->max_fmb_cnt = FB_ROUND_DOWN((vol->mft_na->initialized_size >>
+	/* Per-block set-bit counts, used to collapse full blocks to FB_ONES. */
+	vol->fsck_lcn_setcnt = (u32 *)ntfs_calloc(sizeof(u32) * vol->max_flb_cnt);
+	if (!vol->fsck_lcn_setcnt) {
+		free(vol->fsck_lcn_bitmap);
+		ntfs_umount(vol, FALSE);
+		return NULL;
+	}
+
+	/*
+	 * Set-only occupancy oracle, same geometry as the cluster shadow bitmap.
+	 * Fed by the pass-1 MFT scan, read by the allocator barrier.
+	 */
+	vol->fsck_alloc_bitmap = (u8 **)ntfs_calloc(sizeof(u8 *) * vol->max_flb_cnt);
+	if (!vol->fsck_alloc_bitmap) {
+		free(vol->fsck_lcn_setcnt);
+		free(vol->fsck_lcn_bitmap);
+		ntfs_umount(vol, FALSE);
+		return NULL;
+	}
+	vol->fsck_alloc_setcnt = (u32 *)ntfs_calloc(sizeof(u32) * vol->max_flb_cnt);
+	if (!vol->fsck_alloc_setcnt) {
+		free(vol->fsck_alloc_bitmap);
+		free(vol->fsck_lcn_setcnt);
+		free(vol->fsck_lcn_bitmap);
+		ntfs_umount(vol, FALSE);
+		return NULL;
+	}
+
+	/* Optionally back literal blocks with a disk scratch file (opt-in). */
+	ntfs_fsck_scratch_init(vol, getenv("NTFSCK_SCRATCH_DIR"));
+
+	/*
+	 * Initialize fsck mft bitmap buffer array. Size it from allocated_size, not
+	 * initialized_size: ntfsck grows a truncated $MFT/$DATA back over the
+	 * records it hides, and the array must already cover them.
+	 */
+	vol->max_fmb_cnt = FB_ROUND_DOWN((vol->mft_na->allocated_size >>
 				vol->mft_record_size_bits) >> NTFSCK_BYTE_TO_BITS) + 1;
 	vol->fsck_mft_bitmap = (u8 **)ntfs_calloc(sizeof(u8 *) * vol->max_fmb_cnt);
 	if (!vol->fsck_mft_bitmap) {
+		ntfs_fsck_scratch_free(vol);
+		free(vol->fsck_alloc_setcnt);
+		free(vol->fsck_alloc_bitmap);
+		free(vol->fsck_lcn_setcnt);
 		free(vol->fsck_lcn_bitmap);
 		ntfs_umount(vol, FALSE);
 		return NULL;
@@ -519,10 +952,26 @@ void ntfs_fsck_umount(ntfs_volume *vol)
 {
 	int bm_i;
 
-	for (bm_i = 0; bm_i < vol->max_flb_cnt; bm_i++)
-		if (vol->fsck_lcn_bitmap[bm_i])
-			free(vol->fsck_lcn_bitmap[bm_i]);
+	/*
+	 * Arena-backed literal blocks are slices of the mmap and are released
+	 * by ntfs_fsck_scratch_free(); only heap blocks are freed individually.
+	 */
+	if (!vol->fsck_lcn_arena)
+		for (bm_i = 0; bm_i < vol->max_flb_cnt; bm_i++)
+			if (vol->fsck_lcn_bitmap[bm_i] &&
+					vol->fsck_lcn_bitmap[bm_i] != FB_ONES)
+				free(vol->fsck_lcn_bitmap[bm_i]);
+	ntfs_fsck_scratch_free(vol);
 	free(vol->fsck_lcn_bitmap);
+	free(vol->fsck_lcn_setcnt);
+
+	/* Oracle blocks are always heap-backed (no arena). */
+	for (bm_i = 0; bm_i < vol->max_flb_cnt; bm_i++)
+		if (vol->fsck_alloc_bitmap[bm_i] &&
+				vol->fsck_alloc_bitmap[bm_i] != FB_ONES)
+			free(vol->fsck_alloc_bitmap[bm_i]);
+	free(vol->fsck_alloc_bitmap);
+	free(vol->fsck_alloc_setcnt);
 
 	for (bm_i = 0; bm_i < vol->max_fmb_cnt; bm_i++)
 		if (vol->fsck_mft_bitmap[bm_i])

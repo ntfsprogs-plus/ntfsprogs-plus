@@ -32,7 +32,7 @@ For ubuntu or debian
 sudo apt install build-essential automake autoconf libtool pkgconf uuid-dev libgcrypt20-dev
 sudo apt install libasan8 # only install when on x86/arm architecture
 ```
-On Debian you can also just `apt install ntfsprogs-plus`. See https://packages.debian.org/ntfsprogs-plus
+On Debian you can also just `apt install ntfsprogs-plus`. See https://packages.debian.org/ntfsprogs-plus and the kernel remark https://sources.debian.org/src/ntfsprogs-plus/1.0.0-4/debian/README.Debian
 
 For redhat
 ```

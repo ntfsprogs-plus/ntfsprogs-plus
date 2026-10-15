@@ -8991,6 +8991,79 @@ static le32 ntfsck_security_hash(const SECURITY_DESCRIPTOR_RELATIVE *sd, u32 len
 	return cpu_to_le32(hash);
 }
 
+/* A nonzero component offset must name a contained, DWORD-aligned object. */
+static BOOL ntfsck_security_sid_valid(const u8 *base, u32 len, u32 off)
+{
+	const SID *sid;
+	u32 hdr = offsetof(SID, sub_authority);
+
+	if (!off)
+		return TRUE;
+	if (off < sizeof(SECURITY_DESCRIPTOR_RELATIVE) || (off & 3) ||
+	    off > len || hdr > len - off)
+		return FALSE;
+	sid = (const SID *)(base + off);
+	return sid->sub_authority_count <= (len - off - hdr) / sizeof(le32);
+}
+
+static BOOL ntfsck_security_acl_valid(const u8 *base, u32 len, u32 off)
+{
+	const ACL *acl;
+	const u8 *pos;
+	u32 size, remaining, i;
+
+	if (!off)
+		return TRUE;
+	if (off < sizeof(SECURITY_DESCRIPTOR_RELATIVE) || (off & 3) ||
+	    off > len || sizeof(ACL) > len - off)
+		return FALSE;
+	acl = (const ACL *)(base + off);
+	size = le16_to_cpu(acl->size);
+	if (size < sizeof(*acl) || size > len - off)
+		return FALSE;
+
+	remaining = size - sizeof(*acl);
+	pos = (const u8 *)(acl + 1);
+	for (i = 0; i < le16_to_cpu(acl->ace_count); i++) {
+		const ACE_HEADER *ace;
+
+		if (remaining < sizeof(*ace))
+			return FALSE;
+		ace = (const ACE_HEADER *)pos;
+		size = le16_to_cpu(ace->size);
+		if (size < sizeof(*ace) || (size & 3) || size > remaining)
+			return FALSE;
+		pos += size;
+		remaining -= size;
+	}
+	/* ACLs may retain unused space after the last ACE. */
+	return TRUE;
+}
+
+/*
+ * Validate self-relative component bounds and generic ACE framing, not
+ * ACE-type-specific payloads or access-control semantics. A matching hash
+ * alone does not establish that the descriptor has a valid layout.
+ */
+static BOOL ntfsck_security_descriptor_valid(const SECURITY_DESCRIPTOR_RELATIVE *sd,
+					    u32 len)
+{
+	const u8 *base = (const u8 *)sd;
+
+	if (len < sizeof(*sd) || !(sd->control & SE_SELF_RELATIVE))
+		return FALSE;
+	if (!ntfsck_security_sid_valid(base, len, le32_to_cpu(sd->owner)) ||
+	    !ntfsck_security_sid_valid(base, len, le32_to_cpu(sd->group)))
+		return FALSE;
+	if ((sd->control & SE_SACL_PRESENT) &&
+	    !ntfsck_security_acl_valid(base, len, le32_to_cpu(sd->sacl)))
+		return FALSE;
+	if ((sd->control & SE_DACL_PRESENT) &&
+	    !ntfsck_security_acl_valid(base, len, le32_to_cpu(sd->dacl)))
+		return FALSE;
+	return TRUE;
+}
+
 /*
  * ntfsck_check_secure_index - cross-check one $SDS entry against $SII or $SDH.
  *
@@ -9331,6 +9404,7 @@ static void ntfsck_check_secure(ntfs_inode *ni)
 			SECURITY_DESCRIPTOR_HEADER ref;
 			SII_INDEX_KEY siikey;
 			SDH_INDEX_KEY sdhkey;
+			BOOL primary_valid = FALSE;
 
 			/* A zero-length entry marks the end of this block. */
 			if (!length && !le32_to_cpu(e->security_id))
@@ -9368,6 +9442,13 @@ static void ntfsck_check_secure(ntfs_inode *ni)
 						"%"PRId64" is invalid\n", base + p);
 				ntfs_fix_problem(vol,
 						PR_SECURE_SDS_ENTRY_CORRUPTED, &pctx);
+			} else if (!ntfsck_security_descriptor_valid(sd, descr_len)) {
+				fsck_err_found();
+				ntfs_log_error("$Secure $SDS: %s at offset %" PRId64 "\n",
+					       "descriptor structure invalid", base + p);
+				ntfs_fix_problem(vol,
+						PR_SECURE_SDS_DESCRIPTOR_MALFORMED,
+						&pctx);
 			} else if (ntfsck_security_hash(sd, descr_len) != e->hash) {
 				fsck_err_found();
 				ntfs_log_error("$Secure $SDS: hash mismatch at "
@@ -9376,19 +9457,21 @@ static void ntfsck_check_secure(ntfs_inode *ni)
 						le32_to_cpu(e->security_id));
 				ntfs_fix_problem(vol,
 						PR_SECURE_SDS_HASH_MISMATCH, &pctx);
+			} else {
+				primary_valid = TRUE;
 			}
 
 			/*
 			 * Compare against the backup copy when available. The
-			 * primary just passed its hash check, so it is the good
-			 * copy; restore the backup from it.
+			 * primary may be used to restore the backup only after
+			 * its header, descriptor layout and hash all validate.
 			 */
 			if (blen >= p + (s64)length &&
 					memcmp(pbuf + p, bbuf + p, length)) {
 				fsck_err_found();
 				ntfs_log_error("$Secure $SDS: backup copy differs "
 						"at offset %"PRId64"\n", base + p);
-				if (ntfs_fix_problem(vol,
+				if (primary_valid && ntfs_fix_problem(vol,
 						PR_SECURE_SDS_MIRROR_MISMATCH, &pctx)) {
 					if (ntfs_attr_pwrite(na,
 							base + NTFSCK_SDS_BLOCK + p,

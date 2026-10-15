@@ -77,6 +77,16 @@ It requires Python 3. After building, run from the source directory:
 
     python3 tests/test_secure_descriptors.py --build-dir .
 
+Descriptor layout:
+
+The $Secure:$SDS stream stores security descriptors. In include/layout.h,
+SDS_ENTRY comprises SECURITY_DESCRIPTOR_HEADER fields followed by a
+SECURITY_DESCRIPTOR_RELATIVE payload. The header fields are also used by the
+$SII and $SDH security indexes.
+SID means security identifier, ACL means access control list, and ACE means
+access control entry. DACL is the discretionary ACL; SACL is the system ACL.
+The new validator checks descriptor layout, not access-control semantics.
+
 You can test corrupted images in *tests* directory. Just execute script *test_all_images.sh* to test images like below.
 ```
 $ cd tests

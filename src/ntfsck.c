@@ -9041,12 +9041,15 @@ static BOOL ntfsck_security_acl_valid(const u8 *base, u32 len, u32 off)
 }
 
 /*
+ * $Secure:$SDS stores SDS_ENTRY records with SECURITY_DESCRIPTOR_HEADER
+ * fields followed by a SECURITY_DESCRIPTOR_RELATIVE payload.
+ *
  * Validate self-relative component bounds and generic ACE framing, not
  * ACE-type-specific payloads or access-control semantics. A matching hash
  * alone does not establish that the descriptor has a valid layout.
  */
-static BOOL ntfsck_security_descriptor_valid(const SECURITY_DESCRIPTOR_RELATIVE *sd,
-					    u32 len)
+static BOOL ntfsck_security_descriptor_layout_valid(const SECURITY_DESCRIPTOR_RELATIVE *sd,
+						    u32 len)
 {
 	const u8 *base = (const u8 *)sd;
 
@@ -9442,7 +9445,7 @@ static void ntfsck_check_secure(ntfs_inode *ni)
 						"%"PRId64" is invalid\n", base + p);
 				ntfs_fix_problem(vol,
 						PR_SECURE_SDS_ENTRY_CORRUPTED, &pctx);
-			} else if (!ntfsck_security_descriptor_valid(sd, descr_len)) {
+			} else if (!ntfsck_security_descriptor_layout_valid(sd, descr_len)) {
 				fsck_err_found();
 				ntfs_log_error("$Secure $SDS: %s at offset %" PRId64 "\n",
 					       "descriptor structure invalid", base + p);

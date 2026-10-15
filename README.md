@@ -71,6 +71,12 @@ If you want to compile with arm cross compiler, you can also configure.
 $ ./configure --host=arm-linux-gnueabi --target=arm-linux-gnueabi
 ```
 # Test
+The security descriptor regression test creates disposable image files and runs
+check-only validation and repair-safety cases without mounts or root privileges.
+It requires Python 3. After building, run from the source directory:
+
+    python3 tests/test_secure_descriptors.py --build-dir .
+
 You can test corrupted images in *tests* directory. Just execute script *test_all_images.sh* to test images like below.
 ```
 $ cd tests

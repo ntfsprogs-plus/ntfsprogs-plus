@@ -26,6 +26,7 @@
 #endif
 
 #include <layout.h>
+#include <acls.h>
 #include <bitmap.h>
 #include <endians.h>
 #include <bootsect.h>
@@ -9003,7 +9004,8 @@ static BOOL ntfsck_security_sid_valid(const u8 *base, u32 len, u32 off)
 	    off > len || hdr > len - off)
 		return FALSE;
 	sid = (const SID *)(base + off);
-	return sid->sub_authority_count <= (len - off - hdr) / sizeof(le32);
+	return ntfs_valid_sid(sid) &&
+		sid->sub_authority_count <= (len - off - hdr) / sizeof(le32);
 }
 
 static BOOL ntfsck_security_acl_valid(const u8 *base, u32 len, u32 off)
@@ -9018,6 +9020,9 @@ static BOOL ntfsck_security_acl_valid(const u8 *base, u32 len, u32 off)
 	    off > len || sizeof(ACL) > len - off)
 		return FALSE;
 	acl = (const ACL *)(base + off);
+	if (acl->revision != ACL_REVISION &&
+	    acl->revision != ACL_REVISION_DS)
+		return FALSE;
 	size = le16_to_cpu(acl->size);
 	if (size < sizeof(*acl) || size > len - off)
 		return FALSE;

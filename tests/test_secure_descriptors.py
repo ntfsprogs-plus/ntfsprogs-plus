@@ -13,11 +13,13 @@ network access, or third-party Python package is used. Read-only cases invoke
 ntfsck -n and verify a whole-image SHA-256 before and after, even on failure.
 An unsupported baseline must accept ALL malformed fixtures with exit status 0;
 the default requires exit status 4 and the exact new layout diagnostic.
-The default also checks three ntfsck -a repair-safety cases: an invalid primary
-descriptor (layout, revision, or hash) must not overwrite a valid backup. Each
+The default also checks ntfsck -a repair safety: an invalid primary descriptor
+(layout, revision, hash, or SID/ACL header) must not overwrite a valid backup. Each
 repair case starts from a separate pristine-image copy; these cases are skipped
 in --expect-unsupported mode, which only demonstrates the layout-check gap.
 A positive repair control checks that a valid primary still repairs its backup.
+SID/ACL header cases cover revisions and fully contained subauthority limits;
+each malformed header is also checked against a valid backup in repair mode.
 
 This covers generic descriptor/SID/ACL/ACE framing, not ACE-type-specific
 semantics or Windows behavior. Layout offsets follow include/layout.h and the
@@ -84,11 +86,12 @@ def security_hash(descriptor):
 
 def preserve_hash(descriptor, original_hash):
     require(len(descriptor) % 4 == 0, "fixture descriptor is not DWORD-sized")
-    # The fixture's final DWORD is a SID subauthority (asserted below), not a
-    # length/count/offset/header field. Arbitrary RID values preserve SID layout.
+    # The fresh fixture's final DWORD is a SID subauthority (asserted below).
+    # Isolated SID-limit fixtures leave this DWORD as unused descriptor padding.
+    # Neither case compensates a length/count/offset/header field.
     # Solve the last step h = rol32(prefix_hash, 3) + last_dword mod 2^32.
-    # Thus $SDS's stored hash and every $SII/$SDH entry remain unchanged. Both
-    # $SDS copies receive identical bytes. A matching hash is NOT proof of valid
+    # Thus $SDS's stored hash and every $SII/$SDH entry remain unchanged. Check-only
+    # fixtures put identical bytes in both copies. A matching hash is NOT proof of valid
     # layout: these cases must be caught by structural validation, not hashing.
     prefix_hash = security_hash(descriptor[:-4])
     put32(descriptor, len(descriptor) - 4,
@@ -363,7 +366,40 @@ def cases(fixture):
     ]
 
 
-def check_case(fixture, checker, timeout, name, invalid, changes, baseline):
+def header_cases(fixture):
+    """SID/ACL header controls and malformed headers, independent of bounds."""
+    dacl = fixture.dacl
+    sacl = [(2, "H", 0x8010), (12, "I", dacl), (16, "I", 0)]
+    offset = dacl + 8
+    for _ in range(u16(fixture.descriptor, dacl + 4)):
+        # Use SYSTEM_AUDIT ACEs when activating the fixture ACL as a SACL.
+        sacl.extend([(offset, "B", 2), (offset + 1, "B", 0x40)])
+        offset += u16(fixture.descriptor, offset + 2)
+    result = [
+        ("owner-revision-0", True, [(fixture.owner, "B", 0)]),
+        ("group-revision-0", True, [(fixture.group, "B", 0)]),
+        ("dacl-revision-0", True, [(dacl, "B", 0)]),
+        ("sacl-revision-0", True, sacl + [(dacl, "B", 0)]),
+        ("dacl-revision-2", False, [(dacl, "B", 2)]),
+        ("dacl-revision-4", False, [(dacl, "B", 4)]),
+        ("sacl-revision-2", False, sacl + [(dacl, "B", 2)]),
+        ("sacl-revision-4", False, sacl + [(dacl, "B", 4)]),
+    ]
+    for component, field in (("owner", 4), ("group", 8)):
+        for count in (15, 16):
+            # Isolate one fully contained SID and disable both ACLs. Count 16
+            # must fail the format limit, not the existing containment check.
+            sid = bytearray(fixture.descriptor[fixture.owner:fixture.owner + 8])
+            sid[1] = count
+            sid.extend(bytes(4 * count))
+            changes = [(2, "H", 0x8000), (4, "I", 0), (8, "I", 0),
+                       (12, "I", 0), (16, "I", 0), (field, "I", SD_HEADER_SIZE),
+                       (SD_HEADER_SIZE, "{}s".format(len(sid)), bytes(sid))]
+            result.append(("{}-count-{}".format(component, count), count == 16, changes))
+    return result
+
+
+def mutated_descriptor(fixture, name, changes):
     descriptor = bytearray(fixture.descriptor)
     for offset, fmt, value in changes:
         require(offset + struct.calcsize("<" + fmt) <= len(descriptor) - 4,
@@ -371,6 +407,11 @@ def check_case(fixture, checker, timeout, name, invalid, changes, baseline):
         struct.pack_into("<" + fmt, descriptor, offset, value)
     if changes:
         preserve_hash(descriptor, fixture.original_hash)
+    return descriptor
+
+
+def check_case(fixture, checker, timeout, name, invalid, changes, baseline):
+    descriptor = mutated_descriptor(fixture, name, changes)
     fixture.install(descriptor)
     before = sha256(fixture.path)
     try:
@@ -403,12 +444,15 @@ def check_case(fixture, checker, timeout, name, invalid, changes, baseline):
     print("PASS " + name, flush=True)
 
 
-def check_repair_safety(fixture, pristine, checker, timeout, kind):
+def check_repair_safety(fixture, pristine, checker, timeout, kind, changes=None):
     # Reset the entire regular-file image: -a may legitimately update unrelated
     # volume metadata. The assertion here is specifically about $SDS evidence.
     shutil.copyfile(pristine, fixture.path)
     descriptor = bytearray(fixture.descriptor)
-    if kind == "layout":
+    if changes is not None:
+        descriptor = mutated_descriptor(fixture, kind, changes)
+        expected = DIAGNOSTIC
+    elif kind == "layout":
         put32(descriptor, 4, 4)  # Owner SID illegally points into SD header.
         preserve_hash(descriptor, fixture.original_hash)
         expected = DIAGNOSTIC
@@ -496,7 +540,8 @@ def main():
         pristine = Path(directory) / "pristine.img"
         if not args.expect_unsupported:
             shutil.copyfile(image, pristine)
-        all_cases = cases(fixture)
+        extra_cases = header_cases(fixture)
+        all_cases = cases(fixture) + extra_cases
         require(len({case[0] for case in all_cases}) == len(all_cases), "duplicate case name")
         for name, invalid, changes in all_cases:
             check_case(fixture, checker, args.timeout, name, invalid, changes,
@@ -507,6 +552,10 @@ def main():
             for kind in ("layout", "revision", "hash"):
                 check_repair_safety(fixture, pristine, checker, args.timeout, kind)
                 repair_count += 1
+            for name, invalid, changes in extra_cases:
+                if invalid:
+                    check_repair_safety(fixture, pristine, checker, args.timeout, name, changes)
+                    repair_count += 1
             check_valid_primary_repair(fixture, pristine, checker, args.timeout)
             repair_count += 1
         mode = "baseline accepts malformed layouts" if args.expect_unsupported else "layout validation"

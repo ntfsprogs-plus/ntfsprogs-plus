@@ -77,6 +77,14 @@ It requires Python 3. After building, run from the source directory:
 
     python3 tests/test_secure_descriptors.py --build-dir .
 
+Add `--temp-dir /existing/directory` to place the temporary image files on a
+chosen filesystem. The existing CI runs this same regression script.
+The header cases check owner/group SID revisions and the 15-subauthority limit,
+plus active SACL/DACL revisions 2 and 4. Malformed-header repair cases compare
+both copies before and after `ntfsck -a`: an invalid primary must not overwrite
+a valid backup. The fixtures preserve the descriptor hash and security indexes
+so the header check, not a checksum mismatch, must detect the corruption.
+
 Descriptor layout:
 
 The $Secure:$SDS stream stores security descriptors. In include/layout.h,

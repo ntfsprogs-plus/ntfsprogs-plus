@@ -2120,6 +2120,7 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
 	s64 rl_data_size = 0;	/* rl data size (real allocated size) */
 	s64 rsize;		/* a cluster run size */
 	int i = 0;
+	BOOL truncated = FALSE;
 
 	if (!na || !na->ni || !na->rl)
 		return STATUS_ERROR;
@@ -2137,23 +2138,21 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
 
-			/*
-			 * An lcn beyond the volume is corruption. Drop this run and everything
-			 * after it in memory; the resulting shorter rls->alloc_size no longer
-			 * matches the on-disk allocated_size, so the non-resident size
-			 * reconciliation in ntfsck_check_non_resident_attr() is what rewrites the
-			 * truncated runlist to disk.
-			 */
+			/* Drop an out-of-volume run and persist the shortened mapping. */
 			if (rl[i].lcn >= vol->nr_clusters) {
 				rl[i].lcn = LCN_ENOENT;
 				rl[i].length = 0;
+				truncated = TRUE;
 				break;
 			}
 
-			/* check length corrupted */
-			if (rl[i].lcn + rl[i].length >= vol->nr_clusters) {
-				/* adjust length */
+			if (rl[i].length > vol->nr_clusters - rl[i].lcn) {
 				rl[i].length = vol->nr_clusters - rl[i].lcn;
+				/* The terminator also determines highest_vcn on writeback. */
+				rl[i + 1].vcn = rl[i].vcn + rl[i].length;
+				rl[i + 1].lcn = LCN_ENOENT;
+				rl[i + 1].length = 0;
+				truncated = TRUE;
 			}
 
 			dup_rl = ntfs_fsck_check_and_set_lcnbmp(vol, na, i, set_bit, dup_rl);
@@ -2169,6 +2168,7 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
 		} else {
 			rl[i].lcn = LCN_ENOENT;
 			rl[i].length = 0;
+			truncated = TRUE;
 			break;
 		}
 
@@ -2178,6 +2178,17 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
 	if (rls) {
 		rls->alloc_size = rl_alloc_size;
 		rls->real_size = rl_data_size;
+	}
+
+	if (truncated) {
+		if (!need_fix) {
+			/* This caller cannot write back a corrected mapping. */
+			fsck_err_found();
+			ntfs_free(dup_rl);
+			errno = EIO;
+			return STATUS_ERROR;
+		}
+		*need_fix = TRUE;
 	}
 
 	if (dup_rl) {
@@ -9796,6 +9807,7 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 {
 	ntfs_volume *vol = ni->vol;
 	problem_context_t pctx = {0, };
+	s64 max_lcnbmp_size;
 
 	pctx.ni = ni;
 
@@ -9825,8 +9837,6 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 			ntfsck_check_mftmirr(vol);
 		break;
 	case FILE_Bitmap:
-		s64 max_lcnbmp_size;
-
 		if (ntfs_attr_map_whole_runlist(vol->lcnbmp_na)) {
 			ntfs_log_perror("Failed to map runlist\n");
 			return -EIO;

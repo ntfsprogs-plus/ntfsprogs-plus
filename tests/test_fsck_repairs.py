@@ -350,6 +350,56 @@ class RepairTests(unittest.TestCase):
         self.check_result(command("ntfsck", "-a", "-f", self.image), 1)
         self.check_only(0)
 
+    def test_run_crossing_volume_end_rechecks_clean(self):
+        for following_run in (False, True):
+            with self.subTest(following_run=following_run):
+                shutil.copyfile(self.pristine, self.image)
+                payload = bytes(range(256)) * 64
+                fixture, number = self.add_file("tail.bin", payload)
+                record = fixture.record(number)
+                offset = fixture.attr(record)
+                lcn = fixture.nr_clusters - 2
+                pairs = b"\x21\x04" + struct.pack("<h", lcn)
+                if following_run:
+                    pairs += b"\x11\x01\xff"
+                    struct.pack_into("<Q", record, offset + 24, 4)
+                    struct.pack_into("<QQQ", record, offset + 40,
+                                     20480, 20480, 20480)
+                pairs += b"\x00"
+                start = offset + u16(record, offset + 32)
+                require(start + len(pairs) <= offset + u32(record, offset + 4),
+                        "fixture mapping pairs do not fit")
+                record[start:start + len(pairs)] = pairs
+                fixture.write_record(number, record)
+                fixture.write(lcn * fixture.cluster_size, payload[:8192])
+                self.check_only(4)
+                self.check_result(command("ntfsck", "-a", self.image), 1)
+                record = fixture.record(number)
+                offset = fixture.attr(record)
+                self.assertEqual(u64(record, offset + 24), 1)
+                self.assertEqual(struct.unpack_from("<QQQ", record, offset + 40),
+                                 (8192, 8192, 8192))
+                self.assertEqual(fixture.runs(record, offset), [(0, lcn, 2)])
+                result = command("ntfscat", self.image, "/tail.bin")
+                self.check_result(result, 0)
+                self.assertEqual(result.stdout, payload[:8192])
+                self.check_only(0)
+
+    def test_run_outside_volume_rechecks_clean(self):
+        fixture, number = self.add_file("outside.bin", b"A" * 16384)
+        record = fixture.record(number)
+        offset = fixture.attr(record)
+        start = offset + u16(record, offset + 32)
+        pairs = b"\x21\x04" + struct.pack("<h", fixture.nr_clusters + 8) + b"\x00"
+        record[start:start + len(pairs)] = pairs
+        fixture.write_record(number, record)
+        self.check_only(4)
+        self.check_result(command("ntfsck", "-a", self.image), 1)
+        result = command("ntfscat", self.image, "/outside.bin")
+        self.check_result(result, 0)
+        self.assertEqual(result.stdout, b"")
+        self.check_only(0)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

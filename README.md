@@ -132,6 +132,14 @@ Use `-f` to discard a detected hibernation image before repair. When damaged
 bootstrap metadata prevents this initial check, `-f` also permits bootstrap
 recovery; hibernation is checked again after the repair mount succeeds.
 
+ntfsck validates `$BadClus:$Bad` separately and restores its volume-sized
+mapping without relocating the bad-cluster reservations. If the stream is
+missing or only partly readable, existing allocated clusters not referenced by
+the scanned files are conservatively retained in `$Bad`; they may include lost
+allocations as well as bad clusters. An unreadable `$BadClus` record stops the
+check before its record or bitmap reservations can be released. This recovery
+uses existing metadata; it does not scan the device for new media defects.
+
 ntfsck include basic filesystem checking features, like as below:
 - Boot sector check
 - Meta system files check

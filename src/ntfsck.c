@@ -227,6 +227,20 @@ static BOOL orphan_recovery_changed;
 /* Non-resident attributes whose mapping pairs require truncation. */
 static u64 corrupt_nonresident_runlists;
 
+static struct {
+	ntfs_inode *ni;
+	runlist_element *ranges;
+	size_t count;
+	size_t capacity;
+	BOOL damaged;
+	BOOL unknown;
+} badclus;
+
+static ntfschar badclus_name[] = {
+	const_cpu_to_le16('$'), const_cpu_to_le16('B'),
+	const_cpu_to_le16('a'), const_cpu_to_le16('d'),
+};
+
 enum ntfsck_deferred_index_type {
 	NTFSCK_DEFER_INDEX_BITMAP,
 	NTFSCK_DEFER_CORRUPT_ENTRY,
@@ -1910,6 +1924,9 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 		int i = 0;
 
 		if (!actx->attr->non_resident)
+			continue;
+		/* $Bad is decoded and reserved by the dedicated preflight. */
+		if (ni->mft_no == FILE_BadClus && actx->attr->type == AT_DATA)
 			continue;
 
 		rl = ntfs_decompress_cluster_run(ni->vol, actx->attr, NULL, &part_rl);
@@ -5151,6 +5168,8 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit)
 	while (!(ret = ntfs_attrs_walk(ctx))) {
 		a = ctx->attr;
 		if (!a->non_resident)
+			continue;
+		if (ni->mft_no == FILE_BadClus && a->type == AT_DATA)
 			continue;
 
 		/*
@@ -9017,6 +9036,8 @@ static inline BOOL ntfsck_opened_ni_vol(s64 mft_num)
 	BOOL is_opened = FALSE;
 
 	switch (mft_num) {
+	case FILE_BadClus:
+		return badclus.ni != NULL;
 		case FILE_MFT:
 		case FILE_MFTMirr:
 		case FILE_Volume:
@@ -9033,6 +9054,9 @@ static ntfs_inode *ntfsck_get_opened_ni_vol(ntfs_volume *vol, s64 mft_num)
 	ntfs_inode *ni = NULL;
 
 	switch (mft_num) {
+	case FILE_BadClus:
+		ni = badclus.ni;
+		break;
 		case FILE_MFT:
 			ni = vol->mft_ni;
 			break;
@@ -9818,6 +9842,7 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 	case FILE_Volume:
 	case FILE_AttrDef:
 	case FILE_Boot:
+	case FILE_BadClus:
 	case FILE_Secure:
 	case FILE_UpCase:
 	case FILE_Extend:
@@ -10253,7 +10278,7 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 		int wtype, BOOL repair_decided, BOOL repair_approved)
 {
 	s64 count, pos, total, remain;
-	s64 rcnt, wcnt;
+	s64 rcnt, wcnt = 0;
 	u8 *disk_bm;
 	u8 *fsck_bm;
 	u8 *dbmb;
@@ -10265,6 +10290,7 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 	unsigned long *fbml;
 	int ret = STATUS_OK;
 	BOOL block_mass_free = FALSE;
+	BOOL added;
 	problem_context_t pctx = {0, };
 
 	if (na != vol->lcnbmp_na && na != vol->mftbmp_na)
@@ -10321,6 +10347,7 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 		}
 
 		fsck_bm = func(vol, pos);
+		added = FALSE;
 
 		if (!memcmp(fsck_bm, disk_bm, count))
 			goto next;
@@ -10332,6 +10359,8 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 			dbml = (unsigned long *)disk_bm + i;
 			fbml = (unsigned long *)fsck_bm + i;
 			if (*dbml != *fbml) {
+				if (*fbml & ~*dbml)
+					added = TRUE;
 #ifdef DEBUG
 				ntfs_log_info("%s bitmap(%d):\n",
 						na->type == 0xb0 ? "MFT" : "LCN", wtype);
@@ -10350,8 +10379,11 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 
 		dbmb = disk_bm + (word_count * sizeof(unsigned long));
 		fbmb = fsck_bm + (word_count * sizeof(unsigned long));
-		for (i = 0; i < tail_bytes; i++)
+		for (i = 0; i < tail_bytes; i++) {
+			if (fbmb[i] & ~dbmb[i])
+				added = TRUE;
 			dbmb[i] |= fbmb[i];
+		}
 
 		if (wtype == FSCK_BMP_FINAL)
 			fsck_err_found();
@@ -10380,6 +10412,10 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 				free(disk_bm);
 				return STATUS_ERROR;
 			}
+			if (wtype == FSCK_BMP_INITIAL && added) {
+				fsck_err_found();
+				fsck_err_fixed();
+			}
 		}
 
 next:
@@ -10396,6 +10432,385 @@ next:
 	return ret;
 }
 
+static BOOL ntfsck_is_bad_stream(const ATTR_RECORD *a)
+{
+	return a->type == AT_DATA && a->name_length == 4 &&
+		!memcmp((const u8 *)a + le16_to_cpu(a->name_offset),
+			badclus_name, sizeof(badclus_name));
+}
+
+static int ntfsck_badclus_add_range(ntfs_volume *vol, LCN lcn, s64 length)
+{
+	runlist_element *ranges;
+	size_t capacity;
+
+	if (lcn < 0 || lcn >= vol->nr_clusters || length <= 0) {
+		badclus.damaged = badclus.unknown = TRUE;
+		return STATUS_OK;
+	}
+	if (length > vol->nr_clusters - lcn) {
+		length = vol->nr_clusters - lcn;
+		badclus.damaged = badclus.unknown = TRUE;
+	}
+	if (badclus.count == badclus.capacity) {
+		capacity = badclus.capacity ? badclus.capacity * 2 : 16;
+		ranges = realloc(badclus.ranges, capacity * sizeof(*ranges));
+		if (!ranges)
+			return STATUS_ERROR;
+		badclus.ranges = ranges;
+		badclus.capacity = capacity;
+	}
+	badclus.ranges[badclus.count++] = (runlist_element) {
+		.vcn = lcn, .lcn = lcn, .length = length,
+	};
+	return STATUS_OK;
+}
+
+static int ntfsck_badclus_range_cmp(const void *left, const void *right)
+{
+	const runlist_element *a = left, *b = right;
+
+	return (a->lcn > b->lcn) - (a->lcn < b->lcn);
+}
+
+static void ntfsck_badclus_merge_ranges(void)
+{
+	size_t i, count = 0;
+
+	if (!badclus.count)
+		return;
+	qsort(badclus.ranges, badclus.count, sizeof(*badclus.ranges),
+			ntfsck_badclus_range_cmp);
+	for (i = 0; i < badclus.count; i++) {
+		runlist_element *cur = &badclus.ranges[i];
+
+		if (count && cur->lcn <= badclus.ranges[count - 1].lcn +
+				badclus.ranges[count - 1].length) {
+			runlist_element *prev = &badclus.ranges[count - 1];
+
+			if (cur->lcn + cur->length > prev->lcn + prev->length)
+				prev->length = cur->lcn + cur->length - prev->lcn;
+		} else
+			badclus.ranges[count++] = *cur;
+	}
+	badclus.count = count;
+}
+
+static u64 ntfsck_badclus_number(const u8 *bytes, unsigned int size)
+{
+	u64 value = 0;
+	unsigned int i;
+
+	for (i = 0; i < size; i++)
+		value |= (u64)bytes[i] << (i * 8);
+	return value;
+}
+
+/* Decode independently of corrupt size/highest_vcn fields, keeping valid runs. */
+static int ntfsck_badclus_decode(ntfs_volume *vol, ATTR_RECORD *a, s64 *covered)
+{
+	const u8 *p = (const u8 *)a + le16_to_cpu(a->mapping_pairs_offset);
+	const u8 *end = (const u8 *)a + le32_to_cpu(a->length);
+	s64 vcn = sle64_to_cpu(a->lowest_vcn), lcn = 0;
+	u64 length, delta, magnitude;
+	unsigned int length_size, offset_size;
+
+	if (vcn < 0 || vcn != *covered) {
+		badclus.damaged = badclus.unknown = TRUE;
+		vcn = *covered;
+	}
+	while (p < end && *p) {
+		length_size = *p & 15;
+		offset_size = *p++ >> 4;
+		if (!length_size || length_size > 8 || offset_size > 8 ||
+				(size_t)(end - p) < length_size + offset_size)
+			goto incomplete;
+		length = ntfsck_badclus_number(p, length_size);
+		p += length_size;
+		if (!length || length > (u64)(INT64_MAX - vcn))
+			goto incomplete;
+		if (offset_size) {
+			delta = ntfsck_badclus_number(p, offset_size);
+			if (p[offset_size - 1] & 0x80) {
+				if (offset_size < 8)
+					delta |= ~0ULL << (offset_size * 8);
+				magnitude = 0ULL - delta;
+				if (magnitude > (u64)lcn)
+					goto incomplete;
+				lcn -= magnitude;
+			} else {
+				if (delta > (u64)(INT64_MAX - lcn))
+					goto incomplete;
+				lcn += delta;
+			}
+			if (ntfsck_badclus_add_range(vol, lcn, length))
+				return STATUS_ERROR;
+			if (lcn != vcn) {
+				/* A bad-cluster reservation must map a cluster to itself. */
+				badclus.damaged = badclus.unknown = TRUE;
+				if (ntfsck_badclus_add_range(vol, vcn, length))
+					return STATUS_ERROR;
+			}
+		}
+		p += offset_size;
+		vcn += length;
+	}
+	if (p == end)
+		goto incomplete;
+	if (sle64_to_cpu(a->highest_vcn) != vcn - 1)
+		badclus.damaged = TRUE;
+	*covered = vcn;
+	return STATUS_OK;
+incomplete:
+	badclus.damaged = badclus.unknown = TRUE;
+	*covered = vcn;
+	return STATUS_OK;
+}
+
+static int ntfsck_badclus_reserve(ntfs_volume *vol, size_t first)
+{
+	size_t i;
+
+	for (i = first; i < badclus.count; i++)
+		if (ntfs_fsck_set_alloc_lcnbmp_range(vol, badclus.ranges[i].lcn,
+				badclus.ranges[i].length) ||
+			ntfs_fsck_set_lcnbmp_range(vol, badclus.ranges[i].lcn,
+				badclus.ranges[i].length, 1))
+			return STATUS_ERROR;
+	return STATUS_OK;
+}
+
+/* Reserve bad clusters before other inodes can claim or relocate them. */
+static int ntfsck_prepare_badclus(ntfs_volume *vol)
+{
+	ntfs_inode *ni;
+	s64 covered = 0, size = vol->nr_clusters << vol->cluster_size_bits;
+	BOOL found = FALSE, unnamed = FALSE;
+	int i, ret;
+
+	ni = ntfsck_open_inode(vol, FILE_BadClus);
+	if (!ni)
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, FILE_BadClus, TRUE);
+	badclus.ni = ni;
+	if (!ni || (ni->attr_list && ntfs_inode_attach_all_extents(ni)))
+		goto fail;
+	for (i = -1; i < ni->nr_extents; i++) {
+		ntfs_inode *record = i < 0 ? ni : ni->extent_nis[i];
+		ntfs_attr_search_ctx *ctx = ntfs_attr_get_search_ctx(NULL, record->mrec);
+
+		if (!ctx)
+			goto fail;
+		while (!(ret = ntfs_attrs_walk(ctx))) {
+			ATTR_RECORD *a = ctx->attr;
+
+			if (a->type == AT_DATA && !a->name_length) {
+				BOOL nonempty;
+
+				unnamed = TRUE;
+				if (a->non_resident) {
+					const u8 *pairs;
+
+					pairs = (u8 *)a + le16_to_cpu(a->mapping_pairs_offset);
+					nonempty = a->allocated_size || a->data_size ||
+						a->initialized_size || *pairs;
+				} else
+					nonempty = a->value_length != 0;
+				if (nonempty) {
+					ntfs_attr_put_search_ctx(ctx);
+					goto fail;
+				}
+			}
+			if (!ntfsck_is_bad_stream(a))
+				continue;
+			found = TRUE;
+			if (!a->non_resident) {
+				badclus.damaged = badclus.unknown = TRUE;
+				continue;
+			}
+			if (!a->lowest_vcn &&
+					(sle64_to_cpu(a->allocated_size) != size ||
+					 sle64_to_cpu(a->data_size) != size ||
+					 sle64_to_cpu(a->initialized_size) < 0 ||
+					 sle64_to_cpu(a->initialized_size) > size))
+				badclus.damaged = TRUE;
+			if (a->flags || a->compression_unit)
+				badclus.damaged = TRUE;
+			if (ntfsck_badclus_decode(vol, a, &covered)) {
+				ntfs_attr_put_search_ctx(ctx);
+				goto fail;
+			}
+		}
+		ntfs_attr_put_search_ctx(ctx);
+		if (errno != ENOENT)
+			goto fail;
+	}
+	if (!found || covered != vol->nr_clusters)
+		badclus.damaged = badclus.unknown = TRUE;
+	if (!unnamed)
+		badclus.damaged = TRUE;
+	ntfsck_badclus_merge_ranges();
+	if (ntfsck_badclus_reserve(vol, 0))
+		goto fail;
+	if (badclus.damaged) {
+		fsck_err_found();
+		ntfs_log_error("$BadClus: missing or inconsistent $DATA attributes.\n");
+	}
+	return STATUS_OK;
+fail:
+	fsck_err_found();
+	ntfs_log_error("$BadClus cannot be verified; preserving its record and cluster bitmap.\n");
+	return STATUS_ERROR;
+}
+
+/* Without a complete $Bad, unclaimed allocated clusters cannot be freed. */
+static int ntfsck_badclus_recover_unclaimed(ntfs_volume *vol)
+{
+	u8 disk[NTFS_BUF_SIZE], owned[NTFS_BUF_SIZE];
+	u8 *checked;
+	s64 pos, count, byte, bit, lcn, start = -1;
+	size_t first = badclus.count;
+
+	for (pos = 0; pos < (vol->nr_clusters + 7) / 8; pos += count) {
+		count = min((s64)NTFS_BUF_SIZE, (vol->nr_clusters + 7) / 8 - pos);
+		if (ntfs_attr_pread(vol->lcnbmp_na, pos, count, disk) != count)
+			return STATUS_ERROR;
+		memset(owned, 0, count);
+		ntfs_fsck_or_alloc_lcnbmp(vol, pos, count, owned);
+		checked = ntfs_fsck_find_lcnbmp_block(vol, pos);
+		for (byte = 0; byte < count; byte++) {
+			u8 unclaimed = disk[byte] & ~(owned[byte] | checked[byte]);
+
+			for (bit = 0; bit < 8; bit++) {
+				lcn = (pos + byte) * 8 + bit;
+				if (lcn >= vol->nr_clusters)
+					break;
+				if (unclaimed & (1 << bit)) {
+					if (start < 0)
+						start = lcn;
+				} else if (start >= 0) {
+					if (ntfsck_badclus_add_range(vol, start, lcn - start))
+						return STATUS_ERROR;
+					start = -1;
+				}
+			}
+		}
+	}
+	if (start >= 0 && ntfsck_badclus_add_range(vol, start, vol->nr_clusters - start))
+		return STATUS_ERROR;
+	if (ntfsck_badclus_reserve(vol, first))
+		return STATUS_ERROR;
+	ntfsck_badclus_merge_ranges();
+	return STATUS_OK;
+}
+
+static int ntfsck_rebuild_badclus(ntfs_volume *vol)
+{
+	ntfs_inode *ni = badclus.ni;
+	ntfs_attr_search_ctx *ctx;
+	ntfs_attr *na = NULL;
+	runlist *rl;
+	size_t i, count = 0;
+	VCN vcn = 0;
+	s64 size = vol->nr_clusters << vol->cluster_size_bits;
+	int ret = STATUS_ERROR;
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return STATUS_ERROR;
+	if (!ntfs_attr_lookup(AT_DATA, badclus_name, 4, CASE_SENSITIVE, 0, NULL, 0, ctx) &&
+			!ctx->attr->non_resident) {
+		if (ntfs_attr_record_rm(ctx))
+			goto out;
+	}
+	ntfs_attr_reinit_search_ctx(ctx);
+	if (ntfs_attr_lookup(AT_DATA, badclus_name, 4, CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+		if (errno != ENOENT || ntfs_non_resident_attr_record_add(ni,
+				AT_DATA, badclus_name, 4, 0, 1, const_cpu_to_le16(0)) < 0)
+			goto out;
+	}
+	ntfs_attr_reinit_search_ctx(ctx);
+	if (ntfs_attr_lookup(AT_DATA, badclus_name, 4, CASE_SENSITIVE, 0, NULL, 0, ctx))
+		goto out;
+	if (ctx->ntfs_ino == ni) {
+		ctx->attr->lowest_vcn = const_cpu_to_sle64(0);
+		ntfs_inode_mark_dirty(ni);
+	}
+	na = ntfs_attr_open(ni, AT_DATA, badclus_name, 4);
+	if (!na)
+		goto out;
+	/* Mapping-pairs helpers require page-rounded runlist storage. */
+	rl = ntfs_malloc(((2 * badclus.count + 2) * sizeof(*rl) + 0xfff) & ~(size_t)0xfff);
+	if (!rl)
+		goto out;
+	for (i = 0; i < badclus.count; i++) {
+		if (vcn < badclus.ranges[i].lcn)
+			rl[count++] = (runlist_element) {
+				.vcn = vcn, .lcn = LCN_HOLE,
+				.length = badclus.ranges[i].lcn - vcn,
+			};
+		rl[count++] = badclus.ranges[i];
+		vcn = badclus.ranges[i].lcn + badclus.ranges[i].length;
+	}
+	if (vcn < vol->nr_clusters)
+		rl[count++] = (runlist_element) {
+			.vcn = vcn, .lcn = LCN_HOLE, .length = vol->nr_clusters - vcn,
+		};
+	rl[count] = (runlist_element) {
+		.vcn = vol->nr_clusters, .lcn = LCN_ENOENT, .length = 0,
+	};
+	free(na->rl);
+	na->rl = rl;
+	na->allocated_size = na->data_size = size;
+	na->initialized_size = 0;
+	na->data_flags = const_cpu_to_le16(0);
+	NAttrSetFullyMapped(na);
+	NAttrSetRunlistDirty(na);
+	if (ntfs_attr_update_mapping_pairs(na, 0))
+		goto out;
+	ntfs_attr_reinit_search_ctx(ctx);
+	while (!ntfs_attr_lookup(AT_DATA, badclus_name, 4, CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+		/* $Bad has holes without the normal sparse-file attribute flags. */
+		ctx->attr->flags = const_cpu_to_le16(0);
+		ctx->attr->compression_unit = 0;
+		if (!ctx->attr->lowest_vcn) {
+			ctx->attr->allocated_size = ctx->attr->data_size = cpu_to_sle64(size);
+			ctx->attr->initialized_size = const_cpu_to_sle64(0);
+		}
+		ntfs_inode_mark_dirty(ctx->ntfs_ino);
+	}
+	if (errno != ENOENT)
+		goto out;
+	if (!ntfs_attr_exist(ni, AT_DATA, AT_UNNAMED, 0) &&
+			ntfs_attr_add(ni, AT_DATA, AT_UNNAMED, 0, NULL, 0))
+		goto out;
+	if (ntfs_inode_sync(ni))
+		goto out;
+	ntfsck_set_mft_record_bitmap(ni, FALSE);
+	ret = STATUS_OK;
+out:
+	if (na)
+		ntfs_attr_close(na);
+	ntfs_attr_put_search_ctx(ctx);
+	return ret;
+}
+
+static int ntfsck_finish_badclus(ntfs_volume *vol)
+{
+	if (!badclus.damaged)
+		return STATUS_OK;
+	if (badclus.unknown && ntfsck_badclus_recover_unclaimed(vol))
+		return STATUS_ERROR;
+	if (badclus.unknown)
+		ntfs_log_error("$BadClus: reserving unclaimed allocated clusters in $Bad.\n");
+	ntfs_log_error("Rebuild $BadClus:$Bad from the retained reservations. Fix it? ");
+	if (!ntfs_ask_repair(vol))
+		return badclus.unknown ? STATUS_ERROR : STATUS_OK;
+	if (ntfsck_rebuild_badclus(vol))
+		return STATUS_ERROR;
+	fsck_err_fixed();
+	return STATUS_OK;
+}
+
 static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 {
 	struct orphan_mft *entry = NULL;
@@ -10409,6 +10824,10 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 	int ret = STATUS_OK;
 
 	fsck_start_step("Check orphaned mft.");
+	if (ntfsck_finish_badclus(vol)) {
+		fsck_end_step();
+		return STATUS_ERROR;
+	}
 
 	if (ntfsck_count_bitmap_mismatches(vol, vol->lcnbmp_na,
 			ntfs_fsck_find_lcnbmp_block, &bitmap_mismatches) ||
@@ -11498,6 +11917,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 
 	if (orphan_changed)
 		*orphan_changed = FALSE;
+	memset(&badclus, 0, sizeof(badclus));
 	ntfsck_clear_deferred_repairs();
 	free(fixup_candidate_bitmap);
 	fixup_candidate_bitmap = NULL;
@@ -11564,6 +11984,10 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 
 	/* And its bitmap must cover every record the sizes now describe. */
 	ntfsck_check_mft_bitmap_size(vol);
+	if (ntfsck_prepare_badclus(vol)) {
+		ret = -1;
+		goto out;
+	}
 
 	/*
 	 * Clear $Extend/$Deleted before pass 1 counts anything: it holds files
@@ -11657,6 +12081,17 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	ntfsck_apply_deferred_reparse_repairs(vol);
 
 out:
+	if (badclus.ni) {
+		ntfs_inode *ni = badclus.ni;
+
+		badclus.ni = NULL;
+		if (ntfs_inode_close(ni)) {
+			fsck_err_found();
+			ret = -1;
+		}
+	}
+	free(badclus.ranges);
+	badclus.ranges = NULL;
 	if (corrupt_nonresident_runlists) {
 		ntfs_log_error("  * Non-resident cluster run: %"PRIu64" corrupted "
 				"attribute(s) were found.\n",

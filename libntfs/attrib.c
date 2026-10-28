@@ -6550,8 +6550,7 @@ retry:
 		cur_max_mp_size = le32_to_cpu(m->bytes_allocated) -
 			le32_to_cpu(m->bytes_in_use) -
 			(offsetof(ATTR_RECORD, compressed_size) +
-			 (((na->data_flags & ATTR_COMPRESSION_MASK)
-			   || NAttrSparse(na)) ?
+			 ((na->data_flags & (ATTR_IS_COMPRESSED | ATTR_IS_SPARSE)) ?
 			  sizeof(a->compressed_size) : 0)) -
 			((sizeof(ntfschar) * na->name_len + 7) & ~7);
 		if (mp_size > cur_max_mp_size)

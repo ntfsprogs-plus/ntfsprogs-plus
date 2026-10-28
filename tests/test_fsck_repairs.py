@@ -129,7 +129,7 @@ class Image:
                     if (typ, stream) == (attr_type, name))
 
     @staticmethod
-    def runs(record, offset):
+    def runs(record, offset, allow_holes=False):
         require(record[offset + 8] == 1, "fixture stream is resident")
         end = offset + u32(record, offset + 4)
         pos = offset + u16(record, offset + 32)
@@ -139,15 +139,17 @@ class Image:
             sizes = record[pos]
             pos += 1
             count_size, delta_size = sizes & 15, sizes >> 4
-            require(1 <= count_size <= 8 and 1 <= delta_size <= 8 and
+            require(1 <= count_size <= 8 and 0 <= delta_size <= 8 and
+                    (delta_size or allow_holes) and
                     pos + count_size + delta_size <= end,
                     "invalid fixture mapping pairs")
             count = int.from_bytes(record[pos:pos + count_size], "little")
             pos += count_size
-            lcn += int.from_bytes(record[pos:pos + delta_size], "little", signed=True)
+            if delta_size:
+                lcn += int.from_bytes(record[pos:pos + delta_size], "little", signed=True)
             pos += delta_size
             require(count > 0 and lcn >= 0, "invalid fixture run")
-            result.append((vcn, lcn, count))
+            result.append((vcn, lcn if delta_size else -1, count))
             vcn += count
         require(pos < end and record[pos] == 0, "missing mapping pairs terminator")
         return result
@@ -398,6 +400,280 @@ class RepairTests(unittest.TestCase):
         result = command("ntfscat", self.image, "/outside.bin")
         self.check_result(result, 0)
         self.assertEqual(result.stdout, b"")
+        self.check_only(0)
+
+    @staticmethod
+    def mapping_pairs(runs):
+        result = bytearray()
+        previous = 0
+        for _, lcn, count in runs:
+            size = max(1, (count.bit_length() + 8) // 8)
+            length = count.to_bytes(size, "little", signed=True)
+            delta = b""
+            if lcn >= 0:
+                value = lcn - previous
+                size = next(i for i in range(1, 9)
+                            if -(1 << (8 * i - 1)) <= value < (1 << (8 * i - 1)))
+                delta = value.to_bytes(size, "little", signed=True)
+                previous = lcn
+            result.append(len(length) | len(delta) << 4)
+            result.extend(length + delta)
+        result.append(0)
+        return result
+
+    @staticmethod
+    def resize_fixture_attr(record, offset, length):
+        old, used = u32(record, offset + 4), u32(record, 24)
+        delta = length - old
+        require(length % 8 == 0 and used + delta <= len(record),
+                "fixture attribute resize does not fit")
+        tail = record[offset + old:used]
+        record[offset:used + max(delta, 0)] = bytes(used + max(delta, 0) - offset)
+        record[offset + length:used + delta] = tail
+        struct.pack_into("<I", record, 24, used + delta)
+
+    def set_bitmap_clusters(self, fixture, clusters, used=True):
+        runs, _ = fixture.data_stream(fixture.record(6))
+        for lcn in clusters:
+            offset = lcn // 8
+            value = fixture.read_stream(runs, offset, 1)[0]
+            mask = 1 << (lcn % 8)
+            value = value | mask if used else value & ~mask
+            fixture.write_stream(runs, offset, bytes([value]))
+
+    def bitmap_cluster_used(self, fixture, lcn):
+        runs, _ = fixture.data_stream(fixture.record(6))
+        return bool(fixture.read_stream(runs, lcn // 8, 1)[0] & (1 << (lcn % 8)))
+
+    def clear_mft_bitmap_bit(self, fixture, number):
+        record = fixture.record(0)
+        offset = fixture.attr(record, 0xb0)
+        if record[offset + 8]:
+            runs = fixture.runs(record, offset)
+            value = fixture.read_stream(runs, number // 8, 1)[0]
+            fixture.write_stream(runs, number // 8, bytes([value & ~(1 << (number % 8))]))
+        else:
+            value = offset + u16(record, offset + 20) + number // 8
+            record[value] &= ~(1 << (number % 8))
+            fixture.write_record(0, record)
+            raw = fixture.read_stream(fixture.mft_runs, 0, fixture.record_size)
+            fixture.write(fixture.mirror_offset, raw)
+
+    def install_badclus(self, clusters, mark_bitmap=True):
+        fixture = Image(self.image)
+        record = fixture.record(8)
+        offset = fixture.attr(record, 0x80, "$Bad")
+        runs = []
+        vcn = 0
+        for lcn in sorted(clusters):
+            if vcn < lcn:
+                runs.append((vcn, -1, lcn - vcn))
+            runs.append((lcn, lcn, 1))
+            vcn = lcn + 1
+        if vcn < fixture.nr_clusters:
+            runs.append((vcn, -1, fixture.nr_clusters - vcn))
+        pairs = self.mapping_pairs(runs)
+        header = record[offset:offset + 72]
+        length = (72 + len(pairs) + 7) & ~7
+        self.resize_fixture_attr(record, offset, length)
+        record[offset:offset + 72] = header
+        struct.pack_into("<I", record, offset + 4, length)
+        record[offset + 72:offset + 72 + len(pairs)] = pairs
+        fixture.write_record(8, record)
+        if mark_bitmap:
+            self.set_bitmap_clusters(fixture, clusters)
+        return fixture
+
+    def remove_badclus_attr(self, fixture, name="$Bad"):
+        record = fixture.record(8)
+        offset = fixture.attr(record, 0x80, name)
+        self.resize_fixture_attr(record, offset, 0)
+        fixture.write_record(8, record)
+
+    def assert_badclus(self, expected):
+        fixture = Image(self.image)
+        actual = set()
+        extents = []
+        for number in range(fixture.mft_size // fixture.record_size):
+            record = fixture.record(number)
+            if number != 8 and u64(record, 32) & ((1 << 48) - 1) != 8:
+                continue
+            if not u16(record, 22) & 1:
+                continue
+            for offset, typ, name in fixture.attrs(record):
+                if (typ, name) != (0x80, "$Bad"):
+                    continue
+                self.assertEqual(record[offset + 8], 1)
+                self.assertEqual(u16(record, offset + 12), 0)
+                runs = fixture.runs(record, offset, allow_holes=True)
+                if not u64(record, offset + 16):
+                    size = fixture.nr_clusters * fixture.cluster_size
+                    self.assertEqual(u64(record, offset + 40), size)
+                    self.assertEqual(u64(record, offset + 48), size)
+                    self.assertLessEqual(u64(record, offset + 56), size)
+                # The parser starts each extent at VCN zero; adjust it here.
+                start = u64(record, offset + 16)
+                end = start + sum(count for _, _, count in runs)
+                self.assertEqual(u64(record, offset + 24), end - 1)
+                extents.append((start, end))
+                for vcn, lcn, count in runs:
+                    if lcn < 0:
+                        continue
+                    self.assertEqual(start + vcn, lcn)
+                    actual.update(range(lcn, lcn + count))
+        self.assertEqual(actual, set(expected))
+        end = 0
+        for start, stop in sorted(extents):
+            self.assertEqual(start, end)
+            end = stop
+        self.assertEqual(end, fixture.nr_clusters)
+        for lcn in expected:
+            self.assertTrue(self.bitmap_cluster_used(fixture, lcn))
+
+    def test_badclus_missing_bitmap_bit_is_restored(self):
+        self.install_badclus([5000], mark_bitmap=False)
+        self.check_only(4)
+        self.check_result(command("ntfsck", "-a", self.image), 1)
+        self.assert_badclus([5000])
+        self.check_only(0)
+
+    def test_badclus_size_and_vcn_fields_are_repaired(self):
+        for field, value in ((40, 0), (48, 4096), (56, 1 << 63), (24, 1), (16, 1)):
+            with self.subTest(field=field):
+                shutil.copyfile(self.pristine, self.image)
+                fixture = self.install_badclus([5000, 5010])
+                record = fixture.record(8)
+                offset = fixture.attr(record, 0x80, "$Bad")
+                struct.pack_into("<Q", record, offset + field, value)
+                fixture.write_record(8, record)
+                self.check_only(4)
+                self.check_result(command("ntfsck", "-a", self.image), 1)
+                self.assert_badclus([5000, 5010])
+                self.check_only(0)
+
+    def test_badclus_missing_stream_preserves_unclaimed_allocations(self):
+        payload = bytes(range(256)) * 64
+        self.add_file("payload.bin", payload)
+        fixture = self.install_badclus([5000, 5010])
+        self.remove_badclus_attr(fixture)
+        self.check_only(4)
+        self.check_result(command("ntfsck", "-a", self.image), 1)
+        self.assert_badclus([5000, 5010])
+        result = command("ntfscat", self.image, "/payload.bin")
+        self.check_result(result, 0)
+        self.assertEqual(result.stdout, payload)
+        self.check_only(0)
+
+    def test_badclus_partial_mapping_preserves_bitmap_reservations(self):
+        fixture = self.install_badclus([5000, 5010])
+        record = fixture.record(8)
+        offset = fixture.attr(record, 0x80, "$Bad")
+        pos = offset + u16(record, offset + 32)
+        # Keep the first hole and first bad-cluster run, then break the chain.
+        for _ in range(2):
+            sizes = record[pos]
+            pos += 1 + (sizes & 15) + (sizes >> 4)
+        record[pos] = 0xff
+        fixture.write_record(8, record)
+        self.check_only(4)
+        self.check_result(command("ntfsck", "-a", self.image), 1)
+        self.assert_badclus([5000, 5010])
+        self.check_only(0)
+
+    def test_badclus_rebuild_can_span_extent_records(self):
+        fixture = Image(self.image)
+        clusters = list(range(5000, 5600, 2))
+        self.set_bitmap_clusters(fixture, clusters)
+        self.remove_badclus_attr(fixture)
+        self.check_only(4)
+        self.check_result(command("ntfsck", "-a", self.image), 1)
+        self.assert_badclus(clusters)
+        self.check_only(0)
+
+    def test_badclus_conflicting_file_is_relocated(self):
+        payload = bytes(range(256)) * 64
+        fixture, number = self.add_file("payload.bin", payload)
+        runs, _ = fixture.data_stream(fixture.record(number))
+        bad_lcn = runs[0][1]
+        self.install_badclus([bad_lcn])
+        self.check_only(4)
+        self.check_result(command("ntfsck", "-a", self.image), 1)
+        self.assert_badclus([bad_lcn])
+        result = command("ntfscat", self.image, "/payload.bin")
+        self.check_result(result, 0)
+        self.assertEqual(result.stdout, payload)
+        fixture = Image(self.image)
+        runs, _ = fixture.data_stream(fixture.record(number))
+        self.assertFalse(any(lcn <= bad_lcn < lcn + count for _, lcn, count in runs))
+        self.check_only(0)
+
+    def test_badclus_missing_unnamed_stream_is_recreated(self):
+        fixture = self.install_badclus([5000])
+        self.remove_badclus_attr(fixture, "")
+        self.check_only(4)
+        self.check_result(command("ntfsck", "-a", self.image), 1)
+        self.assert_badclus([5000])
+        self.check_only(0)
+
+    def test_badclus_unreadable_record_preserves_bitmap(self):
+        fixture = self.install_badclus([5000])
+        fixture.write_stream(fixture.mft_runs, 8 * fixture.record_size,
+                             bytes(fixture.record_size))
+        output = self.check_result(command("ntfsck", "-a", self.image), 4)
+        self.assertIn("$BadClus cannot be verified", output)
+        self.assertTrue(self.bitmap_cluster_used(fixture, 5000))
+
+    def test_badclus_resident_stream_is_rebuilt(self):
+        fixture = self.install_badclus([5000])
+        record = fixture.record(8)
+        offset = fixture.attr(record, 0x80, "$Bad")
+        instance = u16(record, offset + 14)
+        self.resize_fixture_attr(record, offset, 40)
+        struct.pack_into("<IIBBHHH", record, offset,
+                         0x80, 40, 0, 4, 24, 0, instance)
+        struct.pack_into("<IH", record, offset + 16, 0, 32)
+        record[offset + 24:offset + 32] = "$Bad".encode("utf-16le")
+        fixture.write_record(8, record)
+        self.check_only(4)
+        self.check_result(command("ntfsck", "-a", self.image), 1)
+        self.assert_badclus([5000])
+        self.check_only(0)
+
+    def test_badclus_nonidentity_mapping_preserves_both_clusters(self):
+        fixture = self.install_badclus([5000])
+        record = fixture.record(8)
+        offset = fixture.attr(record, 0x80, "$Bad")
+        pos = offset + u16(record, offset + 32)
+        sizes = record[pos]
+        pos += 1 + (sizes & 15) + (sizes >> 4)
+        self.assertEqual(record[pos], 0x21)
+        struct.pack_into("<h", record, pos + 2, 5001)
+        fixture.write_record(8, record)
+        self.check_only(4)
+        self.check_result(command("ntfsck", "-a", self.image), 1)
+        self.assert_badclus([5000, 5001])
+        self.check_only(0)
+
+    def test_badclus_recovery_excludes_files_missing_mft_bitmap_bits(self):
+        payload = bytes(range(256)) * 64
+        _, number = self.add_file("payload.bin", payload)
+        fixture = self.install_badclus([5000])
+        self.remove_badclus_attr(fixture)
+        self.clear_mft_bitmap_bit(fixture, number)
+        self.check_only(4)
+        self.check_result(command("ntfsck", "-a", self.image), 1)
+        self.assert_badclus([5000])
+        result = command("ntfscat", self.image, "/payload.bin")
+        self.check_result(result, 0)
+        self.assertEqual(result.stdout, payload)
+        self.check_only(0)
+
+    def test_badclus_missing_mft_bitmap_bit_is_restored(self):
+        fixture = self.install_badclus([5000])
+        self.clear_mft_bitmap_bit(fixture, 8)
+        self.check_only(4)
+        self.check_result(command("ntfsck", "-a", self.image), 1)
+        self.assert_badclus([5000])
         self.check_only(0)
 
 

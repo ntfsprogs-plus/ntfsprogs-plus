@@ -127,6 +127,11 @@ ntfsck -a <device>
 ntfsck -n <device>
 ntfsck -C <device>
 ```
+Repair modes check for Windows hibernation before the mount can modify metadata.
+Use `-f` to discard a detected hibernation image before repair. When damaged
+bootstrap metadata prevents this initial check, `-f` also permits bootstrap
+recovery; hibernation is checked again after the repair mount succeeds.
+
 ntfsck include basic filesystem checking features, like as below:
 - Boot sector check
 - Meta system files check

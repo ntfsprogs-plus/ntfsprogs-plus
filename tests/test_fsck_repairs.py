@@ -315,6 +315,41 @@ class RepairTests(unittest.TestCase):
                     self.check_result(result, 0)
                     self.assertEqual(result.stdout, data)
 
+    def hibernated_fixture(self):
+        fixture, _ = self.add_file("hiberfil.sys", b"hibr" + bytes(4092))
+        # LSN is outside the update-sequence-protected sector tails.
+        fixture.write(fixture.mirror_offset + fixture.record_size + 8,
+                      struct.pack("<Q", 0x12345678))
+        return fixture
+
+    def test_hibernation_refusal_preserves_mirror(self):
+        self.hibernated_fixture()
+        for mode in ("-a", "-y", "-r"):
+            with self.subTest(mode=mode):
+                before = hashlib.sha256(self.image.read_bytes()).digest()
+                output = self.check_result(command("ntfsck", mode, self.image), 8)
+                self.assertIn("Windows is hibernated", output)
+                self.assertEqual(hashlib.sha256(self.image.read_bytes()).digest(), before)
+        self.check_only(4)
+
+    def test_forced_hibernation_repair(self):
+        self.hibernated_fixture()
+        self.check_result(command("ntfsck", "-a", "-f", self.image), 1)
+        result = command("ntfscat", self.image, "/hiberfil.sys")
+        self.check_result(result, 0)
+        self.assertEqual(result.stdout, bytes(4096))
+        self.check_only(0)
+
+    def test_unreadable_bootstrap_requires_force(self):
+        fixture = Image(self.image)
+        fixture.write(3, b"BADFS   ")
+        before = hashlib.sha256(self.image.read_bytes()).digest()
+        output = self.check_result(command("ntfsck", "-a", self.image), 8)
+        self.assertIn("Cannot verify hibernation", output)
+        self.assertEqual(hashlib.sha256(self.image.read_bytes()).digest(), before)
+        self.check_result(command("ntfsck", "-a", "-f", self.image), 1)
+        self.check_only(0)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

@@ -8634,6 +8634,85 @@ static BOOL ntfsck_repair_enabled(void)
 				NTFS_MNT_FS_YES_REPAIR)) != 0;
 }
 
+/* The normal fsck mount can repair metadata before returning a volume. */
+static int ntfsck_check_hibernation_before_mount(const char *path)
+{
+#ifndef NO_NTFS_DEVICE_DEFAULT_IO_OPS
+	struct ntfs_device *dev;
+	ntfs_volume *probe;
+	int saved_errors = fsck_errors, saved_fixes = fsck_fixes;
+	int ret, err;
+
+	if (!ntfsck_repair_enabled())
+		return STATUS_OK;
+
+	dev = ntfs_device_alloc(path, 0, &ntfs_device_default_io_ops, NULL);
+	if (!dev)
+		return STATUS_ERROR;
+	/* Only bootstrap $MFT: unrelated damaged system files need no repair. */
+	probe = ntfs_volume_startup(dev, NTFS_MNT_RDONLY);
+	if (!probe) {
+		ntfs_device_free(dev);
+		ret = STATUS_ERROR;
+		goto unverified;
+	}
+
+	errno = 0;
+	ret = ntfs_volume_check_hiberfile(probe, 0);
+	err = errno;
+	if (!ret)
+		goto out;
+	if (err != EPERM) {
+		ntfs_umount(probe, FALSE);
+		goto unverified;
+	}
+	if (!opt_force) {
+		ntfs_log_error("Windows is hibernated on %s; shut down fully or use -f.\n",
+				path);
+		goto out;
+	}
+
+	ntfs_log_warning("Discarding hibernation image on %s before mounting for repair.\n", path);
+	/* Reopen only this bootstrap volume; no mount-time repairs run here. */
+	if (dev->d_ops->close(dev))
+		goto out;
+	NDevClearReadOnly(dev);
+	if ((dev->d_ops->open)(dev, O_RDWR)) {
+		NDevSetReadOnly(dev);
+		goto out;
+	}
+	NVolClearReadOnly(probe);
+	if (ntfs_volume_invalidate_hiberfile(probe) || dev->d_ops->sync(dev)) {
+		ntfs_log_perror("Failed to invalidate hiberfil.sys before repair");
+		goto out;
+	}
+	ret = STATUS_OK;
+out:
+	/* Optional inodes were not loaded; do not carry ENOENT into release. */
+	errno = 0;
+	if (ntfs_umount(probe, FALSE))
+		ret = STATUS_ERROR;
+	fsck_errors = saved_errors;
+	fsck_fixes = saved_fixes;
+	return ret;
+
+unverified:
+	fsck_errors = saved_errors;
+	fsck_fixes = saved_fixes;
+	if (opt_force) {
+		ntfs_log_warning("Cannot check hibernation on %s before bootstrap recovery; proceeding with -f.\n",
+				path);
+		return STATUS_OK;
+	}
+	ntfs_log_error("Cannot verify hibernation on %s; bootstrap repair requires -f.\n", path);
+	return STATUS_ERROR;
+#else
+	(void)path;
+	errno = EOPNOTSUPP;
+	return STATUS_ERROR;
+#endif
+}
+
 /*
  * ntfsck_begin_repair - open a crash-safe repair transaction.
  *
@@ -11800,6 +11879,9 @@ conflict_option:
 		ntfs_log_perror("Failed to determine whether %s is mounted",
 				path);
 
+	if (ntfsck_check_hibernation_before_mount(path))
+		return RETURN_OPERATIONAL_ERROR;
+
 	vol = ntfs_fsck_mount(path, option.flags);
 	if (!vol) {
 		/*
@@ -11856,10 +11938,14 @@ conflict_option:
 			ntfs_log_warning("Windows is hibernated on %s; forced "
 					"repair requested, discarding the "
 					"hibernation image.\n", path);
-			if (ntfs_volume_invalidate_hiberfile(vol))
+			if (ntfs_volume_invalidate_hiberfile(vol) ||
+					ntfsck_device_sync(vol)) {
 				ntfs_log_perror("Failed to invalidate "
 						"hiberfil.sys; Windows may "
 						"try to resume from it");
+				ntfs_fsck_umount(vol);
+				return RETURN_OPERATIONAL_ERROR;
+			}
 		} else
 			ntfs_log_warning("Windows is hibernated; the volume "
 					"reflects the state of a suspended "

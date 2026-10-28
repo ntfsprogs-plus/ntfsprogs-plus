@@ -261,6 +261,60 @@ class RepairTests(unittest.TestCase):
         self.assertEqual(result.stdout, b"")
         self.check_only(0)
 
+    def duplicate_fixture(self):
+        payload = b"".join(bytes([value]) * 4096 for value in range(4))
+        self.add_file("a.bin", payload)
+        fixture, number = self.add_file("b.bin", b"B" * 8192)
+        source = fixture.record(fixture.find("a.bin"))
+        runs, _ = fixture.data_stream(source)
+        require(len(runs) == 1 and runs[0][2] == 4,
+                "expected one four-cluster source run")
+        lcn = runs[0][1]
+        record = fixture.record(number)
+        offset = fixture.attr(record)
+        pairs = b"\x21\x01" + struct.pack("<h", lcn) + b"\x11\x01\x02\x00"
+        start = offset + u16(record, offset + 32)
+        require(start + len(pairs) <= offset + u32(record, offset + 4),
+                "fixture mapping pairs do not fit")
+        record[start:start + len(pairs)] = pairs
+        fixture.write_record(number, record)
+        return fixture, number, payload, payload[:4096] + payload[8192:12288]
+
+    def test_duplicate_clusters_preserve_data(self):
+        _, _, original, duplicate = self.duplicate_fixture()
+        self.check_only(4)
+        self.check_result(command("ntfsck", "-a", self.image), 1)
+        for name, data in (("a.bin", original), ("b.bin", duplicate)):
+            result = command("ntfscat", "-f", self.image, "/" + name)
+            self.check_result(result, 0)
+            self.assertEqual(result.stdout, data)
+        self.check_only(0)
+
+    def test_duplicate_clusters_out_of_space_rolls_back(self):
+        for free_clusters in (0, 1):
+            with self.subTest(free_clusters=free_clusters):
+                shutil.copyfile(self.pristine, self.image)
+                fixture, number, original, duplicate = self.duplicate_fixture()
+                record = fixture.record(number)
+                bitmap = fixture.record(6)
+                runs, size = fixture.data_stream(bitmap)
+                old = fixture.read_stream(runs, 0, size)
+                available = [i for i in range(4096, fixture.nr_clusters - 1)
+                             if not old[i // 8] & (1 << (i % 8))]
+                require(len(available) >= free_clusters, "no free fixture clusters")
+                full = bytearray(b"\xff" * size)
+                for lcn in available[:free_clusters]:
+                    full[lcn // 8] &= ~(1 << (lcn % 8))
+                fixture.write_stream(runs, 0, full)
+                output = self.check_result(command("ntfsck", "-a", self.image), 4)
+                self.assertIn("Failed to separate duplicated cluster runlists", output)
+                self.assertEqual(fixture.record(number), record)
+                self.assertEqual(fixture.read_stream(runs, 0, size), full)
+                for name, data in (("a.bin", original), ("b.bin", duplicate)):
+                    result = command("ntfscat", "-f", self.image, "/" + name)
+                    self.check_result(result, 0)
+                    self.assertEqual(result.stdout, data)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

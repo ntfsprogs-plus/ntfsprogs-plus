@@ -2199,7 +2199,10 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
 			 */
 			ntfs_log_debug("dup_rl: duplicated runlists\n");
 			ntfs_debug_runlist_dump(dup_rl);
-			ntfs_fsck_repair_cluster_dup(na, dup_rl);
+			if (ntfs_fsck_repair_cluster_dup(na, dup_rl)) {
+				ntfs_free(dup_rl);
+				return STATUS_ERROR;
+			}
 			if (need_fix)
 				*need_fix = TRUE;
 			if (dup_repaired)

@@ -2088,10 +2088,14 @@ runlist *ntfs_copy_rl_clusters(ntfs_volume *vol, runlist *new_rl, int new_cnt,
 	s64 rpos;
 	s64 rcnt, wcnt;
 	s64 rbuf_offset, wpos_offset;
-	s64 max_rsize;
+	s64 max_rsize, remaining;
+	int i;
 
-	if (!vol)
+	if (!vol || !new_rl || !orig_rl || new_cnt < 2 || orig_cnt < 2)
 		return NULL;
+	remaining = 0;
+	for (i = 0; i < orig_cnt - 1; i++)
+		remaining += orig_rl[i].length << vol->cluster_size_bits;
 
 	max_rsize = MAX_CLUSTER_COPY_SIZE(vol);
 	buf = ntfs_calloc(max_rsize);
@@ -2105,12 +2109,18 @@ runlist *ntfs_copy_rl_clusters(ntfs_volume *vol, runlist *new_rl, int new_cnt,
 	ntfs_log_debug("copy_rl_clusters orig_rl dump\n");
 	ntfs_debug_runlist_dump(orig_rl);
 	ntfs_debug_runlist_dump(new_rl);
-	for (;;) {
-		rcnt = ntfs_rl_pread(vol, orig_rl, rpos, max_rsize, buf);
-		if (rcnt <= 0)
-			break;
+	while (remaining) {
+		rcnt = ntfs_rl_pread(vol, orig_rl, rpos,
+				min(remaining, max_rsize), buf);
+		if (rcnt <= 0) {
+			if (!rcnt)
+				errno = EIO;
+			free(buf);
+			return NULL;
+		}
 
 		rpos += rcnt;
+		remaining -= rcnt;
 		rbuf_offset = 0;
 
 		while (rcnt) {
@@ -2118,7 +2128,9 @@ runlist *ntfs_copy_rl_clusters(ntfs_volume *vol, runlist *new_rl, int new_cnt,
 					"rcnt(%"PRIu64") rbuf_offset(%"PRIu64")\n",
 					rpos, wpos_offset, rcnt, rbuf_offset);
 			wcnt = ntfs_rl_pwrite(vol, new_rl, 0, wpos_offset, rcnt, buf + rbuf_offset);
-			if (wcnt < 0) {
+			if (wcnt <= 0) {
+				if (!wcnt)
+					errno = EIO;
 				ntfs_log_error("Failed to write new runlist data\n");
 				free(buf);
 				return NULL;

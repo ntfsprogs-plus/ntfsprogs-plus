@@ -71,6 +71,11 @@ If you want to compile with arm cross compiler, you can also configure.
 $ ./configure --host=arm-linux-gnueabi --target=arm-linux-gnueabi
 ```
 # Test
+The fsck repair regressions create disposable images and verify data preservation
+and a clean read-only recheck after repair, without mounts or root privileges:
+
+    python3 tests/test_fsck_repairs.py --build-dir .
+
 The security descriptor regression test creates disposable image files and runs
 check-only validation and repair-safety cases without mounts or root privileges.
 It requires Python 3. After building, run from the source directory:

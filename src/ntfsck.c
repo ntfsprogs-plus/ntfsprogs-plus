@@ -4079,18 +4079,16 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 		}
 
 		/*
-		 * A non-resident $DATA with allocated_size zero owns no clusters, so map it
-		 * as an empty runlist without decoding the mapping pairs. If the mapping
-		 * pairs nevertheless still encode cluster runs, those runs are stale and
-		 * are detected (from the raw mapping pairs) and discarded by
-		 * ntfsck_check_non_resident_attr(); hiding them here also keeps their
-		 * clusters out of the fsck bitmap, so the final bitmap reconciliation frees
-		 * them.
+		 * Only treat the mapping pairs as stale when every size says the
+		 * stream is empty. A zero allocated_size alone can be a damaged
+		 * size field: decode the runs and recover it without losing data.
 		 */
 		if (!utils_is_metadata(ni) &&
 				na->type == AT_DATA &&
 				sle64_to_cpu(attr->lowest_vcn) == 0 &&
-				sle64_to_cpu(attr->allocated_size) == 0) {
+				sle64_to_cpu(attr->allocated_size) == 0 &&
+				sle64_to_cpu(attr->data_size) == 0 &&
+				sle64_to_cpu(attr->initialized_size) == 0) {
 
 			rl = malloc(sizeof(runlist_element));
 			if (!rl) {

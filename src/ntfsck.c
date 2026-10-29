@@ -42,6 +42,7 @@
 #include "dir.h"
 #include "lcnalloc.h"
 #include "logfile.h"
+#include "ntfsck_replay.h"
 #include "reparse.h"
 #include "collate.h"
 #include "fsck.h"
@@ -416,8 +417,6 @@ static u64 orphan_mft_open_failures;
 s64 total_valid_mft;
 s64 total_inuse_mft;	/* MFT records the bitmap marks in-use */
 s64 fsck_scan_eio;	/* MFT records that failed to read/open with EIO */
-/* $LogFile was reset this run: stale LSNs must be zeroed (see parse #1) */
-static BOOL logfile_was_reset;
 
 struct progress_bar prog;
 int pb_flags;
@@ -7020,28 +7019,6 @@ out:
 	return ret;
 }
 
-/*
- * Zero the stale LSN of the index block at byte position @pos after a
- * $LogFile reset. As with MFT records (see ntfsck_reset_mft_lsn()) the LSN is
- * not multi sector protected, so it is poked in place: no fixup round trip,
- * and blocks whose fixup or content is broken get scrubbed all the same.
- */
-static void ntfsck_reset_ib_lsn(ntfs_attr *ia_na, s64 pos)
-{
-	INDEX_BLOCK ib;
-
-	/* magic through lsn: the first 16 bytes are enough */
-	if (ntfs_attr_pread(ia_na, pos,
-				offsetof(INDEX_BLOCK, index_block_vcn), &ib) !=
-			offsetof(INDEX_BLOCK, index_block_vcn))
-		return;
-	if (!ntfs_is_indx_record(ib.magic) || !ib.lsn)
-		return;
-	ib.lsn = const_cpu_to_sle64(0);
-	ntfs_attr_pwrite(ia_na, pos + offsetof(INDEX_BLOCK, lsn),
-			sizeof(ib.lsn), &ib.lsn);
-}
-
 /* Far beyond any tree the block/record size ratio can produce. */
 #define NTFSCK_MAX_INDEX_DEPTH	16
 
@@ -7419,17 +7396,6 @@ bad_root_subnode:
 		bmp_bit = (vcn << ictx->vcn_size_bits) / ictx->block_size;
 		if (max_ib_bits <= bmp_bit)
 			break;
-
-		/*
-		 * The journal any LSN refers to was reset in parse #1 and a stale value
-		 * would make a future log replay skip its redo of this block (see
-		 * ntfsck_reset_mft_lsn()). Poked before the bitmap test because allocated
-		 * blocks the index bitmap marks free never reach the checks below, yet they
-		 * too are re-initialized through the log once the index grows.
-		 */
-		if (logfile_was_reset)
-			ntfsck_reset_ib_lsn(ictx->ia_na,
-					vcn << ictx->vcn_size_bits);
 
 		if (!ntfs_bit_get(bmp_buf, bmp_bit))
 			continue;
@@ -8805,230 +8771,84 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 	return 0;
 }
 
-/*
- * ntfsck_logfile_is_dirty - does $LogFile hold journal data that needs a reset?
- *
- * ntfsck cannot replay the journal, so its only recovery is to empty $LogFile.
- * But an already empty journal, or one the last OS left cleanly closed, carries
- * nothing to replay, and rewriting it every run just churns the disk and nags
- * the operator. Return TRUE only when the journal is genuinely dirty:
- *   - ntfs_check_logfile() found it inconsistent (unreadable restart pages);
- *   - or it holds a restart area whose client list is still in use and which is
- *     not flagged RESTART_VOLUME_IS_CLEAN (i.e. an unclean shutdown).
- * An empty journal (NVolLogFileEmpty) or a clean restart area returns FALSE.
- */
-static BOOL ntfsck_logfile_is_dirty(ntfs_volume *vol)
+/* Replay before a full fsck mount can normalize any metadata. */
+static int ntfsck_replay_log(const char *path)
 {
-	ntfs_inode *ni;
-	ntfs_attr *na;
-	RESTART_PAGE_HEADER *rp = NULL;
-	const RESTART_AREA *ra;
-	BOOL dirty = TRUE;
+#ifndef NO_NTFS_DEVICE_DEFAULT_IO_OPS
+	struct ntfs_device *dev;
+	struct ntfsck_replay *replay = NULL;
+	ntfs_volume *probe;
+	int saved_errors = fsck_errors, saved_fixes = fsck_fixes;
+	int ret;
 
-	ni = ntfs_inode_open(vol, FILE_LogFile);
-	if (!ni)
-		return TRUE;
-	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
-	if (!na) {
-		ntfs_inode_close(ni);
-		return TRUE;
+	dev = ntfs_device_alloc(path, 0, &ntfs_device_default_io_ops, NULL);
+	if (!dev)
+		return STATUS_ERROR;
+	probe = ntfs_volume_startup(dev, NTFS_MNT_RDONLY);
+	if (!probe && opt_force && ntfsck_repair_enabled()) {
+		/* Repair only the bootstrap metadata needed to reach the journal. */
+		fsck_errors = saved_errors;
+		fsck_fixes = saved_fixes;
+		NDevClearReadOnly(dev);
+		probe = ntfs_volume_startup(dev, option.flags);
 	}
-
-	if (!ntfs_check_logfile(na, &rp)) {
-		/* Inconsistent journal: reset is the only way out. */
-		dirty = TRUE;
-	} else if (NVolLogFileEmpty(vol)) {
-		/* Already empty, nothing to replay. */
-		dirty = FALSE;
-	} else if (rp) {
-		ra = (const RESTART_AREA *)((const u8 *)rp +
-				le16_to_cpu(rp->restart_area_offset));
-		/* Clean iff no client is in use or the volume-clean bit is set. */
-		if (ra->client_in_use_list == LOGFILE_NO_CLIENT ||
-				(ra->flags & RESTART_VOLUME_IS_CLEAN))
-			dirty = FALSE;
-	} else {
-		/* Consistent journal with no restart area: treat as clean. */
-		dirty = FALSE;
+	if (!probe) {
+		ntfs_device_free(dev);
+		fsck_err_found();
+		return STATUS_ERROR;
 	}
-
-	free(rp);
-	ntfs_attr_close(na);
-	ntfs_inode_close(ni);
-	return dirty;
-}
-
-/*
- * Zero the LSN a cached MFT record buffer carries, so that a later sync
- * of the inode cannot write a stale value over what
- * ntfsck_reset_mft_lsn() put on disk.
- */
-static void ntfsck_zero_cached_lsn(ntfs_inode *ni)
-{
-	s32 i;
-
-	if (!ni)
-		return;
-
-	ni->mrec->lsn = const_cpu_to_sle64(0);
-	for (i = 0; i < ni->nr_extents; i++)
-		ni->extent_nis[i]->mrec->lsn = const_cpu_to_sle64(0);
-}
-
-/*
- * Every LSN on the volume refers to the journal that was just thrown
- * away. The next driver to mount initializes a fresh log whose LSNs
- * restart low, and recovery decides "this update is already on disk" by
- * comparing a record's LSN against a log record's LSN, so a stale large
- * LSN makes a future replay silently skip its redo and corrupt the
- * volume long after fsck ran. Zero the field in every MFT record, the
- * state mkntfs creates alongside an empty journal.
- *
- * The LSN sits in the first sector and is no sector tail, so it is not
- * multi sector protected: write it in place, with no fixup round trip.
- * That also scrubs free records whose own fixup header is corrupted,
- * which a protected write could never reach. Index blocks carry an LSN
- * too; ntfsck_validate_index_blocks() pokes those the same way, as it
- * is the one place every allocated index block already passes through.
- *
- * The long-lived inodes the mount opened still cache their records with
- * the old LSN, so those buffers are scrubbed as well lest a later sync
- * write the stale value back.
- */
-static void ntfsck_reset_mft_lsn(ntfs_volume *vol)
-{
-	MFT_RECORD *mrec;
-	s64 nr_mft_records, mft_num, pos;
-	s64 reset_cnt = 0;
-
-	mrec = ntfs_malloc(vol->mft_record_size);
-	if (!mrec)
-		return;
-
-	nr_mft_records = vol->mft_na->initialized_size >>
-			vol->mft_record_size_bits;
-	for (mft_num = 0; mft_num < nr_mft_records; mft_num++) {
-		pos = mft_num << vol->mft_record_size_bits;
-		/* magic through lsn: the first 16 bytes are enough */
-		if (ntfs_attr_pread(vol->mft_na, pos,
-					offsetof(MFT_RECORD, sequence_number),
-					mrec) !=
-				offsetof(MFT_RECORD, sequence_number))
-			continue;
-		if (!ntfs_is_file_record(mrec->magic) || !mrec->lsn)
-			continue;
-		mrec->lsn = const_cpu_to_sle64(0);
-		if (ntfs_attr_pwrite(vol->mft_na,
-					pos + offsetof(MFT_RECORD, lsn),
-					sizeof(mrec->lsn), &mrec->lsn) !=
-				sizeof(mrec->lsn)) {
-			ntfs_log_error("Failed to reset LSN of mft record(%"
-					PRId64")\n", mft_num);
-			continue;
+	fsck_start_step("Recover logfile.");
+	ret = ntfsck_replay_prepare(probe, &replay);
+	if (!ret)
+		goto out;
+	fsck_err_found();
+	if (ret < 0) {
+		ntfs_log_error("Journal preserved; stopping before the filesystem scan.\n");
+		goto out;
+	}
+	NVolSetFsck(probe);
+	if (option.flags & NTFS_MNT_FS_AUTO_REPAIR)
+		NVolSetFsAutoRepair(probe);
+	if (option.flags & NTFS_MNT_FS_YES_REPAIR)
+		NVolSetFsYesRepair(probe);
+	if (option.flags & NTFS_MNT_FS_ASK_REPAIR)
+		NVolSetFsAskRepair(probe);
+	if (option.flags & NTFS_MNT_FS_NO_REPAIR)
+		NVolSetFsNoRepair(probe);
+	ntfs_log_error("Replay the journal before scanning the filesystem. Fix it? ");
+	if (!ntfs_ask_repair(probe)) {
+		ret = STATUS_ERROR;
+		goto out;
+	}
+	if (NVolReadOnly(probe)) {
+		if (dev->d_ops->close(dev)) {
+			ret = STATUS_ERROR;
+			goto out;
 		}
-		if (mft_num < vol->mftmirr_size)
-			ntfs_attr_pwrite(vol->mftmirr_na,
-					pos + offsetof(MFT_RECORD, lsn),
-					sizeof(mrec->lsn), &mrec->lsn);
-		reset_cnt++;
-	}
-	ntfs_free(mrec);
-
-	ntfsck_zero_cached_lsn(vol->mft_ni);
-	ntfsck_zero_cached_lsn(vol->mftmirr_ni);
-	ntfsck_zero_cached_lsn(vol->vol_ni);
-	ntfsck_zero_cached_lsn(vol->lcnbmp_ni);
-	ntfsck_zero_cached_lsn(vol->secure_ni);
-
-	ntfs_log_info("Reset LSN of %"PRId64" mft records\n", reset_cnt);
-}
-
-/*
- * Zero the stale LSN of every block of one named index allocation.
- * ntfsck_validate_index_blocks() covers the indexes the directory walk
- * reaches, but $Secure never enters that walk (ntfsck_check_index()
- * skips the inodes the mount holds open), so its $SDH/$SII blocks are
- * swept here right after the $LogFile reset.
- */
-static void ntfsck_reset_named_ia_lsn(ntfs_inode *ni, ntfschar *name,
-		u32 name_len)
-{
-	ntfs_attr_search_ctx *ctx;
-	INDEX_ROOT *ir;
-	ntfs_attr *ia_na;
-	u32 block_size;
-	s64 pos;
-
-	ctx = ntfs_attr_get_search_ctx(ni, NULL);
-	if (!ctx)
-		return;
-	if (ntfs_attr_lookup(AT_INDEX_ROOT, name, name_len, CASE_SENSITIVE,
-				0, NULL, 0, ctx)) {
-		ntfs_attr_put_search_ctx(ctx);
-		return;
-	}
-	ir = (INDEX_ROOT *)((u8 *)ctx->attr +
-			le16_to_cpu(ctx->attr->value_offset));
-	block_size = le32_to_cpu(ir->index_block_size);
-	ntfs_attr_put_search_ctx(ctx);
-	if (block_size < NTFS_BLOCK_SIZE)
-		return;
-
-	ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, name, name_len);
-	if (!ia_na)
-		return;
-	for (pos = 0; pos + block_size <= ia_na->data_size; pos += block_size)
-		ntfsck_reset_ib_lsn(ia_na, pos);
-	ntfs_attr_close(ia_na);
-}
-
-static void ntfsck_reset_secure_lsn(ntfs_volume *vol)
-{
-	if (!vol->secure_ni)
-		return;
-
-	ntfsck_reset_named_ia_lsn(vol->secure_ni, NTFS_INDEX_SDH, 4);
-	ntfsck_reset_named_ia_lsn(vol->secure_ni, NTFS_INDEX_SII, 4);
-}
-
-static int ntfsck_replay_log(ntfs_volume *vol)
-{
-	problem_context_t pctx = {0, };
-
-	fsck_start_step("Reset logfile.");
-
-	/*
-	 * ntfsck cannot replay the journal, so a dirty $LogFile is emptied. A
-	 * journal that is already empty or was cleanly closed needs nothing, so
-	 * leave it untouched rather than resetting it on every run.
-	 */
-	if (!ntfsck_logfile_is_dirty(vol)) {
-		ntfs_log_verbose("$LogFile is empty or clean, no reset needed\n");
-		fsck_end_step();
-		return STATUS_OK;
-	}
-
-	ntfs_log_info("ntfsck does not support log replay, $LogFile needs reset\n");
-
-	/*
-	 * The actual reset is gated on ntfs_fix_problem(): with -n it returns FALSE
-	 * (and the volume is read-only anyway), so $LogFile is left untouched. Only
-	 * announce the reset when it is really performed.
-	 */
-	if (ntfs_fix_problem(vol, PR_RESET_LOG_FILE, &pctx)) {
-		ntfs_log_info("Resetting $LogFile\n");
-		if (ntfs_logfile_reset(vol)) {
-			check_failed("ntfs logfile reset failed, errno : %d\n", errno);
-				fsck_end_step();
-			return STATUS_ERROR;
+		NDevClearReadOnly(dev);
+		if ((dev->d_ops->open)(dev, O_RDWR)) {
+			NDevSetReadOnly(dev);
+			ret = STATUS_ERROR;
+			goto out;
 		}
-		logfile_was_reset = TRUE;
-		ntfsck_reset_mft_lsn(vol);
-		ntfsck_reset_secure_lsn(vol);
+		NVolClearReadOnly(probe);
 	}
-
+	ret = ntfsck_replay_commit(replay);
+	if (!ret)
+		fsck_err_fixed();
+	else
+		ntfs_log_perror("Failed to commit journal recovery");
+out:
+	ntfsck_replay_free(replay);
 	fsck_end_step();
-	return STATUS_OK;
+	errno = 0;
+	if (ntfs_umount(probe, FALSE))
+		ret = STATUS_ERROR;
+	return ret ? STATUS_ERROR : STATUS_OK;
+#else
+	(void)path;
+	return STATUS_ERROR;
+#endif
 }
 
 static inline BOOL ntfsck_opened_ni_vol(s64 mft_num)
@@ -11966,19 +11786,6 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	saved_fixup_suppress = NVolFsckSuppressFixupWarn(vol);
 	NVolSetFsckSuppressFixupWarn(vol);
 
-	/*
-	 * Journal handling comes first, before any MFT record is trusted or
-	 * modified. ntfsck cannot replay $LogFile, so it resets a genuinely dirty
-	 * journal here rather than leaving a stale one for the later passes to work
-	 * around. $LogFile (inode 2) always lives in the head of $MFT, so it stays
-	 * reachable regardless of a truncated $MFT/$DATA that
-	 * ntfsck_check_mft_size() repairs next.
-	 */
-	if (ntfsck_replay_log(vol)) {
-		ret = -1;
-		goto out;
-	}
-
 	/* $MFT must be whole before pass 1 decides which records exist. */
 	ntfsck_check_mft_size(vol);
 
@@ -12326,6 +12133,9 @@ conflict_option:
 
 	if (ntfsck_check_hibernation_before_mount(path))
 		return RETURN_OPERATIONAL_ERROR;
+
+	if (!check_dirty_only && ntfsck_replay_log(path))
+		return RETURN_FS_ERRORS_LEFT_UNCORRECTED;
 
 	vol = ntfs_fsck_mount(path, option.flags);
 	if (!vol) {

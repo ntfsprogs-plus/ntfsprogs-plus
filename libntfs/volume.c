@@ -2160,10 +2160,9 @@ upcase_ok:
 		/*
 		 * A dirty or Windows-cached $LogFile (a version 2.0 restart page, left by
 		 * fast startup or an abrupt power cut) makes a filesystem driver refuse the
-		 * volume, but fsck exists to repair exactly that state: it resets the
-		 * journal itself, gated by its own repair policy. Rejecting the mount here
-		 * would make every repair mode fail on the volumes that need repair most,
-		 * so leave the decision to fsck.
+		 * volume, but fsck recovers the journal before its repair mount.
+		 * Rejecting the mount here would prevent it from inspecting damaged
+		 * journals, so leave the decision to fsck.
 		 */
 		if (!(flags & NTFS_MNT_FSCK) &&
 				ntfs_volume_check_logfile(vol) < 0) {

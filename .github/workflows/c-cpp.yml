@@ -29,6 +29,8 @@ jobs:
         sudo make install
     - name: check fsck repairs
       run: python3 tests/test_fsck_repairs.py --build-dir .
+    - name: check journal recovery
+      run: python3 tests/test_fsck_journal.py --build-dir .
     - name: check security descriptor layouts
       run: python3 tests/test_secure_descriptors.py --build-dir .
     - name: check ntfs test images

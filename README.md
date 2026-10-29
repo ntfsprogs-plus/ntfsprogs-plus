@@ -132,6 +132,38 @@ Use `-f` to discard a detected hibernation image before repair. When damaged
 bootstrap metadata prevents this initial check, `-f` also permits bootstrap
 recovery; hibernation is checked again after the repair mount succeeds.
 
+Before mounting for filesystem repairs, ntfsck recovers `$LogFile` using
+checkpoint analysis, redo, and undo of active transactions. It handles LFS 1.0,
+1.1 and 2.0, including redundant restart pages, tail-page copies, and circular,
+multi-page records. Recovery checkpoints support log pages up to 64 KiB.
+Complete 64 KiB index images are protected once and stored as absolute chunks
+using the native raw-stream replay path, so a partial index write can be retried.
+Changes are prepared in memory before being written;
+undo recovery first saves complete final images in unused log pages and
+publishes a recovery checkpoint of absolute images. Ordinary clusters use redo;
+physical LCN 0 uses absolute undo because zero marks freed dirty-page entries.
+This lets interrupted writes resume without applying relative undo twice.
+If the log lacks space for that checkpoint,
+recovery stops before changing metadata. Metadata is synchronized before both
+restart pages are marked clean, keeping the journal's LSN sequence.
+MFT operations use the current logical mapping, including mapping changes
+during recovery, and final MFT sizes and mapping coverage are checked before
+any target writes. Journal read errors stop recovery without marking it clean.
+The final `$LogFile` mapping is read from the recovered metadata. If recovery
+moves the log, its checkpoint and restart pages are written through both the
+original and final mappings before metadata changes. A torn `$LogFile` MFT
+record can use its checked mirror to reach that checkpoint on retry.
+After redo and undo, filename size copies in MFT records and directory indexes
+are refreshed from the recovered base inode, including hard links and extent
+records. Directory indexes also receive filename timestamps, file attributes
+and reparse tags. These additional changes are included in the recovery
+checkpoint so interrupted writes can be repeated. Incomplete directory links
+are left for the filesystem scan; I/O and allocation failures stop before
+target writes.
+An unreadable or unsupported journal stops recovery
+without discarding the log. With `-n`, pending recovery is reported without
+writing or scanning an unreplayed filesystem.
+
 ntfsck validates `$BadClus:$Bad` separately and restores its volume-sized
 mapping without relocating the bad-cluster reservations. If the stream is
 missing or only partly readable, existing allocated clusters not referenced by

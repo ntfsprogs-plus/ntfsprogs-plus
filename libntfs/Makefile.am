@@ -34,6 +34,8 @@ libntfs_la_SOURCES =	\
 	lcnalloc.c 	\
 	lib_utils.c	\
 	logfile.c 	\
+	journal_replay.c \
+	journal_replay.h \
 	logging.c 	\
 	mft.c 		\
 	misc.c 		\

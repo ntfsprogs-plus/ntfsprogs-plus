@@ -62,6 +62,7 @@ ntfscluster_SOURCES	= ntfscluster.c ntfscluster.h cluster.c cluster.h utils.c ut
 ntfscluster_LDADD	= $(AM_LIBS)
 ntfscluster_LDFLAGS	= $(AM_LFLAGS)
 
+ntfsck_CPPFLAGS		= $(AM_CPPFLAGS) -I$(top_srcdir)/libntfs
 ntfsck_SOURCES		= ntfsck.c utils.c utils.h
 ntfsck_LDADD		= $(AM_LIBS)
 ntfsck_LDFLAGS		= $(AM_LFLAGS)

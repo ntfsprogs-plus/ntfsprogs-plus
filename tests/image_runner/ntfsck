@@ -1,0 +1,7 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Damaged fixtures can require bootstrap recovery before the hibernation probe.
+if [ "${1-}" = -a ]; then
+	set -- -f "$@"
+fi
+exec "${NTFSCK_IMAGE_TEST_BINARY:?NTFSCK_IMAGE_TEST_BINARY is not set}" "$@"

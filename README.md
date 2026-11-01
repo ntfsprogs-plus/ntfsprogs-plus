@@ -112,6 +112,11 @@ $ ./test_all_images.sh <branch name>
 ```
 During test, script will request your *sudo* previleges because of *mount* command. If your system need to get *sudo* previleges for executing *mount*, *unmount*, you should have it to test.
 
+Repair cases in this image corpus use `ntfsck -a -f` because some fixtures
+damage the bootstrap metadata needed to check hibernation. Read-only cases
+and rechecks retain their original arguments. Set `NTFSCK_IMAGE_TEST_BINARY`
+to select an executable from another build.
+
 # Utilities Usage
 
 ## ntfsck

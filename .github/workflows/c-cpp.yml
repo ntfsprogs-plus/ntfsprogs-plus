@@ -33,6 +33,8 @@ jobs:
       run: python3 tests/test_fsck_journal.py --build-dir .
     - name: check security descriptor layouts
       run: python3 tests/test_secure_descriptors.py --build-dir .
+    - name: check external image runner
+      run: python3 tests/test_image_runner.py
     - name: check ntfs test images
       run: |
         cd tests

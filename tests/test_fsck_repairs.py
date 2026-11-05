@@ -677,6 +677,46 @@ class RepairTests(unittest.TestCase):
         self.check_only(0)
 
 
+    def plant_si_flags(self, fixture, number, flags):
+        record = fixture.record(number)
+        offset = fixture.attr(record, 0x10)
+        field = offset + u16(record, offset + 20) + 32
+        struct.pack_into("<I", record, field, flags)
+        fixture.write_record(number, record)
+        return field
+
+    def test_documented_windows_si_flags_are_kept(self):
+        # Windows sets documented attribute bits outside FILE_ATTR_VALID_FLAGS:
+        # 0x120020 (ARCHIVE | NO_SCRUB_DATA | UNPINNED) was found on a real
+        # volume, and 0x5b8020 adds INTEGRITY_STREAM, VIRTUAL, PINNED and
+        # RECALL_ON_DATA_ACCESS.  They are not corruption: ntfsck must accept
+        # and keep them, and the file must stay readable.
+        payload = b"Windows attribute flags\r\n"
+        for flags in (0x00120020, 0x005B8020):
+            with self.subTest(flags=hex(flags)):
+                shutil.copyfile(self.pristine, self.image)
+                fixture, number = self.add_file("flags.txt", payload)
+                field = self.plant_si_flags(fixture, number, flags)
+                self.check_only(0)
+                result = command("ntfscat", self.image, "/flags.txt")
+                self.check_result(result, 0)
+                self.assertEqual(result.stdout, payload)
+                self.check_result(command("ntfsck", "-a", self.image), 0)
+                record = Image(self.image).record(number)
+                self.assertEqual(u32(record, field), flags)
+
+    def test_undocumented_si_flag_is_repaired(self):
+        # 0x200000 is not a documented attribute and lies between documented
+        # ones: it is still reported, and -a clears that bit alone.
+        fixture, number = self.add_file("flags.txt", b"undocumented flag\r\n")
+        field = self.plant_si_flags(fixture, number, 0x00320020)
+        self.check_only(4)
+        self.check_result(command("ntfsck", "-a", self.image), 1)
+        record = Image(self.image).record(number)
+        self.assertEqual(u32(record, field), 0x00120020)
+        self.check_only(0)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, default=BUILD_DIR)

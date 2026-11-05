@@ -341,6 +341,21 @@ static int cat(ntfs_volume *vol, ntfs_inode *inode, ATTR_TYPES type,
 	s64 offset;
 	u32 block_size;
 
+	/*
+	 * A cloud-file placeholder (RECALL_ON_DATA_ACCESS) need not have its
+	 * data present locally: a dehydrated range is a sparse hole, which
+	 * reads back as zeros. Without hydration support, refuse to output
+	 * the unnamed data stream rather than print incomplete contents.
+	 */
+	if (type == AT_DATA && !namelen &&
+	    (inode->flags & FILE_ATTR_RECALL_ON_DATA_ACCESS)) {
+		ntfs_log_error("Inode %llu is a cloud-file placeholder "
+				"(RECALL_ON_DATA_ACCESS): its data may not be "
+				"present locally, refusing to read it.\n",
+				(unsigned long long)inode->mft_no);
+		return 1;
+	}
+
 	buffer = malloc(bufsize);
 	if (!buffer)
 		return 1;

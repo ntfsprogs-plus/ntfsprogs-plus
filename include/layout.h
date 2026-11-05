@@ -850,8 +850,23 @@ typedef enum {
 	FILE_ATTR_OFFLINE		= const_cpu_to_le32(0x00001000),
 	FILE_ATTR_NOT_CONTENT_INDEXED	= const_cpu_to_le32(0x00002000),
 	FILE_ATTR_ENCRYPTED		= const_cpu_to_le32(0x00004000),
+	/*
+	 * Documented Windows attributes (winnt.h) that Windows stores in
+	 * $STANDARD_INFORMATION on NTFS: the Cloud Files API (OneDrive
+	 * Files On-Demand) sets PINNED, UNPINNED and RECALL_ON_DATA_ACCESS,
+	 * and NO_SCRUB_DATA | UNPINNED has been seen on a data volume. They
+	 * are valid in $STANDARD_INFORMATION but are kept out of
+	 * FILE_ATTR_VALID_FLAGS, which also filters the flags copied
+	 * to and from $FILE_NAME.
+	 */
+	FILE_ATTR_INTEGRITY_STREAM	= const_cpu_to_le32(0x00008000),
+	FILE_ATTR_VIRTUAL		= const_cpu_to_le32(0x00010000),
+	FILE_ATTR_NO_SCRUB_DATA		= const_cpu_to_le32(0x00020000),
 	/* Supposed to mean no data locally, possibly repurposed */
 	FILE_ATTRIBUTE_RECALL_ON_OPEN	= const_cpu_to_le32(0x00040000),
+	FILE_ATTR_PINNED		= const_cpu_to_le32(0x00080000),
+	FILE_ATTR_UNPINNED		= const_cpu_to_le32(0x00100000),
+	FILE_ATTR_RECALL_ON_DATA_ACCESS	= const_cpu_to_le32(0x00400000),
 
 	FILE_ATTR_VALID_FLAGS		= const_cpu_to_le32(0x00047fb7),
 	/* FILE_ATTR_VALID_FLAGS masks out the old DOS VolId and the

@@ -677,6 +677,107 @@ class RepairTests(unittest.TestCase):
         self.check_only(0)
 
 
+    def plant_si_flags(self, fixture, number, flags):
+        record = fixture.record(number)
+        offset = fixture.attr(record, 0x10)
+        field = offset + u16(record, offset + 20) + 32
+        struct.pack_into("<I", record, field, flags)
+        fixture.write_record(number, record)
+        return field
+
+    def test_documented_windows_si_flags_are_kept(self):
+        # Windows sets documented attribute bits outside FILE_ATTR_VALID_FLAGS:
+        # 0x120020 (ARCHIVE | NO_SCRUB_DATA | UNPINNED) was found on a real
+        # volume, and 0x5b8020 adds INTEGRITY_STREAM, VIRTUAL, PINNED and
+        # RECALL_ON_DATA_ACCESS.  They are not corruption: ntfsck must accept
+        # and keep them.  The file stays readable unless it is a cloud-file
+        # placeholder (RECALL_ON_DATA_ACCESS), whose data ntfscat refuses.
+        payload = b"Windows attribute flags\r\n"
+        for flags in (0x00120020, 0x005B8020):
+            with self.subTest(flags=hex(flags)):
+                shutil.copyfile(self.pristine, self.image)
+                fixture, number = self.add_file("flags.txt", payload)
+                field = self.plant_si_flags(fixture, number, flags)
+                self.check_only(0)
+                result = command("ntfscat", self.image, "/flags.txt")
+                if flags & 0x00400000:
+                    self.check_result(result, 1)
+                    self.assertEqual(result.stdout, b"")
+                else:
+                    self.check_result(result, 0)
+                    self.assertEqual(result.stdout, payload)
+                self.check_result(command("ntfsck", "-a", self.image), 0)
+                record = Image(self.image).record(number)
+                self.assertEqual(u32(record, field), flags)
+
+    def sparse_fixture(self):
+        # A four-cluster file whose middle two clusters are a sparse hole,
+        # as in a partly dehydrated cloud-file placeholder.
+        cluster = Image(self.image).cluster_size
+        fixture, number = self.add_file(
+            "placeholder.bin", b"A" * cluster + b"B" * 2 * cluster + b"D" * cluster)
+        record = fixture.record(number)
+        offset = fixture.attr(record)
+        runs = fixture.runs(record, offset)
+        require(len(runs) == 1 and runs[0][2] == 4, "unexpected fixture runlist")
+        lcn = runs[0][1]
+        pairs = self.mapping_pairs([(0, lcn, 1), (1, -1, 2), (3, lcn + 3, 1)])
+        header = record[offset:offset + 64]
+        length = (72 + len(pairs) + 7) & ~7
+        self.resize_fixture_attr(record, offset, length)
+        record[offset:offset + 64] = header
+        struct.pack_into("<I", record, offset + 4, length)
+        struct.pack_into("<H", record, offset + 10, 72)
+        struct.pack_into("<H", record, offset + 12, u16(record, offset + 12) | 0x8000)
+        struct.pack_into("<H", record, offset + 32, 72)
+        struct.pack_into("<Q", record, offset + 64, 2 * cluster)
+        record[offset + 72:offset + 72 + len(pairs)] = pairs
+        fixture.write_record(number, record)
+        self.set_bitmap_clusters(fixture, (lcn + 1, lcn + 2), used=False)
+        # The $FILE_NAME copies still carry the old allocated size; let
+        # ntfsck update them to the sparse size, then require a clean check.
+        output = self.check_result(command("ntfsck", "-a", self.image), 1)
+        self.assertIn("allocated-size mismatch", output)
+        self.check_only(0)
+        fixture = Image(self.image)
+        return fixture, number, b"A" * cluster + bytes(2 * cluster) + b"D" * cluster
+
+    def test_sparse_fixture_is_valid(self):
+        # Without RECALL_ON_DATA_ACCESS the sparse fixture is an ordinary
+        # sparse file: clean, and its hole reads back as zeros.
+        fixture, number, contents = self.sparse_fixture()
+        self.plant_si_flags(fixture, number, 0x00000220)
+        self.check_only(0)
+        result = command("ntfscat", self.image, "/placeholder.bin")
+        self.check_result(result, 0)
+        self.assertEqual(result.stdout, contents)
+
+    def test_dehydrated_placeholder_is_not_read(self):
+        # A dehydrated range of a placeholder is a hole that reads as zeros,
+        # so ntfscat must refuse the file instead of printing incomplete
+        # contents.  ntfsck still accepts and keeps the flags.
+        fixture, number, _ = self.sparse_fixture()
+        field = self.plant_si_flags(fixture, number, 0x00500220)
+        self.check_only(0)
+        result = command("ntfscat", self.image, "/placeholder.bin")
+        output = self.check_result(result, 1)
+        self.assertEqual(result.stdout, b"")
+        self.assertIn("RECALL_ON_DATA_ACCESS", output)
+        self.check_result(command("ntfsck", "-a", self.image), 0)
+        self.assertEqual(u32(Image(self.image).record(number), field), 0x00500220)
+
+    def test_undocumented_si_flag_is_repaired(self):
+        # 0x200000 is not a documented attribute and lies between documented
+        # ones: it is still reported, and -a clears that bit alone.
+        fixture, number = self.add_file("flags.txt", b"undocumented flag\r\n")
+        field = self.plant_si_flags(fixture, number, 0x00320020)
+        self.check_only(4)
+        self.check_result(command("ntfsck", "-a", self.image), 1)
+        record = Image(self.image).record(number)
+        self.assertEqual(u32(record, field), 0x00120020)
+        self.check_only(0)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, default=BUILD_DIR)

@@ -50,6 +50,6 @@ void ntfs_fsck_fill_unused_lcnbmp(ntfs_volume *vol, s64 last_idx, u8 *buf);
 
 ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 		ntfs_mount_flags flags __attribute__((unused)));
-void ntfs_fsck_umount(ntfs_volume *vol);
+int ntfs_fsck_umount(ntfs_volume *vol);
 
 #endif /* _NTFS_FSCK_H */

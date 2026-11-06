@@ -948,7 +948,7 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 	return vol;
 }
 
-void ntfs_fsck_umount(ntfs_volume *vol)
+int ntfs_fsck_umount(ntfs_volume *vol)
 {
 	int bm_i;
 
@@ -978,5 +978,5 @@ void ntfs_fsck_umount(ntfs_volume *vol)
 			free(vol->fsck_mft_bitmap[bm_i]);
 	free(vol->fsck_mft_bitmap);
 
-	ntfs_umount(vol, FALSE);
+	return ntfs_umount(vol, FALSE);
 }

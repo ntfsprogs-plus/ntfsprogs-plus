@@ -42,6 +42,7 @@
 #include "dir.h"
 #include "lcnalloc.h"
 #include "logfile.h"
+#include "ntfsck_replay.h"
 #include "reparse.h"
 #include "collate.h"
 #include "fsck.h"
@@ -227,6 +228,20 @@ static BOOL orphan_recovery_changed;
 /* Non-resident attributes whose mapping pairs require truncation. */
 static u64 corrupt_nonresident_runlists;
 
+static struct {
+	ntfs_inode *ni;
+	runlist_element *ranges;
+	size_t count;
+	size_t capacity;
+	BOOL damaged;
+	BOOL unknown;
+} badclus;
+
+static ntfschar badclus_name[] = {
+	const_cpu_to_le16('$'), const_cpu_to_le16('B'),
+	const_cpu_to_le16('a'), const_cpu_to_le16('d'),
+};
+
 enum ntfsck_deferred_index_type {
 	NTFSCK_DEFER_INDEX_BITMAP,
 	NTFSCK_DEFER_CORRUPT_ENTRY,
@@ -402,8 +417,6 @@ static u64 orphan_mft_open_failures;
 s64 total_valid_mft;
 s64 total_inuse_mft;	/* MFT records the bitmap marks in-use */
 s64 fsck_scan_eio;	/* MFT records that failed to read/open with EIO */
-/* $LogFile was reset this run: stale LSNs must be zeroed (see parse #1) */
-static BOOL logfile_was_reset;
 
 struct progress_bar prog;
 int pb_flags;
@@ -1911,6 +1924,9 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 
 		if (!actx->attr->non_resident)
 			continue;
+		/* $Bad is decoded and reserved by the dedicated preflight. */
+		if (ni->mft_no == FILE_BadClus && actx->attr->type == AT_DATA)
+			continue;
 
 		rl = ntfs_decompress_cluster_run(ni->vol, actx->attr, NULL, &part_rl);
 		if (!rl) {
@@ -2120,6 +2136,7 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
 	s64 rl_data_size = 0;	/* rl data size (real allocated size) */
 	s64 rsize;		/* a cluster run size */
 	int i = 0;
+	BOOL truncated = FALSE;
 
 	if (!na || !na->ni || !na->rl)
 		return STATUS_ERROR;
@@ -2137,23 +2154,21 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
 
-			/*
-			 * An lcn beyond the volume is corruption. Drop this run and everything
-			 * after it in memory; the resulting shorter rls->alloc_size no longer
-			 * matches the on-disk allocated_size, so the non-resident size
-			 * reconciliation in ntfsck_check_non_resident_attr() is what rewrites the
-			 * truncated runlist to disk.
-			 */
+			/* Drop an out-of-volume run and persist the shortened mapping. */
 			if (rl[i].lcn >= vol->nr_clusters) {
 				rl[i].lcn = LCN_ENOENT;
 				rl[i].length = 0;
+				truncated = TRUE;
 				break;
 			}
 
-			/* check length corrupted */
-			if (rl[i].lcn + rl[i].length >= vol->nr_clusters) {
-				/* adjust length */
+			if (rl[i].length > vol->nr_clusters - rl[i].lcn) {
 				rl[i].length = vol->nr_clusters - rl[i].lcn;
+				/* The terminator also determines highest_vcn on writeback. */
+				rl[i + 1].vcn = rl[i].vcn + rl[i].length;
+				rl[i + 1].lcn = LCN_ENOENT;
+				rl[i + 1].length = 0;
+				truncated = TRUE;
 			}
 
 			dup_rl = ntfs_fsck_check_and_set_lcnbmp(vol, na, i, set_bit, dup_rl);
@@ -2169,6 +2184,7 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
 		} else {
 			rl[i].lcn = LCN_ENOENT;
 			rl[i].length = 0;
+			truncated = TRUE;
 			break;
 		}
 
@@ -2178,6 +2194,17 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
 	if (rls) {
 		rls->alloc_size = rl_alloc_size;
 		rls->real_size = rl_data_size;
+	}
+
+	if (truncated) {
+		if (!need_fix) {
+			/* This caller cannot write back a corrected mapping. */
+			fsck_err_found();
+			ntfs_free(dup_rl);
+			errno = EIO;
+			return STATUS_ERROR;
+		}
+		*need_fix = TRUE;
 	}
 
 	if (dup_rl) {
@@ -2199,7 +2226,10 @@ static int ntfsck_check_runlist(ntfs_attr *na, u8 set_bit,
 			 */
 			ntfs_log_debug("dup_rl: duplicated runlists\n");
 			ntfs_debug_runlist_dump(dup_rl);
-			ntfs_fsck_repair_cluster_dup(na, dup_rl);
+			if (ntfs_fsck_repair_cluster_dup(na, dup_rl)) {
+				ntfs_free(dup_rl);
+				return STATUS_ERROR;
+			}
 			if (need_fix)
 				*need_fix = TRUE;
 			if (dup_repaired)
@@ -4079,18 +4109,16 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 		}
 
 		/*
-		 * A non-resident $DATA with allocated_size zero owns no clusters, so map it
-		 * as an empty runlist without decoding the mapping pairs. If the mapping
-		 * pairs nevertheless still encode cluster runs, those runs are stale and
-		 * are detected (from the raw mapping pairs) and discarded by
-		 * ntfsck_check_non_resident_attr(); hiding them here also keeps their
-		 * clusters out of the fsck bitmap, so the final bitmap reconciliation frees
-		 * them.
+		 * Only treat the mapping pairs as stale when every size says the
+		 * stream is empty. A zero allocated_size alone can be a damaged
+		 * size field: decode the runs and recover it without losing data.
 		 */
 		if (!utils_is_metadata(ni) &&
 				na->type == AT_DATA &&
 				sle64_to_cpu(attr->lowest_vcn) == 0 &&
-				sle64_to_cpu(attr->allocated_size) == 0) {
+				sle64_to_cpu(attr->allocated_size) == 0 &&
+				sle64_to_cpu(attr->data_size) == 0 &&
+				sle64_to_cpu(attr->initialized_size) == 0) {
 
 			rl = malloc(sizeof(runlist_element));
 			if (!rl) {
@@ -5139,6 +5167,8 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit)
 	while (!(ret = ntfs_attrs_walk(ctx))) {
 		a = ctx->attr;
 		if (!a->non_resident)
+			continue;
+		if (ni->mft_no == FILE_BadClus && a->type == AT_DATA)
 			continue;
 
 		/*
@@ -6989,28 +7019,6 @@ out:
 	return ret;
 }
 
-/*
- * Zero the stale LSN of the index block at byte position @pos after a
- * $LogFile reset. As with MFT records (see ntfsck_reset_mft_lsn()) the LSN is
- * not multi sector protected, so it is poked in place: no fixup round trip,
- * and blocks whose fixup or content is broken get scrubbed all the same.
- */
-static void ntfsck_reset_ib_lsn(ntfs_attr *ia_na, s64 pos)
-{
-	INDEX_BLOCK ib;
-
-	/* magic through lsn: the first 16 bytes are enough */
-	if (ntfs_attr_pread(ia_na, pos,
-				offsetof(INDEX_BLOCK, index_block_vcn), &ib) !=
-			offsetof(INDEX_BLOCK, index_block_vcn))
-		return;
-	if (!ntfs_is_indx_record(ib.magic) || !ib.lsn)
-		return;
-	ib.lsn = const_cpu_to_sle64(0);
-	ntfs_attr_pwrite(ia_na, pos + offsetof(INDEX_BLOCK, lsn),
-			sizeof(ib.lsn), &ib.lsn);
-}
-
 /* Far beyond any tree the block/record size ratio can produce. */
 #define NTFSCK_MAX_INDEX_DEPTH	16
 
@@ -7388,17 +7396,6 @@ bad_root_subnode:
 		bmp_bit = (vcn << ictx->vcn_size_bits) / ictx->block_size;
 		if (max_ib_bits <= bmp_bit)
 			break;
-
-		/*
-		 * The journal any LSN refers to was reset in parse #1 and a stale value
-		 * would make a future log replay skip its redo of this block (see
-		 * ntfsck_reset_mft_lsn()). Poked before the bitmap test because allocated
-		 * blocks the index bitmap marks free never reach the checks below, yet they
-		 * too are re-initialized through the log once the index grows.
-		 */
-		if (logfile_was_reset)
-			ntfsck_reset_ib_lsn(ictx->ia_na,
-					vcn << ictx->vcn_size_bits);
 
 		if (!ntfs_bit_get(bmp_buf, bmp_bit))
 			continue;
@@ -8633,6 +8630,85 @@ static BOOL ntfsck_repair_enabled(void)
 				NTFS_MNT_FS_YES_REPAIR)) != 0;
 }
 
+/* The normal fsck mount can repair metadata before returning a volume. */
+static int ntfsck_check_hibernation_before_mount(const char *path)
+{
+#ifndef NO_NTFS_DEVICE_DEFAULT_IO_OPS
+	struct ntfs_device *dev;
+	ntfs_volume *probe;
+	int saved_errors = fsck_errors, saved_fixes = fsck_fixes;
+	int ret, err;
+
+	if (!ntfsck_repair_enabled())
+		return STATUS_OK;
+
+	dev = ntfs_device_alloc(path, 0, &ntfs_device_default_io_ops, NULL);
+	if (!dev)
+		return STATUS_ERROR;
+	/* Only bootstrap $MFT: unrelated damaged system files need no repair. */
+	probe = ntfs_volume_startup(dev, NTFS_MNT_RDONLY);
+	if (!probe) {
+		ntfs_device_free(dev);
+		ret = STATUS_ERROR;
+		goto unverified;
+	}
+
+	errno = 0;
+	ret = ntfs_volume_check_hiberfile(probe, 0);
+	err = errno;
+	if (!ret)
+		goto out;
+	if (err != EPERM) {
+		ntfs_umount(probe, FALSE);
+		goto unverified;
+	}
+	if (!opt_force) {
+		ntfs_log_error("Windows is hibernated on %s; shut down fully or use -f.\n",
+				path);
+		goto out;
+	}
+
+	ntfs_log_warning("Discarding hibernation image on %s before mounting for repair.\n", path);
+	/* Reopen only this bootstrap volume; no mount-time repairs run here. */
+	if (dev->d_ops->close(dev))
+		goto out;
+	NDevClearReadOnly(dev);
+	if ((dev->d_ops->open)(dev, O_RDWR)) {
+		NDevSetReadOnly(dev);
+		goto out;
+	}
+	NVolClearReadOnly(probe);
+	if (ntfs_volume_invalidate_hiberfile(probe) || dev->d_ops->sync(dev)) {
+		ntfs_log_perror("Failed to invalidate hiberfil.sys before repair");
+		goto out;
+	}
+	ret = STATUS_OK;
+out:
+	/* Optional inodes were not loaded; do not carry ENOENT into release. */
+	errno = 0;
+	if (ntfs_umount(probe, FALSE))
+		ret = STATUS_ERROR;
+	fsck_errors = saved_errors;
+	fsck_fixes = saved_fixes;
+	return ret;
+
+unverified:
+	fsck_errors = saved_errors;
+	fsck_fixes = saved_fixes;
+	if (opt_force) {
+		ntfs_log_warning("Cannot check hibernation on %s before bootstrap recovery; proceeding with -f.\n",
+				path);
+		return STATUS_OK;
+	}
+	ntfs_log_error("Cannot verify hibernation on %s; bootstrap repair requires -f.\n", path);
+	return STATUS_ERROR;
+#else
+	(void)path;
+	errno = EOPNOTSUPP;
+	return STATUS_ERROR;
+#endif
+}
+
 /*
  * ntfsck_begin_repair - open a crash-safe repair transaction.
  *
@@ -8698,230 +8774,84 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 	return 0;
 }
 
-/*
- * ntfsck_logfile_is_dirty - does $LogFile hold journal data that needs a reset?
- *
- * ntfsck cannot replay the journal, so its only recovery is to empty $LogFile.
- * But an already empty journal, or one the last OS left cleanly closed, carries
- * nothing to replay, and rewriting it every run just churns the disk and nags
- * the operator. Return TRUE only when the journal is genuinely dirty:
- *   - ntfs_check_logfile() found it inconsistent (unreadable restart pages);
- *   - or it holds a restart area whose client list is still in use and which is
- *     not flagged RESTART_VOLUME_IS_CLEAN (i.e. an unclean shutdown).
- * An empty journal (NVolLogFileEmpty) or a clean restart area returns FALSE.
- */
-static BOOL ntfsck_logfile_is_dirty(ntfs_volume *vol)
+/* Replay before a full fsck mount can normalize any metadata. */
+static int ntfsck_replay_log(const char *path)
 {
-	ntfs_inode *ni;
-	ntfs_attr *na;
-	RESTART_PAGE_HEADER *rp = NULL;
-	const RESTART_AREA *ra;
-	BOOL dirty = TRUE;
+#ifndef NO_NTFS_DEVICE_DEFAULT_IO_OPS
+	struct ntfs_device *dev;
+	struct ntfsck_replay *replay = NULL;
+	ntfs_volume *probe;
+	int saved_errors = fsck_errors, saved_fixes = fsck_fixes;
+	int ret;
 
-	ni = ntfs_inode_open(vol, FILE_LogFile);
-	if (!ni)
-		return TRUE;
-	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
-	if (!na) {
-		ntfs_inode_close(ni);
-		return TRUE;
+	dev = ntfs_device_alloc(path, 0, &ntfs_device_default_io_ops, NULL);
+	if (!dev)
+		return STATUS_ERROR;
+	probe = ntfs_volume_startup(dev, NTFS_MNT_RDONLY);
+	if (!probe && opt_force && ntfsck_repair_enabled()) {
+		/* Repair only the bootstrap metadata needed to reach the journal. */
+		fsck_errors = saved_errors;
+		fsck_fixes = saved_fixes;
+		NDevClearReadOnly(dev);
+		probe = ntfs_volume_startup(dev, option.flags);
 	}
-
-	if (!ntfs_check_logfile(na, &rp)) {
-		/* Inconsistent journal: reset is the only way out. */
-		dirty = TRUE;
-	} else if (NVolLogFileEmpty(vol)) {
-		/* Already empty, nothing to replay. */
-		dirty = FALSE;
-	} else if (rp) {
-		ra = (const RESTART_AREA *)((const u8 *)rp +
-				le16_to_cpu(rp->restart_area_offset));
-		/* Clean iff no client is in use or the volume-clean bit is set. */
-		if (ra->client_in_use_list == LOGFILE_NO_CLIENT ||
-				(ra->flags & RESTART_VOLUME_IS_CLEAN))
-			dirty = FALSE;
-	} else {
-		/* Consistent journal with no restart area: treat as clean. */
-		dirty = FALSE;
+	if (!probe) {
+		ntfs_device_free(dev);
+		fsck_err_found();
+		return STATUS_ERROR;
 	}
-
-	free(rp);
-	ntfs_attr_close(na);
-	ntfs_inode_close(ni);
-	return dirty;
-}
-
-/*
- * Zero the LSN a cached MFT record buffer carries, so that a later sync
- * of the inode cannot write a stale value over what
- * ntfsck_reset_mft_lsn() put on disk.
- */
-static void ntfsck_zero_cached_lsn(ntfs_inode *ni)
-{
-	s32 i;
-
-	if (!ni)
-		return;
-
-	ni->mrec->lsn = const_cpu_to_sle64(0);
-	for (i = 0; i < ni->nr_extents; i++)
-		ni->extent_nis[i]->mrec->lsn = const_cpu_to_sle64(0);
-}
-
-/*
- * Every LSN on the volume refers to the journal that was just thrown
- * away. The next driver to mount initializes a fresh log whose LSNs
- * restart low, and recovery decides "this update is already on disk" by
- * comparing a record's LSN against a log record's LSN, so a stale large
- * LSN makes a future replay silently skip its redo and corrupt the
- * volume long after fsck ran. Zero the field in every MFT record, the
- * state mkntfs creates alongside an empty journal.
- *
- * The LSN sits in the first sector and is no sector tail, so it is not
- * multi sector protected: write it in place, with no fixup round trip.
- * That also scrubs free records whose own fixup header is corrupted,
- * which a protected write could never reach. Index blocks carry an LSN
- * too; ntfsck_validate_index_blocks() pokes those the same way, as it
- * is the one place every allocated index block already passes through.
- *
- * The long-lived inodes the mount opened still cache their records with
- * the old LSN, so those buffers are scrubbed as well lest a later sync
- * write the stale value back.
- */
-static void ntfsck_reset_mft_lsn(ntfs_volume *vol)
-{
-	MFT_RECORD *mrec;
-	s64 nr_mft_records, mft_num, pos;
-	s64 reset_cnt = 0;
-
-	mrec = ntfs_malloc(vol->mft_record_size);
-	if (!mrec)
-		return;
-
-	nr_mft_records = vol->mft_na->initialized_size >>
-			vol->mft_record_size_bits;
-	for (mft_num = 0; mft_num < nr_mft_records; mft_num++) {
-		pos = mft_num << vol->mft_record_size_bits;
-		/* magic through lsn: the first 16 bytes are enough */
-		if (ntfs_attr_pread(vol->mft_na, pos,
-					offsetof(MFT_RECORD, sequence_number),
-					mrec) !=
-				offsetof(MFT_RECORD, sequence_number))
-			continue;
-		if (!ntfs_is_file_record(mrec->magic) || !mrec->lsn)
-			continue;
-		mrec->lsn = const_cpu_to_sle64(0);
-		if (ntfs_attr_pwrite(vol->mft_na,
-					pos + offsetof(MFT_RECORD, lsn),
-					sizeof(mrec->lsn), &mrec->lsn) !=
-				sizeof(mrec->lsn)) {
-			ntfs_log_error("Failed to reset LSN of mft record(%"
-					PRId64")\n", mft_num);
-			continue;
+	fsck_start_step("Recover logfile.");
+	ret = ntfsck_replay_prepare(probe, &replay);
+	if (!ret)
+		goto out;
+	fsck_err_found();
+	if (ret < 0) {
+		ntfs_log_error("Journal preserved; stopping before the filesystem scan.\n");
+		goto out;
+	}
+	NVolSetFsck(probe);
+	if (option.flags & NTFS_MNT_FS_AUTO_REPAIR)
+		NVolSetFsAutoRepair(probe);
+	if (option.flags & NTFS_MNT_FS_YES_REPAIR)
+		NVolSetFsYesRepair(probe);
+	if (option.flags & NTFS_MNT_FS_ASK_REPAIR)
+		NVolSetFsAskRepair(probe);
+	if (option.flags & NTFS_MNT_FS_NO_REPAIR)
+		NVolSetFsNoRepair(probe);
+	ntfs_log_error("Replay the journal before scanning the filesystem. Fix it? ");
+	if (!ntfs_ask_repair(probe)) {
+		ret = STATUS_ERROR;
+		goto out;
+	}
+	if (NVolReadOnly(probe)) {
+		if (dev->d_ops->close(dev)) {
+			ret = STATUS_ERROR;
+			goto out;
 		}
-		if (mft_num < vol->mftmirr_size)
-			ntfs_attr_pwrite(vol->mftmirr_na,
-					pos + offsetof(MFT_RECORD, lsn),
-					sizeof(mrec->lsn), &mrec->lsn);
-		reset_cnt++;
-	}
-	ntfs_free(mrec);
-
-	ntfsck_zero_cached_lsn(vol->mft_ni);
-	ntfsck_zero_cached_lsn(vol->mftmirr_ni);
-	ntfsck_zero_cached_lsn(vol->vol_ni);
-	ntfsck_zero_cached_lsn(vol->lcnbmp_ni);
-	ntfsck_zero_cached_lsn(vol->secure_ni);
-
-	ntfs_log_info("Reset LSN of %"PRId64" mft records\n", reset_cnt);
-}
-
-/*
- * Zero the stale LSN of every block of one named index allocation.
- * ntfsck_validate_index_blocks() covers the indexes the directory walk
- * reaches, but $Secure never enters that walk (ntfsck_check_index()
- * skips the inodes the mount holds open), so its $SDH/$SII blocks are
- * swept here right after the $LogFile reset.
- */
-static void ntfsck_reset_named_ia_lsn(ntfs_inode *ni, ntfschar *name,
-		u32 name_len)
-{
-	ntfs_attr_search_ctx *ctx;
-	INDEX_ROOT *ir;
-	ntfs_attr *ia_na;
-	u32 block_size;
-	s64 pos;
-
-	ctx = ntfs_attr_get_search_ctx(ni, NULL);
-	if (!ctx)
-		return;
-	if (ntfs_attr_lookup(AT_INDEX_ROOT, name, name_len, CASE_SENSITIVE,
-				0, NULL, 0, ctx)) {
-		ntfs_attr_put_search_ctx(ctx);
-		return;
-	}
-	ir = (INDEX_ROOT *)((u8 *)ctx->attr +
-			le16_to_cpu(ctx->attr->value_offset));
-	block_size = le32_to_cpu(ir->index_block_size);
-	ntfs_attr_put_search_ctx(ctx);
-	if (block_size < NTFS_BLOCK_SIZE)
-		return;
-
-	ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, name, name_len);
-	if (!ia_na)
-		return;
-	for (pos = 0; pos + block_size <= ia_na->data_size; pos += block_size)
-		ntfsck_reset_ib_lsn(ia_na, pos);
-	ntfs_attr_close(ia_na);
-}
-
-static void ntfsck_reset_secure_lsn(ntfs_volume *vol)
-{
-	if (!vol->secure_ni)
-		return;
-
-	ntfsck_reset_named_ia_lsn(vol->secure_ni, NTFS_INDEX_SDH, 4);
-	ntfsck_reset_named_ia_lsn(vol->secure_ni, NTFS_INDEX_SII, 4);
-}
-
-static int ntfsck_replay_log(ntfs_volume *vol)
-{
-	problem_context_t pctx = {0, };
-
-	fsck_start_step("Reset logfile.");
-
-	/*
-	 * ntfsck cannot replay the journal, so a dirty $LogFile is emptied. A
-	 * journal that is already empty or was cleanly closed needs nothing, so
-	 * leave it untouched rather than resetting it on every run.
-	 */
-	if (!ntfsck_logfile_is_dirty(vol)) {
-		ntfs_log_verbose("$LogFile is empty or clean, no reset needed\n");
-		fsck_end_step();
-		return STATUS_OK;
-	}
-
-	ntfs_log_info("ntfsck does not support log replay, $LogFile needs reset\n");
-
-	/*
-	 * The actual reset is gated on ntfs_fix_problem(): with -n it returns FALSE
-	 * (and the volume is read-only anyway), so $LogFile is left untouched. Only
-	 * announce the reset when it is really performed.
-	 */
-	if (ntfs_fix_problem(vol, PR_RESET_LOG_FILE, &pctx)) {
-		ntfs_log_info("Resetting $LogFile\n");
-		if (ntfs_logfile_reset(vol)) {
-			check_failed("ntfs logfile reset failed, errno : %d\n", errno);
-				fsck_end_step();
-			return STATUS_ERROR;
+		NDevClearReadOnly(dev);
+		if ((dev->d_ops->open)(dev, O_RDWR)) {
+			NDevSetReadOnly(dev);
+			ret = STATUS_ERROR;
+			goto out;
 		}
-		logfile_was_reset = TRUE;
-		ntfsck_reset_mft_lsn(vol);
-		ntfsck_reset_secure_lsn(vol);
+		NVolClearReadOnly(probe);
 	}
-
+	ret = ntfsck_replay_commit(replay);
+	if (!ret)
+		fsck_err_fixed();
+	else
+		ntfs_log_perror("Failed to commit journal recovery");
+out:
+	ntfsck_replay_free(replay);
 	fsck_end_step();
-	return STATUS_OK;
+	errno = 0;
+	if (ntfs_umount(probe, FALSE))
+		ret = STATUS_ERROR;
+	return ret ? STATUS_ERROR : STATUS_OK;
+#else
+	(void)path;
+	return STATUS_ERROR;
+#endif
 }
 
 static inline BOOL ntfsck_opened_ni_vol(s64 mft_num)
@@ -8929,6 +8859,8 @@ static inline BOOL ntfsck_opened_ni_vol(s64 mft_num)
 	BOOL is_opened = FALSE;
 
 	switch (mft_num) {
+	case FILE_BadClus:
+		return badclus.ni != NULL;
 		case FILE_MFT:
 		case FILE_MFTMirr:
 		case FILE_Volume:
@@ -8945,6 +8877,9 @@ static ntfs_inode *ntfsck_get_opened_ni_vol(ntfs_volume *vol, s64 mft_num)
 	ntfs_inode *ni = NULL;
 
 	switch (mft_num) {
+	case FILE_BadClus:
+		ni = badclus.ni;
+		break;
 		case FILE_MFT:
 			ni = vol->mft_ni;
 			break;
@@ -9719,6 +9654,7 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 {
 	ntfs_volume *vol = ni->vol;
 	problem_context_t pctx = {0, };
+	s64 max_lcnbmp_size;
 
 	pctx.ni = ni;
 
@@ -9729,6 +9665,7 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 	case FILE_Volume:
 	case FILE_AttrDef:
 	case FILE_Boot:
+	case FILE_BadClus:
 	case FILE_Secure:
 	case FILE_UpCase:
 	case FILE_Extend:
@@ -9748,8 +9685,6 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 			ntfsck_check_mftmirr(vol);
 		break;
 	case FILE_Bitmap:
-		s64 max_lcnbmp_size;
-
 		if (ntfs_attr_map_whole_runlist(vol->lcnbmp_na)) {
 			ntfs_log_perror("Failed to map runlist\n");
 			return -EIO;
@@ -10166,7 +10101,7 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 		int wtype, BOOL repair_decided, BOOL repair_approved)
 {
 	s64 count, pos, total, remain;
-	s64 rcnt, wcnt;
+	s64 rcnt, wcnt = 0;
 	u8 *disk_bm;
 	u8 *fsck_bm;
 	u8 *dbmb;
@@ -10178,6 +10113,7 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 	unsigned long *fbml;
 	int ret = STATUS_OK;
 	BOOL block_mass_free = FALSE;
+	BOOL added;
 	problem_context_t pctx = {0, };
 
 	if (na != vol->lcnbmp_na && na != vol->mftbmp_na)
@@ -10234,6 +10170,7 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 		}
 
 		fsck_bm = func(vol, pos);
+		added = FALSE;
 
 		if (!memcmp(fsck_bm, disk_bm, count))
 			goto next;
@@ -10245,6 +10182,8 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 			dbml = (unsigned long *)disk_bm + i;
 			fbml = (unsigned long *)fsck_bm + i;
 			if (*dbml != *fbml) {
+				if (*fbml & ~*dbml)
+					added = TRUE;
 #ifdef DEBUG
 				ntfs_log_info("%s bitmap(%d):\n",
 						na->type == 0xb0 ? "MFT" : "LCN", wtype);
@@ -10263,8 +10202,11 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 
 		dbmb = disk_bm + (word_count * sizeof(unsigned long));
 		fbmb = fsck_bm + (word_count * sizeof(unsigned long));
-		for (i = 0; i < tail_bytes; i++)
+		for (i = 0; i < tail_bytes; i++) {
+			if (fbmb[i] & ~dbmb[i])
+				added = TRUE;
 			dbmb[i] |= fbmb[i];
+		}
 
 		if (wtype == FSCK_BMP_FINAL)
 			fsck_err_found();
@@ -10293,6 +10235,10 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 				free(disk_bm);
 				return STATUS_ERROR;
 			}
+			if (wtype == FSCK_BMP_INITIAL && added) {
+				fsck_err_found();
+				fsck_err_fixed();
+			}
 		}
 
 next:
@@ -10309,6 +10255,385 @@ next:
 	return ret;
 }
 
+static BOOL ntfsck_is_bad_stream(const ATTR_RECORD *a)
+{
+	return a->type == AT_DATA && a->name_length == 4 &&
+		!memcmp((const u8 *)a + le16_to_cpu(a->name_offset),
+			badclus_name, sizeof(badclus_name));
+}
+
+static int ntfsck_badclus_add_range(ntfs_volume *vol, LCN lcn, s64 length)
+{
+	runlist_element *ranges;
+	size_t capacity;
+
+	if (lcn < 0 || lcn >= vol->nr_clusters || length <= 0) {
+		badclus.damaged = badclus.unknown = TRUE;
+		return STATUS_OK;
+	}
+	if (length > vol->nr_clusters - lcn) {
+		length = vol->nr_clusters - lcn;
+		badclus.damaged = badclus.unknown = TRUE;
+	}
+	if (badclus.count == badclus.capacity) {
+		capacity = badclus.capacity ? badclus.capacity * 2 : 16;
+		ranges = realloc(badclus.ranges, capacity * sizeof(*ranges));
+		if (!ranges)
+			return STATUS_ERROR;
+		badclus.ranges = ranges;
+		badclus.capacity = capacity;
+	}
+	badclus.ranges[badclus.count++] = (runlist_element) {
+		.vcn = lcn, .lcn = lcn, .length = length,
+	};
+	return STATUS_OK;
+}
+
+static int ntfsck_badclus_range_cmp(const void *left, const void *right)
+{
+	const runlist_element *a = left, *b = right;
+
+	return (a->lcn > b->lcn) - (a->lcn < b->lcn);
+}
+
+static void ntfsck_badclus_merge_ranges(void)
+{
+	size_t i, count = 0;
+
+	if (!badclus.count)
+		return;
+	qsort(badclus.ranges, badclus.count, sizeof(*badclus.ranges),
+			ntfsck_badclus_range_cmp);
+	for (i = 0; i < badclus.count; i++) {
+		runlist_element *cur = &badclus.ranges[i];
+
+		if (count && cur->lcn <= badclus.ranges[count - 1].lcn +
+				badclus.ranges[count - 1].length) {
+			runlist_element *prev = &badclus.ranges[count - 1];
+
+			if (cur->lcn + cur->length > prev->lcn + prev->length)
+				prev->length = cur->lcn + cur->length - prev->lcn;
+		} else
+			badclus.ranges[count++] = *cur;
+	}
+	badclus.count = count;
+}
+
+static u64 ntfsck_badclus_number(const u8 *bytes, unsigned int size)
+{
+	u64 value = 0;
+	unsigned int i;
+
+	for (i = 0; i < size; i++)
+		value |= (u64)bytes[i] << (i * 8);
+	return value;
+}
+
+/* Decode independently of corrupt size/highest_vcn fields, keeping valid runs. */
+static int ntfsck_badclus_decode(ntfs_volume *vol, ATTR_RECORD *a, s64 *covered)
+{
+	const u8 *p = (const u8 *)a + le16_to_cpu(a->mapping_pairs_offset);
+	const u8 *end = (const u8 *)a + le32_to_cpu(a->length);
+	s64 vcn = sle64_to_cpu(a->lowest_vcn), lcn = 0;
+	u64 length, delta, magnitude;
+	unsigned int length_size, offset_size;
+
+	if (vcn < 0 || vcn != *covered) {
+		badclus.damaged = badclus.unknown = TRUE;
+		vcn = *covered;
+	}
+	while (p < end && *p) {
+		length_size = *p & 15;
+		offset_size = *p++ >> 4;
+		if (!length_size || length_size > 8 || offset_size > 8 ||
+				(size_t)(end - p) < length_size + offset_size)
+			goto incomplete;
+		length = ntfsck_badclus_number(p, length_size);
+		p += length_size;
+		if (!length || length > (u64)(INT64_MAX - vcn))
+			goto incomplete;
+		if (offset_size) {
+			delta = ntfsck_badclus_number(p, offset_size);
+			if (p[offset_size - 1] & 0x80) {
+				if (offset_size < 8)
+					delta |= ~0ULL << (offset_size * 8);
+				magnitude = 0ULL - delta;
+				if (magnitude > (u64)lcn)
+					goto incomplete;
+				lcn -= magnitude;
+			} else {
+				if (delta > (u64)(INT64_MAX - lcn))
+					goto incomplete;
+				lcn += delta;
+			}
+			if (ntfsck_badclus_add_range(vol, lcn, length))
+				return STATUS_ERROR;
+			if (lcn != vcn) {
+				/* A bad-cluster reservation must map a cluster to itself. */
+				badclus.damaged = badclus.unknown = TRUE;
+				if (ntfsck_badclus_add_range(vol, vcn, length))
+					return STATUS_ERROR;
+			}
+		}
+		p += offset_size;
+		vcn += length;
+	}
+	if (p == end)
+		goto incomplete;
+	if (sle64_to_cpu(a->highest_vcn) != vcn - 1)
+		badclus.damaged = TRUE;
+	*covered = vcn;
+	return STATUS_OK;
+incomplete:
+	badclus.damaged = badclus.unknown = TRUE;
+	*covered = vcn;
+	return STATUS_OK;
+}
+
+static int ntfsck_badclus_reserve(ntfs_volume *vol, size_t first)
+{
+	size_t i;
+
+	for (i = first; i < badclus.count; i++)
+		if (ntfs_fsck_set_alloc_lcnbmp_range(vol, badclus.ranges[i].lcn,
+				badclus.ranges[i].length) ||
+			ntfs_fsck_set_lcnbmp_range(vol, badclus.ranges[i].lcn,
+				badclus.ranges[i].length, 1))
+			return STATUS_ERROR;
+	return STATUS_OK;
+}
+
+/* Reserve bad clusters before other inodes can claim or relocate them. */
+static int ntfsck_prepare_badclus(ntfs_volume *vol)
+{
+	ntfs_inode *ni;
+	s64 covered = 0, size = vol->nr_clusters << vol->cluster_size_bits;
+	BOOL found = FALSE, unnamed = FALSE;
+	int i, ret;
+
+	ni = ntfsck_open_inode(vol, FILE_BadClus);
+	if (!ni)
+		ni = ntfsck_open_inode_after_raw_mft_check(vol, FILE_BadClus, TRUE);
+	badclus.ni = ni;
+	if (!ni || (ni->attr_list && ntfs_inode_attach_all_extents(ni)))
+		goto fail;
+	for (i = -1; i < ni->nr_extents; i++) {
+		ntfs_inode *record = i < 0 ? ni : ni->extent_nis[i];
+		ntfs_attr_search_ctx *ctx = ntfs_attr_get_search_ctx(NULL, record->mrec);
+
+		if (!ctx)
+			goto fail;
+		while (!(ret = ntfs_attrs_walk(ctx))) {
+			ATTR_RECORD *a = ctx->attr;
+
+			if (a->type == AT_DATA && !a->name_length) {
+				BOOL nonempty;
+
+				unnamed = TRUE;
+				if (a->non_resident) {
+					const u8 *pairs;
+
+					pairs = (u8 *)a + le16_to_cpu(a->mapping_pairs_offset);
+					nonempty = a->allocated_size || a->data_size ||
+						a->initialized_size || *pairs;
+				} else
+					nonempty = a->value_length != 0;
+				if (nonempty) {
+					ntfs_attr_put_search_ctx(ctx);
+					goto fail;
+				}
+			}
+			if (!ntfsck_is_bad_stream(a))
+				continue;
+			found = TRUE;
+			if (!a->non_resident) {
+				badclus.damaged = badclus.unknown = TRUE;
+				continue;
+			}
+			if (!a->lowest_vcn &&
+					(sle64_to_cpu(a->allocated_size) != size ||
+					 sle64_to_cpu(a->data_size) != size ||
+					 sle64_to_cpu(a->initialized_size) < 0 ||
+					 sle64_to_cpu(a->initialized_size) > size))
+				badclus.damaged = TRUE;
+			if (a->flags || a->compression_unit)
+				badclus.damaged = TRUE;
+			if (ntfsck_badclus_decode(vol, a, &covered)) {
+				ntfs_attr_put_search_ctx(ctx);
+				goto fail;
+			}
+		}
+		ntfs_attr_put_search_ctx(ctx);
+		if (errno != ENOENT)
+			goto fail;
+	}
+	if (!found || covered != vol->nr_clusters)
+		badclus.damaged = badclus.unknown = TRUE;
+	if (!unnamed)
+		badclus.damaged = TRUE;
+	ntfsck_badclus_merge_ranges();
+	if (ntfsck_badclus_reserve(vol, 0))
+		goto fail;
+	if (badclus.damaged) {
+		fsck_err_found();
+		ntfs_log_error("$BadClus: missing or inconsistent $DATA attributes.\n");
+	}
+	return STATUS_OK;
+fail:
+	fsck_err_found();
+	ntfs_log_error("$BadClus cannot be verified; preserving its record and cluster bitmap.\n");
+	return STATUS_ERROR;
+}
+
+/* Without a complete $Bad, unclaimed allocated clusters cannot be freed. */
+static int ntfsck_badclus_recover_unclaimed(ntfs_volume *vol)
+{
+	u8 disk[NTFS_BUF_SIZE], owned[NTFS_BUF_SIZE];
+	u8 *checked;
+	s64 pos, count, byte, bit, lcn, start = -1;
+	size_t first = badclus.count;
+
+	for (pos = 0; pos < (vol->nr_clusters + 7) / 8; pos += count) {
+		count = min((s64)NTFS_BUF_SIZE, (vol->nr_clusters + 7) / 8 - pos);
+		if (ntfs_attr_pread(vol->lcnbmp_na, pos, count, disk) != count)
+			return STATUS_ERROR;
+		memset(owned, 0, count);
+		ntfs_fsck_or_alloc_lcnbmp(vol, pos, count, owned);
+		checked = ntfs_fsck_find_lcnbmp_block(vol, pos);
+		for (byte = 0; byte < count; byte++) {
+			u8 unclaimed = disk[byte] & ~(owned[byte] | checked[byte]);
+
+			for (bit = 0; bit < 8; bit++) {
+				lcn = (pos + byte) * 8 + bit;
+				if (lcn >= vol->nr_clusters)
+					break;
+				if (unclaimed & (1 << bit)) {
+					if (start < 0)
+						start = lcn;
+				} else if (start >= 0) {
+					if (ntfsck_badclus_add_range(vol, start, lcn - start))
+						return STATUS_ERROR;
+					start = -1;
+				}
+			}
+		}
+	}
+	if (start >= 0 && ntfsck_badclus_add_range(vol, start, vol->nr_clusters - start))
+		return STATUS_ERROR;
+	if (ntfsck_badclus_reserve(vol, first))
+		return STATUS_ERROR;
+	ntfsck_badclus_merge_ranges();
+	return STATUS_OK;
+}
+
+static int ntfsck_rebuild_badclus(ntfs_volume *vol)
+{
+	ntfs_inode *ni = badclus.ni;
+	ntfs_attr_search_ctx *ctx;
+	ntfs_attr *na = NULL;
+	runlist *rl;
+	size_t i, count = 0;
+	VCN vcn = 0;
+	s64 size = vol->nr_clusters << vol->cluster_size_bits;
+	int ret = STATUS_ERROR;
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return STATUS_ERROR;
+	if (!ntfs_attr_lookup(AT_DATA, badclus_name, 4, CASE_SENSITIVE, 0, NULL, 0, ctx) &&
+			!ctx->attr->non_resident) {
+		if (ntfs_attr_record_rm(ctx))
+			goto out;
+	}
+	ntfs_attr_reinit_search_ctx(ctx);
+	if (ntfs_attr_lookup(AT_DATA, badclus_name, 4, CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+		if (errno != ENOENT || ntfs_non_resident_attr_record_add(ni,
+				AT_DATA, badclus_name, 4, 0, 1, const_cpu_to_le16(0)) < 0)
+			goto out;
+	}
+	ntfs_attr_reinit_search_ctx(ctx);
+	if (ntfs_attr_lookup(AT_DATA, badclus_name, 4, CASE_SENSITIVE, 0, NULL, 0, ctx))
+		goto out;
+	if (ctx->ntfs_ino == ni) {
+		ctx->attr->lowest_vcn = const_cpu_to_sle64(0);
+		ntfs_inode_mark_dirty(ni);
+	}
+	na = ntfs_attr_open(ni, AT_DATA, badclus_name, 4);
+	if (!na)
+		goto out;
+	/* Mapping-pairs helpers require page-rounded runlist storage. */
+	rl = ntfs_malloc(((2 * badclus.count + 2) * sizeof(*rl) + 0xfff) & ~(size_t)0xfff);
+	if (!rl)
+		goto out;
+	for (i = 0; i < badclus.count; i++) {
+		if (vcn < badclus.ranges[i].lcn)
+			rl[count++] = (runlist_element) {
+				.vcn = vcn, .lcn = LCN_HOLE,
+				.length = badclus.ranges[i].lcn - vcn,
+			};
+		rl[count++] = badclus.ranges[i];
+		vcn = badclus.ranges[i].lcn + badclus.ranges[i].length;
+	}
+	if (vcn < vol->nr_clusters)
+		rl[count++] = (runlist_element) {
+			.vcn = vcn, .lcn = LCN_HOLE, .length = vol->nr_clusters - vcn,
+		};
+	rl[count] = (runlist_element) {
+		.vcn = vol->nr_clusters, .lcn = LCN_ENOENT, .length = 0,
+	};
+	free(na->rl);
+	na->rl = rl;
+	na->allocated_size = na->data_size = size;
+	na->initialized_size = 0;
+	na->data_flags = const_cpu_to_le16(0);
+	NAttrSetFullyMapped(na);
+	NAttrSetRunlistDirty(na);
+	if (ntfs_attr_update_mapping_pairs(na, 0))
+		goto out;
+	ntfs_attr_reinit_search_ctx(ctx);
+	while (!ntfs_attr_lookup(AT_DATA, badclus_name, 4, CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+		/* $Bad has holes without the normal sparse-file attribute flags. */
+		ctx->attr->flags = const_cpu_to_le16(0);
+		ctx->attr->compression_unit = 0;
+		if (!ctx->attr->lowest_vcn) {
+			ctx->attr->allocated_size = ctx->attr->data_size = cpu_to_sle64(size);
+			ctx->attr->initialized_size = const_cpu_to_sle64(0);
+		}
+		ntfs_inode_mark_dirty(ctx->ntfs_ino);
+	}
+	if (errno != ENOENT)
+		goto out;
+	if (!ntfs_attr_exist(ni, AT_DATA, AT_UNNAMED, 0) &&
+			ntfs_attr_add(ni, AT_DATA, AT_UNNAMED, 0, NULL, 0))
+		goto out;
+	if (ntfs_inode_sync(ni))
+		goto out;
+	ntfsck_set_mft_record_bitmap(ni, FALSE);
+	ret = STATUS_OK;
+out:
+	if (na)
+		ntfs_attr_close(na);
+	ntfs_attr_put_search_ctx(ctx);
+	return ret;
+}
+
+static int ntfsck_finish_badclus(ntfs_volume *vol)
+{
+	if (!badclus.damaged)
+		return STATUS_OK;
+	if (badclus.unknown && ntfsck_badclus_recover_unclaimed(vol))
+		return STATUS_ERROR;
+	if (badclus.unknown)
+		ntfs_log_error("$BadClus: reserving unclaimed allocated clusters in $Bad.\n");
+	ntfs_log_error("Rebuild $BadClus:$Bad from the retained reservations. Fix it? ");
+	if (!ntfs_ask_repair(vol))
+		return badclus.unknown ? STATUS_ERROR : STATUS_OK;
+	if (ntfsck_rebuild_badclus(vol))
+		return STATUS_ERROR;
+	fsck_err_fixed();
+	return STATUS_OK;
+}
+
 static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 {
 	struct orphan_mft *entry = NULL;
@@ -10322,6 +10647,10 @@ static int ntfsck_check_orphaned_mft(ntfs_volume *vol)
 	int ret = STATUS_OK;
 
 	fsck_start_step("Check orphaned mft.");
+	if (ntfsck_finish_badclus(vol)) {
+		fsck_end_step();
+		return STATUS_ERROR;
+	}
 
 	if (ntfsck_count_bitmap_mismatches(vol, vol->lcnbmp_na,
 			ntfs_fsck_find_lcnbmp_block, &bitmap_mismatches) ||
@@ -11411,6 +11740,7 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 
 	if (orphan_changed)
 		*orphan_changed = FALSE;
+	memset(&badclus, 0, sizeof(badclus));
 	ntfsck_clear_deferred_repairs();
 	free(fixup_candidate_bitmap);
 	fixup_candidate_bitmap = NULL;
@@ -11459,24 +11789,15 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	saved_fixup_suppress = NVolFsckSuppressFixupWarn(vol);
 	NVolSetFsckSuppressFixupWarn(vol);
 
-	/*
-	 * Journal handling comes first, before any MFT record is trusted or
-	 * modified. ntfsck cannot replay $LogFile, so it resets a genuinely dirty
-	 * journal here rather than leaving a stale one for the later passes to work
-	 * around. $LogFile (inode 2) always lives in the head of $MFT, so it stays
-	 * reachable regardless of a truncated $MFT/$DATA that
-	 * ntfsck_check_mft_size() repairs next.
-	 */
-	if (ntfsck_replay_log(vol)) {
-		ret = -1;
-		goto out;
-	}
-
 	/* $MFT must be whole before pass 1 decides which records exist. */
 	ntfsck_check_mft_size(vol);
 
 	/* And its bitmap must cover every record the sizes now describe. */
 	ntfsck_check_mft_bitmap_size(vol);
+	if (ntfsck_prepare_badclus(vol)) {
+		ret = -1;
+		goto out;
+	}
 
 	/*
 	 * Clear $Extend/$Deleted before pass 1 counts anything: it holds files
@@ -11570,6 +11891,17 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	ntfsck_apply_deferred_reparse_repairs(vol);
 
 out:
+	if (badclus.ni) {
+		ntfs_inode *ni = badclus.ni;
+
+		badclus.ni = NULL;
+		if (ntfs_inode_close(ni)) {
+			fsck_err_found();
+			ret = -1;
+		}
+	}
+	free(badclus.ranges);
+	badclus.ranges = NULL;
 	if (corrupt_nonresident_runlists) {
 		ntfs_log_error("  * Non-resident cluster run: %"PRIu64" corrupted "
 				"attribute(s) were found.\n",
@@ -11802,6 +12134,12 @@ conflict_option:
 		ntfs_log_perror("Failed to determine whether %s is mounted",
 				path);
 
+	if (ntfsck_check_hibernation_before_mount(path))
+		return RETURN_OPERATIONAL_ERROR;
+
+	if (!check_dirty_only && ntfsck_replay_log(path))
+		return RETURN_FS_ERRORS_LEFT_UNCORRECTED;
+
 	vol = ntfs_fsck_mount(path, option.flags);
 	if (!vol) {
 		/*
@@ -11858,10 +12196,14 @@ conflict_option:
 			ntfs_log_warning("Windows is hibernated on %s; forced "
 					"repair requested, discarding the "
 					"hibernation image.\n", path);
-			if (ntfs_volume_invalidate_hiberfile(vol))
+			if (ntfs_volume_invalidate_hiberfile(vol) ||
+					ntfsck_device_sync(vol)) {
 				ntfs_log_perror("Failed to invalidate "
 						"hiberfil.sys; Windows may "
 						"try to resume from it");
+				ntfs_fsck_umount(vol);
+				return RETURN_OPERATIONAL_ERROR;
+			}
 		} else
 			ntfs_log_warning("Windows is hibernated; the volume "
 					"reflects the state of a suspended "

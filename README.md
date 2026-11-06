@@ -71,6 +71,11 @@ If you want to compile with arm cross compiler, you can also configure.
 $ ./configure --host=arm-linux-gnueabi --target=arm-linux-gnueabi
 ```
 # Test
+The fsck repair regressions create disposable images and verify data preservation
+and a clean read-only recheck after repair, without mounts or root privileges:
+
+    python3 tests/test_fsck_repairs.py --build-dir .
+
 The security descriptor regression test creates disposable image files and runs
 check-only validation and repair-safety cases without mounts or root privileges.
 It requires Python 3. After building, run from the source directory:
@@ -107,6 +112,11 @@ $ ./test_all_images.sh <branch name>
 ```
 During test, script will request your *sudo* previleges because of *mount* command. If your system need to get *sudo* previleges for executing *mount*, *unmount*, you should have it to test.
 
+Repair cases in this image corpus use `ntfsck -a -f` because some fixtures
+damage the bootstrap metadata needed to check hibernation. Read-only cases
+and rechecks retain their original arguments. Set `NTFSCK_IMAGE_TEST_BINARY`
+to select an executable from another build.
+
 # Utilities Usage
 
 ## ntfsck
@@ -122,6 +132,11 @@ ntfsck -a <device>
 ntfsck -n <device>
 ntfsck -C <device>
 ```
+Repair modes check for Windows hibernation before the mount can modify metadata.
+Use `-f` to discard a detected hibernation image before repair. When damaged
+bootstrap metadata prevents this initial check, `-f` also permits bootstrap
+recovery; hibernation is checked again after the repair mount succeeds.
+
 ntfsck include basic filesystem checking features, like as below:
 - Boot sector check
 - Meta system files check

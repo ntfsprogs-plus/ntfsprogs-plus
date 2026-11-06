@@ -477,25 +477,49 @@ void ntfs_fsck_or_alloc_lcnbmp(ntfs_volume *vol, s64 byte_pos, s64 nbytes, u8 *d
 	}
 }
 
-/*
- * condition: orig_lcn <= dup_lcn < orig_lcn + orig_len, orig_len > 0
- */
+static runlist *ntfs_fsck_copy_runlist(const runlist *rl)
+{
+	runlist *copy;
+	size_t count = 0, size;
+
+	while (rl[count].length)
+		count++;
+	count++;
+	/* Runlist merge helpers expect page-rounded allocation capacity. */
+	size = (count * sizeof(*copy) + 0xfff) & ~(size_t)0xfff;
+	copy = ntfs_malloc(size);
+	if (copy)
+		memcpy(copy, rl, count * sizeof(*copy));
+	return copy;
+}
+
+/* Keep the original mapping until every replacement has been copied. */
 int ntfs_fsck_repair_cluster_dup(ntfs_attr *na, runlist *dup_rl)
 {
 	ntfs_volume *vol;
-	runlist *rl;
-	runlist *alloc_rl;
-	runlist *punch_rl;
+	runlist *rl = NULL, *next_rl;
+	runlist *alloc_rl = NULL;
+	runlist *punch_rl = NULL;
+	runlist **allocated;
 	int rl_size, alloc_size, punch_size;
-	int i, j;
+	int i, j, count = 0, err = 0;
 
-	if (!na || !na->ni || !dup_rl)
+	if (!na || !na->ni || !na->rl || !dup_rl)
 		return -EINVAL;
 
 	vol = na->ni->vol;
-	rl = na->rl;
+	while (dup_rl[count].length)
+		count++;
+	if (!count)
+		return STATUS_OK;
+	allocated = ntfs_calloc(count * sizeof(*allocated));
+	if (!allocated)
+		return -ENOMEM;
+	rl = ntfs_fsck_copy_runlist(na->rl);
+	if (!rl)
+		goto err_out;
 
-	for (i = 0; dup_rl[i].length; i++) {
+	for (i = 0; i < count; i++) {
 		ntfs_log_debug("### Start dup_rl[%d]\n", i);
 
 		/* calculate original cluster runlist size */
@@ -503,12 +527,13 @@ int ntfs_fsck_repair_cluster_dup(ntfs_attr *na, runlist *dup_rl)
 			;
 		rl_size++;
 
-		alloc_rl = ntfs_cluster_alloc(vol, dup_rl[i].vcn, dup_rl[i].length,
+		allocated[i] = ntfs_cluster_alloc(vol, dup_rl[i].vcn, dup_rl[i].length,
 				dup_rl[i].lcn + dup_rl[i].length, DATA_ZONE);
-		if (!alloc_rl) {
-			ntfs_log_error("Can' allocated new cluster\n");
-			return -ENOMEM;
-		}
+		if (!allocated[i])
+			goto err_out;
+		alloc_rl = ntfs_fsck_copy_runlist(allocated[i]);
+		if (!alloc_rl)
+			goto err_out;
 
 		ntfs_log_debug("alloc_rl : allocated new rl\n");
 		ntfs_debug_runlist_dump(alloc_rl);
@@ -517,7 +542,11 @@ int ntfs_fsck_repair_cluster_dup(ntfs_attr *na, runlist *dup_rl)
 			;
 		alloc_size = j + 1;
 
-		rl = ntfs_rl_punch_hole(rl, rl_size, dup_rl[i].vcn, dup_rl[i].length, &punch_rl);
+		next_rl = ntfs_rl_punch_hole(rl, rl_size, dup_rl[i].vcn,
+				dup_rl[i].length, &punch_rl);
+		if (!next_rl)
+			goto err_out;
+		rl = next_rl;
 		ntfs_log_debug("punch_rl: extracted duplication rl\n");
 		ntfs_debug_runlist_dump(punch_rl);
 
@@ -527,21 +556,44 @@ int ntfs_fsck_repair_cluster_dup(ntfs_attr *na, runlist *dup_rl)
 		ntfs_log_debug("rl: punched original rl\n");
 		ntfs_debug_runlist_dump(rl);
 
-		alloc_rl = ntfs_copy_rl_clusters(vol, alloc_rl, alloc_size,
-				punch_rl, punch_size);
+		if (!ntfs_copy_rl_clusters(vol, alloc_rl, alloc_size,
+				punch_rl, punch_size))
+			goto err_out;
 		ntfs_free(punch_rl);
 		punch_rl = NULL;
 
-		rl = ntfs_runlists_merge(rl, alloc_rl);
+		next_rl = ntfs_runlists_merge(rl, alloc_rl);
+		if (!next_rl)
+			goto err_out;
+		rl = next_rl;
+		alloc_rl = NULL;
 		ntfs_log_debug("merged rl : merged with allocated rl\n");
 		ntfs_debug_runlist_dump(rl);
 		ntfs_log_debug("### Done dup_rl[%d]\n", i);
 	}
 
+	free(na->rl);
 	na->rl = rl;
+	rl = NULL;
 	NAttrSetRunlistDirty(na);
 
-	return STATUS_OK;
+	goto out;
+err_out:
+	err = errno ? errno : EIO;
+	/* None of these clusters are referenced by the original runlist. */
+	for (i = 0; i < count; i++)
+		if (allocated[i] && ntfs_cluster_free_from_rl(vol, allocated[i]))
+			ntfs_log_perror("Failed to release replacement clusters");
+out:
+	for (i = 0; i < count; i++)
+		free(allocated[i]);
+	free(allocated);
+	free(alloc_rl);
+	free(punch_rl);
+	free(rl);
+	if (err)
+		errno = err;
+	return err ? -err : STATUS_OK;
 }
 
 /*

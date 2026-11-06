@@ -44,12 +44,8 @@
  * circular entity.
  *
  * NOTE: Windows NT, 2000, and XP all use log file version 1.1 but they accept
- * versions <= 1.x, including 0.-1.  (Yes, that is a minus one in there!)  We
- * probably only want to support 1.1 as this seems to be the current version
- * and we don't know how that differs from the older versions.  The only
- * exception is if the journal is clean as marked by the two restart pages
- * then it doesn't matter whether we are on an earlier version.  We can just
- * reinitialize the logfile and start again with version 1.1.
+ * versions <= 1.x, including 0.-1.  (Yes, that is a minus one in there!)
+ * Journal recovery supports versions 1.0, 1.1 and 2.0.
  */
 
 /* Some $LogFile related constants. */
@@ -92,8 +88,7 @@ typedef struct {
 				    to be after the usa. */
 	sle16 minor_ver;	/* (26) Log file minor version.  Only check if major
 				   version is 1. */
-	sle16 major_ver;	/* (28) Log file major version.  We only support
-				   version 1.1. */
+	sle16 major_ver;	/* (28) Log file major version: 1.0, 1.1 or 2.0. */
 	le16 usn;		/* (30) */
 	/* sizeof() = 32 (0x20) bytes */
 } __attribute__((__packed__)) RESTART_PAGE_HEADER;

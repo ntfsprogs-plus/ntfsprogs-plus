@@ -12257,8 +12257,18 @@ conflict_option:
 			if (ntfsck_begin_repair(vol))
 				goto operational_error;
 
-			if (ntfsck_run_repair_passes(vol, &orphan_changed))
-				goto operational_error;
+			if (ntfsck_run_repair_passes(vol, &orphan_changed)) {
+				/*
+				 * A failed write marks the volume read-only.
+				 * That is an operational error. Any other
+				 * failed pass is a repair that could not be
+				 * completed or was declined. Its errors are
+				 * reported as left.
+				 */
+				if (ntfsck_repair_enabled() && NVolReadOnly(vol))
+					goto operational_error;
+				goto err_out;
+			}
 			if (orphan_changed) {
 				if (have_prev_orphan_candidates &&
 						orphan_cnt >= prev_orphan_candidates) {

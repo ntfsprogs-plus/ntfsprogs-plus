@@ -219,7 +219,7 @@ static int ntfs_attr_setup_flag(ntfs_inode *ni)
 	return (r);
 }
 
-/* Mount admission must not repair a record while choosing a recovery source. */
+/* Checking a record for a recovery copy must not repair it. */
 static int ntfs_mount_record_check(ntfs_volume *vol, MFT_REF mref, MFT_RECORD *m)
 {
 	BOOL fsck = NVolFsck(vol);
@@ -1525,7 +1525,7 @@ out:
 		NVolSetReadOnly(vol);
 		NDevSetReadOnly(vol->dev);
 		errno = err ? err : EIO;
-		ntfs_log_perror("Failed to finalize mount-time stream repair");
+		ntfs_log_perror("Failed to complete the stream repair while mounting");
 	}
 	return ret;
 }

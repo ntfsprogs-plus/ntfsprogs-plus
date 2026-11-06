@@ -3468,7 +3468,13 @@ static int ntfs_attr_check_standard_information(ntfs_volume *vol,
 	static const u32 valid_si_flags = const_le32_to_cpu(FILE_ATTR_VALID_FLAGS) |
 			const_le32_to_cpu(FILE_ATTR_VIEW_INDEX_PRESENT) |
 			const_le32_to_cpu(FILE_ATTR_I30_INDEX_PRESENT) |
-			const_le32_to_cpu(FILE_ATTR_TXF_INTERNAL);
+			const_le32_to_cpu(FILE_ATTR_TXF_INTERNAL) |
+			const_le32_to_cpu(FILE_ATTR_INTEGRITY_STREAM) |
+			const_le32_to_cpu(FILE_ATTR_VIRTUAL) |
+			const_le32_to_cpu(FILE_ATTR_NO_SCRUB_DATA) |
+			const_le32_to_cpu(FILE_ATTR_PINNED) |
+			const_le32_to_cpu(FILE_ATTR_UNPINNED) |
+			const_le32_to_cpu(FILE_ATTR_RECALL_ON_DATA_ACCESS);
 	static const u8 zero12[12];
 	STANDARD_INFORMATION *si;
 	u32 value_len, eff_len;

@@ -8738,7 +8738,7 @@ static int ntfsck_begin_repair(ntfs_volume *vol)
 
 	/* Make the in-progress marker durable before touching metadata. */
 	if (ntfsck_device_sync(vol)) {
-		ntfs_log_error("Failed to flush the dirty marker.\n");
+		ntfs_log_error("Failed to flush the volume dirty flag.\n");
 		return STATUS_ERROR;
 	}
 
@@ -8820,7 +8820,7 @@ static int ntfsck_replay_log(const char *path)
 		return STATUS_ERROR;
 	probe = ntfs_volume_startup(dev, NTFS_MNT_RDONLY);
 	if (!probe && opt_force && ntfsck_repair_enabled()) {
-		/* Repair only the bootstrap metadata needed to reach the journal. */
+		/* Repair only the boot sector and records needed to reach the journal. */
 		fsck_errors = saved_errors;
 		fsck_fixes = saved_fixes;
 		NDevClearReadOnly(dev);
@@ -8828,9 +8828,10 @@ static int ntfsck_replay_log(const char *path)
 	}
 	if (!probe) {
 		/*
-		 * The bootstrap metadata could not be read or repaired. That is an
-		 * operational error, the same as a failed mount in main(), not a
-		 * journal that was left unreplayed.
+		 * The boot sector or the records needed to reach the journal
+		 * could not be read or repaired. That is an operational error,
+		 * the same as a failed mount in main(), not a journal that was
+		 * left unreplayed.
 		 */
 		ntfs_device_free(dev);
 		fsck_err_found();
@@ -12311,9 +12312,8 @@ conflict_option:
 				/*
 				 * A failed write marks the volume read-only.
 				 * That is an operational error. Any other
-				 * failed pass is a repair that could not be
-				 * completed or was declined. Its errors are
-				 * reported as left.
+				 * failed repair step was not completed or was
+				 * declined. Its errors are reported as left.
 				 */
 				if (ntfsck_repair_enabled() && NVolReadOnly(vol))
 					goto operational_error;
@@ -12389,7 +12389,7 @@ conflict_option:
 			ret = ntfs_fsck_umount(vol);
 			vol = NULL;
 			if (ret) {
-				ntfs_log_error("Failed to finalize repair round.\n");
+				ntfs_log_error("Failed to complete the repair round.\n");
 				goto operational_error;
 			}
 			total_errors += fsck_errors;
@@ -12438,7 +12438,7 @@ err_out:
 
 		vol = NULL;
 		if (unmount_ret) {
-			ntfs_log_error("Failed to finalize volume.\n");
+			ntfs_log_error("Failed to close the volume after repair.\n");
 			goto operational_error;
 		}
 	}

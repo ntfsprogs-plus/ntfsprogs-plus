@@ -8796,9 +8796,14 @@ static int ntfsck_replay_log(const char *path)
 		probe = ntfs_volume_startup(dev, option.flags);
 	}
 	if (!probe) {
+		/*
+		 * The bootstrap metadata could not be read or repaired. That is an
+		 * operational error, the same as a failed mount in main(), not a
+		 * journal that was left unreplayed.
+		 */
 		ntfs_device_free(dev);
 		fsck_err_found();
-		return STATUS_ERROR;
+		return RETURN_OPERATIONAL_ERROR;
 	}
 	fsck_start_step("Recover logfile.");
 	ret = ntfsck_replay_prepare(probe, &replay);
@@ -12137,8 +12142,14 @@ conflict_option:
 	if (ntfsck_check_hibernation_before_mount(path))
 		return RETURN_OPERATIONAL_ERROR;
 
-	if (!check_dirty_only && ntfsck_replay_log(path))
-		return RETURN_FS_ERRORS_LEFT_UNCORRECTED;
+	if (!check_dirty_only) {
+		int replay = ntfsck_replay_log(path);
+
+		if (replay == RETURN_OPERATIONAL_ERROR)
+			return RETURN_OPERATIONAL_ERROR;
+		if (replay)
+			return RETURN_FS_ERRORS_LEFT_UNCORRECTED;
+	}
 
 	vol = ntfs_fsck_mount(path, option.flags);
 	if (!vol) {

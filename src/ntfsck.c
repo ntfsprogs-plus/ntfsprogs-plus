@@ -8737,8 +8737,10 @@ static int ntfsck_begin_repair(ntfs_volume *vol)
 	}
 
 	/* Make the in-progress marker durable before touching metadata. */
-	if (ntfsck_device_sync(vol))
-		ntfs_log_verbose("Warning: could not flush the dirty marker.\n");
+	if (ntfsck_device_sync(vol)) {
+		ntfs_log_error("Failed to flush the volume dirty flag.\n");
+		return STATUS_ERROR;
+	}
 
 	return STATUS_OK;
 }
@@ -8758,9 +8760,10 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 	 * power loss between clearing the flag and flushing the data would
 	 * leave a "clean" but inconsistent volume.
 	 */
-	if (ntfsck_device_sync(vol))
-		ntfs_log_verbose("Warning: device sync before clearing dirty "
-				"flag failed.\n");
+	if (ntfsck_device_sync(vol)) {
+		ntfs_log_error("Device sync before clearing dirty flag failed.\n");
+		return STATUS_ERROR;
+	}
 
 	flags = vol->flags & ~VOLUME_IS_DIRTY;
 
@@ -8786,16 +8789,22 @@ static int ntfsck_replay_log(const char *path)
 		return STATUS_ERROR;
 	probe = ntfs_volume_startup(dev, NTFS_MNT_RDONLY);
 	if (!probe && opt_force && ntfsck_repair_enabled()) {
-		/* Repair only the bootstrap metadata needed to reach the journal. */
+		/* Repair only the boot sector and records needed to reach the journal. */
 		fsck_errors = saved_errors;
 		fsck_fixes = saved_fixes;
 		NDevClearReadOnly(dev);
 		probe = ntfs_volume_startup(dev, option.flags);
 	}
 	if (!probe) {
+		/*
+		 * The boot sector or the records needed to reach the journal
+		 * could not be read or repaired. That is an operational error,
+		 * the same as a failed mount in main(), not a journal that was
+		 * left unreplayed.
+		 */
 		ntfs_device_free(dev);
 		fsck_err_found();
-		return STATUS_ERROR;
+		return RETURN_OPERATIONAL_ERROR;
 	}
 	fsck_start_step("Recover logfile.");
 	ret = ntfsck_replay_prepare(probe, &replay);
@@ -12134,8 +12143,14 @@ conflict_option:
 	if (ntfsck_check_hibernation_before_mount(path))
 		return RETURN_OPERATIONAL_ERROR;
 
-	if (!check_dirty_only && ntfsck_replay_log(path))
-		return RETURN_FS_ERRORS_LEFT_UNCORRECTED;
+	if (!check_dirty_only) {
+		int replay = ntfsck_replay_log(path);
+
+		if (replay == RETURN_OPERATIONAL_ERROR)
+			return RETURN_OPERATIONAL_ERROR;
+		if (replay)
+			return RETURN_FS_ERRORS_LEFT_UNCORRECTED;
+	}
 
 	vol = ntfs_fsck_mount(path, option.flags);
 	if (!vol) {
@@ -12157,7 +12172,7 @@ conflict_option:
 			fsck_err_found();
 		}
 
-		goto err_out;
+		goto operational_error;
 	}
 
 	/* Just return the volume dirty flags when '-C' option is specified. */
@@ -12251,10 +12266,20 @@ conflict_option:
 			ntfsck_check_backup_boot(vol);
 
 			/* Open a crash-safe repair transaction before any write. */
-			ntfsck_begin_repair(vol);
+			if (ntfsck_begin_repair(vol))
+				goto operational_error;
 
-			if (ntfsck_run_repair_passes(vol, &orphan_changed))
+			if (ntfsck_run_repair_passes(vol, &orphan_changed)) {
+				/*
+				 * A failed write marks the volume read-only.
+				 * That is an operational error. Any other
+				 * failed repair step was not completed or was
+				 * declined. Its errors are reported as left.
+				 */
+				if (ntfsck_repair_enabled() && NVolReadOnly(vol))
+					goto operational_error;
 				goto err_out;
+			}
 			if (orphan_changed) {
 				if (have_prev_orphan_candidates &&
 						orphan_cnt >= prev_orphan_candidates) {
@@ -12322,8 +12347,12 @@ conflict_option:
 					"(round %d)...\n", round + 2);
 
 			/* Re-mount for a fresh, self-consistent fsck state. */
-			ntfs_fsck_umount(vol);
+			ret = ntfs_fsck_umount(vol);
 			vol = NULL;
+			if (ret) {
+				ntfs_log_error("Failed to complete the repair round.\n");
+				goto operational_error;
+			}
 			total_errors += fsck_errors;
 			total_fixes += fsck_fixes;
 			fsck_errors = 0;
@@ -12353,23 +12382,42 @@ err_out:
 	total_errors += fsck_errors;
 	total_fixes += fsck_fixes;
 	if (errors) {
-		ntfs_log_info("%d errors left (errors:%d, fixed:%d)\n",
-				errors, total_errors, total_fixes);
 		ret = RETURN_FS_ERRORS_LEFT_UNCORRECTED;
 	} else {
-		ntfs_log_info("Clean, No errors found or left (errors:%d, fixed:%d)\n",
-				total_errors, total_fixes);
 		if (total_fixes)
 			ret = RETURN_FS_ERRORS_CORRECTED;
 		else
 			ret = RETURN_FS_NO_ERRORS;
 	}
 
-	if (!errors && vol)
-		ntfsck_reset_dirty(vol);
+	if (!errors && vol && ntfsck_repair_enabled() &&
+		ntfsck_reset_dirty(vol))
+		goto operational_error;
 
-	if (vol)
-		ntfs_fsck_umount(vol);
+	if (vol) {
+		int unmount_ret = ntfs_fsck_umount(vol);
+
+		vol = NULL;
+		if (unmount_ret) {
+			ntfs_log_error("Failed to close the volume after repair.\n");
+			goto operational_error;
+		}
+	}
+
+	if (errors)
+		ntfs_log_info("%d errors left (errors:%d, fixed:%d)\n",
+				errors, total_errors, total_fixes);
+	else
+		ntfs_log_info("Clean, No errors found or left (errors:%d, fixed:%d)\n",
+				total_errors, total_fixes);
 
 	return ret;
+operational_error:
+	if (vol) {
+		/* Cleanup must not retry dirty metadata after a terminal failure. */
+		NVolSetReadOnly(vol);
+		NDevSetReadOnly(vol->dev);
+		ntfs_fsck_umount(vol);
+	}
+	return RETURN_OPERATIONAL_ERROR;
 }

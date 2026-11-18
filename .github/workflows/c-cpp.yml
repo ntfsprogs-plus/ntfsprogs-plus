@@ -40,4 +40,7 @@ jobs:
         cd tests
         ./test_all_images.sh
     - name: check failure exit status
-      run: python3 tests/test_failure_status.py --build-dir . --temp-dir "$RUNNER_TEMP" --corpus tests/ntfs_corrupted_images/created_manually
+      run: |
+        cc -O2 -Wall -Wextra -Werror -o tests/test_failure_status tests/test_failure_status.c
+        cc -O2 -Wall -Wextra -Werror -shared -fPIC -DFAILURE_STATUS_SHIM -o tests/failure_status_shim.so tests/test_failure_status.c -ldl
+        tests/test_failure_status --build-dir . --shim tests/failure_status_shim.so --temp-dir "$RUNNER_TEMP" --corpus tests/ntfs_corrupted_images/created_manually

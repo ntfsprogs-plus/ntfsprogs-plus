@@ -999,11 +999,60 @@ class JournalTests(unittest.TestCase):
                 self.replay()
                 self.assert_sizes(original)
 
+    def read_only_journal_fixture(self):
+        journal, _, page, original = self.sizes_fixture()
+        record = self.image.record(10)
+        offset = self.image.attr(record)
+        record[offset + 40:offset + 64] = original
+        self.image.write_record(10, record)
+        return journal, page
+
     def test_read_only_preserves_pending_journal(self):
-        self.sizes_fixture()
+        self.read_only_journal_fixture()
+        before = hashlib.sha256(self.path.read_bytes()).digest()
+        output = self.result(0, "-n")
+        self.assertIn("Skipping journal recovery", output)
+        self.assertIn("Scan mft", output)
+        self.assertNotIn("Replay the journal before scanning", output)
+        self.assertEqual(hashlib.sha256(self.path.read_bytes()).digest(), before)
+
+    def test_read_only_checks_unreplayed_corruption(self):
+        source = self.directory / "broken.bin"
+        source.write_bytes(b"A" * 16384)
+        run = fixtures.command("ntfscp", self.path, source, "/broken.bin")
+        self.assertEqual(run.returncode, 0, (run.stdout + run.stderr).decode())
+        self.image = fixtures.Image(self.path)
+        number = self.image.find("broken.bin")
+        self.read_only_journal_fixture()
+        record = self.image.record(number)
+        offset = self.image.attr(record)
+        struct.pack_into("<Q", record, offset + 40, 0)
+        self.image.write_record(number, record)
         before = hashlib.sha256(self.path.read_bytes()).digest()
         output = self.result(4, "-n")
-        self.assertNotIn("Scan mft", output)
+        self.assertIn("Skipping journal recovery", output)
+        self.assertIn("Scan mft", output)
+        self.assertEqual(hashlib.sha256(self.path.read_bytes()).digest(), before)
+
+    def test_read_only_does_not_decode_pending_operations(self):
+        journal, page = self.read_only_journal_fixture()
+        payload = bytearray(self.image.read_stream(journal.runs, page * PAGE, PAGE))
+        struct.pack_into("<H", payload, 112, 0x26)
+        journal.write_page(page, payload)
+        before = hashlib.sha256(self.path.read_bytes()).digest()
+        output = self.result(0, "-n")
+        self.assertIn("Skipping journal recovery", output)
+        self.assertIn("Scan mft", output)
+        self.assertEqual(hashlib.sha256(self.path.read_bytes()).digest(), before)
+
+    def test_read_only_reports_invalid_restart_pages(self):
+        journal, _ = self.read_only_journal_fixture()
+        for page in (0, 1):
+            self.image.write_stream(journal.runs, page * PAGE, b"BAD!")
+        before = hashlib.sha256(self.path.read_bytes()).digest()
+        output = self.result(4, "-n")
+        self.assertIn("Cannot check $LogFile", output)
+        self.assertIn("Scan mft", output)
         self.assertEqual(hashlib.sha256(self.path.read_bytes()).digest(), before)
 
     def test_bad_opcode_preserves_all_metadata(self):

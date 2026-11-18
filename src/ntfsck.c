@@ -8771,6 +8771,47 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 	return 0;
 }
 
+static void ntfsck_close_step_header(void)
+{
+	if (fsck_step_header_open) {
+		ntfs_log_info("\n");
+		fsck_step_header_open = FALSE;
+	}
+}
+
+static int ntfsck_check_log_readonly(ntfs_volume *vol)
+{
+	ntfs_inode *ni;
+	ntfs_attr *na = NULL;
+	RESTART_PAGE_HEADER *rp = NULL;
+	RESTART_AREA *ra;
+	int ret = STATUS_ERROR;
+
+	ni = ntfs_inode_open(vol, FILE_LogFile);
+	if (!ni)
+		return ret;
+	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
+	if (!na || !ntfs_check_logfile(na, &rp))
+		goto out;
+	if (rp && !ntfs_is_chkd_record(rp->magic)) {
+		ra = (RESTART_AREA *)((u8 *)rp +
+				le16_to_cpu(rp->restart_area_offset));
+		if (ra->client_in_use_list != LOGFILE_NO_CLIENT &&
+				!(ra->flags & RESTART_VOLUME_IS_CLEAN)) {
+			ntfsck_close_step_header();
+			ntfs_log_warning("Read-only check skips journal recovery. Results may reflect metadata that has not been replayed.\n");
+		}
+	}
+	ret = STATUS_OK;
+out:
+	free(rp);
+	if (na)
+		ntfs_attr_close(na);
+	if (ntfs_inode_close(ni))
+		ret = STATUS_ERROR;
+	return ret;
+}
+
 /* Replay before a full fsck mount can normalize any metadata. */
 static int ntfsck_replay_log(const char *path)
 {
@@ -8798,6 +8839,15 @@ static int ntfsck_replay_log(const char *path)
 		return STATUS_ERROR;
 	}
 	fsck_start_step("Recover logfile.");
+	if (option.flags & NTFS_MNT_FS_NO_REPAIR) {
+		if (ntfsck_check_log_readonly(probe)) {
+			fsck_err_found();
+			ntfsck_close_step_header();
+			ntfs_log_error("Cannot check $LogFile. Continuing with the read-only filesystem scan.\n");
+		}
+		ret = STATUS_OK;
+		goto out;
+	}
 	ret = ntfs_journal_replay_prepare(probe, &replay);
 	if (!ret)
 		goto out;

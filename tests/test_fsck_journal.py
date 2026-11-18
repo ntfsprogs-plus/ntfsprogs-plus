@@ -236,6 +236,22 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(run.returncode, code, output)
         return output
 
+    def merged_result(self, code, mode="-a"):
+        env = os.environ.copy()
+        env["LC_ALL"] = "C"
+        run = subprocess.run(
+            [str(BUILD_DIR / "src" / "ntfsck"), mode, str(self.path)],
+            input=b"",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=env,
+            timeout=30,
+            check=False,
+        )
+        output = run.stdout.decode(errors="replace")
+        self.assertEqual(run.returncode, code, output)
+        return output
+
     def sizes_fixture(self, *, undo=False, **kwargs):
         journal = Journal(self.image, kwargs.pop("major", 1), kwargs.pop("version", 1),
                           page_size=kwargs.pop("page_size", PAGE), minor=kwargs.pop("minor", None))
@@ -999,11 +1015,72 @@ class JournalTests(unittest.TestCase):
                 self.replay()
                 self.assert_sizes(original)
 
+    def read_only_journal_fixture(self):
+        journal, _, page, original = self.sizes_fixture()
+        record = self.image.record(10)
+        offset = self.image.attr(record)
+        record[offset + 40:offset + 64] = original
+        self.image.write_record(10, record)
+        return journal, page
+
     def test_read_only_preserves_pending_journal(self):
-        self.sizes_fixture()
+        self.read_only_journal_fixture()
+        before = hashlib.sha256(self.path.read_bytes()).digest()
+        output = self.merged_result(0, "-n")
+        self.assertIn(
+            "Recover logfile.\nRead-only check skips journal recovery. "
+            "Results may reflect metadata that has not been replayed.",
+            output,
+        )
+        self.assertIn("Scan mft", output)
+        self.assertNotIn("Replay the journal before scanning", output)
+        self.assertEqual(hashlib.sha256(self.path.read_bytes()).digest(), before)
+
+    def test_read_only_checks_unreplayed_corruption(self):
+        source = self.directory / "broken.bin"
+        source.write_bytes(b"A" * 16384)
+        run = fixtures.command("ntfscp", self.path, source, "/broken.bin")
+        self.assertEqual(run.returncode, 0, (run.stdout + run.stderr).decode())
+        self.image = fixtures.Image(self.path)
+        number = self.image.find("broken.bin")
+        self.read_only_journal_fixture()
+        record = self.image.record(number)
+        offset = self.image.attr(record)
+        struct.pack_into("<Q", record, offset + 40, 0)
+        self.image.write_record(number, record)
         before = hashlib.sha256(self.path.read_bytes()).digest()
         output = self.result(4, "-n")
-        self.assertNotIn("Scan mft", output)
+        self.assertIn(
+            "Read-only check skips journal recovery. Results may reflect "
+            "metadata that has not been replayed.",
+            output,
+        )
+        self.assertIn("Scan mft", output)
+        self.assertEqual(hashlib.sha256(self.path.read_bytes()).digest(), before)
+
+    def test_read_only_does_not_decode_pending_operations(self):
+        journal, page = self.read_only_journal_fixture()
+        payload = bytearray(self.image.read_stream(journal.runs, page * PAGE, PAGE))
+        struct.pack_into("<H", payload, 112, 0x26)
+        journal.write_page(page, payload)
+        before = hashlib.sha256(self.path.read_bytes()).digest()
+        output = self.result(0, "-n")
+        self.assertIn(
+            "Read-only check skips journal recovery. Results may reflect "
+            "metadata that has not been replayed.",
+            output,
+        )
+        self.assertIn("Scan mft", output)
+        self.assertEqual(hashlib.sha256(self.path.read_bytes()).digest(), before)
+
+    def test_read_only_reports_invalid_restart_pages(self):
+        journal, _ = self.read_only_journal_fixture()
+        for page in (0, 1):
+            self.image.write_stream(journal.runs, page * PAGE, b"BAD!")
+        before = hashlib.sha256(self.path.read_bytes()).digest()
+        output = self.result(4, "-n")
+        self.assertIn("Cannot check $LogFile. Continuing with the read-only filesystem scan.", output)
+        self.assertIn("Scan mft", output)
         self.assertEqual(hashlib.sha256(self.path.read_bytes()).digest(), before)
 
     def test_bad_opcode_preserves_all_metadata(self):

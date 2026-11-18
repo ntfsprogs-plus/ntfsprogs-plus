@@ -1595,6 +1595,61 @@ class JournalTests(unittest.TestCase):
         self.image = fixtures.Image(self.path)
         return run.stdout.decode().strip()
 
+    def test_directory_index_extent_preserves_mft_flags(self):
+        for flags, result in ((0x1, 0), (0x8001, 1)):
+            with self.subTest(flags=flags):
+                self.setUp()
+                base = int(self.fixture_operation("--mkdir", self.path, 5, "extent-dir"))
+                extent = int(self.fixture_operation("--extent", self.path, base, "0x90"))
+                record = self.image.record(extent)
+                self.assertEqual(fixtures.u64(record, 32) & ((1 << 48) - 1), base)
+                self.image.attr(record, 0x90, "$I30")
+                self.assertEqual(fixtures.u16(record, 22), 0x1)
+                struct.pack_into("<H", record, 22, flags)
+                self.image.write_record(extent, record)
+                self.result(result)
+                self.assertEqual(fixtures.u16(self.image.record(extent), 22), 0x1)
+                self.assertEqual(fixtures.u16(self.image.record(base), 22), 0x3)
+                self.result(0, "-n")
+
+    def test_data_extent_preserves_mft_directory_flag(self):
+        source = self.directory / "extent-data.bin"
+        source.write_bytes(b"extent data")
+        run = fixtures.command("ntfscp", self.path, source, "/extent-data.bin")
+        self.assertEqual(run.returncode, 0, (run.stdout + run.stderr).decode())
+        self.image = fixtures.Image(self.path)
+        base = self.image.find("extent-data.bin")
+        extent = int(self.fixture_operation("--extent", self.path, base, "0x80"))
+        record = self.image.record(extent)
+        self.assertEqual(fixtures.u16(record, 22), 0x1)
+        struct.pack_into("<H", record, 22, 0x3)
+        self.image.write_record(extent, record)
+        self.result(0)
+        self.assertEqual(fixtures.u16(self.image.record(extent), 22), 0x3)
+        self.result(0, "-n")
+
+    def test_base_mft_flags_still_derived_from_attributes(self):
+        for directory in (False, True):
+            with self.subTest(directory=directory):
+                self.setUp()
+                if directory:
+                    base = int(self.fixture_operation("--mkdir", self.path, 5, "base-dir"))
+                else:
+                    source = self.directory / "base-data.bin"
+                    source.write_bytes(b"base data")
+                    run = fixtures.command("ntfscp", self.path, source, "/base-data.bin")
+                    self.assertEqual(run.returncode, 0, (run.stdout + run.stderr).decode())
+                    self.image = fixtures.Image(self.path)
+                    base = self.image.find("base-data.bin")
+                record = self.image.record(base)
+                expected = 0x3 if directory else 0x1
+                self.assertEqual(fixtures.u16(record, 22), expected)
+                struct.pack_into("<H", record, 22, expected ^ 0x2)
+                self.image.write_record(base, record)
+                self.result(1)
+                self.assertEqual(fixtures.u16(self.image.record(base), 22), expected)
+                self.result(0, "-n")
+
     def directory_filenames(self, parent, update=None):
         values = {}
 

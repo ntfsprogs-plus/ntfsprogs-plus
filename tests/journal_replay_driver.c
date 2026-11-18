@@ -136,6 +136,8 @@ static int fixture_extent(char **argv)
 	ntfs_inode *ni = NULL, *extent;
 	ntfs_attr_search_ctx *ctx = NULL;
 	ATTR_TYPES type = cpu_to_le32(strtoul(argv[4], NULL, 0));
+	const ntfschar *name = type == AT_INDEX_ROOT ? NTFS_INDEX_I30 : AT_UNNAMED;
+	u32 name_len = type == AT_INDEX_ROOT ? 4 : 0;
 	int ret = -1;
 
 	if (!vol)
@@ -144,7 +146,7 @@ static int fixture_extent(char **argv)
 	if (!ni || (!NInoAttrList(ni) && ntfs_inode_add_attrlist(ni)))
 		goto out;
 	ctx = ntfs_attr_get_search_ctx(ni, NULL);
-	if (!ctx || ntfs_attr_lookup(type, AT_UNNAMED, 0, CASE_SENSITIVE,
+	if (!ctx || ntfs_attr_lookup(type, name, name_len, CASE_SENSITIVE,
 			0, NULL, 0, ctx))
 		goto out;
 	extent = ntfs_mft_record_alloc(vol, ni);

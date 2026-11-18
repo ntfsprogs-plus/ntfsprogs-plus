@@ -429,11 +429,11 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 			/* IS_4 and IS_VIEW_INDEX cannot be derived from attributes; carry as-is */
 			expected_flags |= current_flags & (le16_to_cpu(MFT_RECORD_IS_4) |
 					le16_to_cpu(MFT_RECORD_IS_VIEW_INDEX));
-			if (saw_i30_index) {
+			/* An extent's attributes do not define its directory flag. */
+			if (!m->base_mft_record && (saw_i30_index || saw_unnamed_data)) {
 				can_derive_directory = TRUE;
-				expected_flags |= le16_to_cpu(MFT_RECORD_IS_DIRECTORY);
-			} else if (saw_unnamed_data) {
-				can_derive_directory = TRUE;
+				if (saw_i30_index)
+					expected_flags |= le16_to_cpu(MFT_RECORD_IS_DIRECTORY);
 			} else {
 				expected_flags |= current_flags &
 						le16_to_cpu(MFT_RECORD_IS_DIRECTORY);

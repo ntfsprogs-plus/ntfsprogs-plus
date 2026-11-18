@@ -1314,6 +1314,14 @@ retry:
 			total += bytes_read;
 			count -= bytes_read;
 			b = (u8*)b + bytes_read;
+			/*
+			 * A short read leaves the rest of this run unread. Stop here:
+			 * going on would put the next run's data at the wrong place.
+			 */
+			if (bytes_read < to_read) {
+				errno = EIO;
+				goto rl_err_out;
+			}
 			continue;
 		}
 		/* If the syscall was interrupted, try again. */
@@ -1410,6 +1418,15 @@ retry:
 			total += written;
 			count -= written;
 			b = (u8*)b + written;
+			/*
+			 * A short write leaves the rest of this run unwritten. Stop
+			 * here: going on would write data meant for this run into the
+			 * next one.
+			 */
+			if (written < to_write) {
+				errno = EIO;
+				goto rl_err_out;
+			}
 			continue;
 		}
 		/* If the syscall was interrupted, try again. */

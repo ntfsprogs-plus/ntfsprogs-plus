@@ -16,7 +16,12 @@
  *   cc -shared -fPIC -DFAILURE_STATUS_SHIM -o failure_status_shim.so \
  *      test_failure_status.c -ldl
  * The shim is process-wide by design: once ntfsck prints "Check system
- * files", it fails the next malloc or calloc of the process.
+ * files", it fails the next malloc or calloc of the process. With
+ * FAILURE_STATUS_SHORT_WRITE=dev:ino:start:end:cut set, it fails no
+ * allocation. Instead, the first write to that image which starts in
+ * [start, end) and is longer than cut bytes writes cut bytes less, and the next
+ * write to the image writes nothing. This is a write that the device ends
+ * early without an error.
  *
  * Usage: test_failure_status --build-dir DIR --shim SO --temp-dir DIR
  *                            --corpus DIR
@@ -30,8 +35,10 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 extern void *__libc_malloc(size_t);
 extern void *__libc_calloc(size_t, size_t);
@@ -51,8 +58,51 @@ static int fail_next(void)
 
 static void arm_on(const char *format)
 {
-	if (!armed && format && strstr(format, "Check system files"))
+	if (!armed && format && strstr(format, "Check system files") &&
+	    !getenv("FAILURE_STATUS_SHORT_WRITE"))
 		armed = 1;
+}
+
+/* 0: waiting for the short write, 1: next write writes nothing, 2: done */
+static int short_state;
+
+static ssize_t shim_pwrite(int fd, const void *buf, size_t count, off_t pos)
+{
+	static ssize_t (*real)(int, const void *, size_t, off_t);
+	const char *spec = getenv("FAILURE_STATUS_SHORT_WRITE");
+	unsigned long long dev, ino, start, end, cut;
+	struct stat st;
+
+	if (!real)
+		real = (ssize_t (*)(int, const void *, size_t, off_t))
+			dlsym(RTLD_NEXT, "pwrite64");
+	if (spec && short_state < 2 &&
+	    sscanf(spec, "%llu:%llu:%llu:%llu:%llu", &dev, &ino, &start, &end, &cut) == 5 &&
+	    !fstat(fd, &st) && (unsigned long long)st.st_dev == dev &&
+	    (unsigned long long)st.st_ino == ino) {
+		if (short_state == 1) {
+			short_state = 2;
+			(void)!write(2, "SHORT_WRITE_END\n", 16);
+			return 0;
+		}
+		if ((unsigned long long)pos >= start && (unsigned long long)pos < end &&
+		    count > cut) {
+			short_state = 1;
+			(void)!write(2, "SHORT_WRITE\n", 12);
+			return real(fd, buf, count - cut, pos);
+		}
+	}
+	return real(fd, buf, count, pos);
+}
+
+ssize_t pwrite(int fd, const void *buf, size_t count, off_t pos)
+{
+	return shim_pwrite(fd, buf, count, pos);
+}
+
+ssize_t pwrite64(int fd, const void *buf, size_t count, off_t pos)
+{
+	return shim_pwrite(fd, buf, count, pos);
 }
 
 /* Builds with _FORTIFY_SOURCE log through the _chk variants. */
@@ -128,6 +178,7 @@ void *calloc(size_t n, size_t m)
 #include <sys/wait.h>
 
 #define IMAGE_SIZE		(64LL * 1024 * 1024)
+#define MFTMIRR_RECORD		1	/* $MFTMirr */
 #define VOLUME_RECORD		3	/* $Volume */
 #define VOLUME_INFORMATION	0x70
 #define FLAGS_OFFSET		10	/* reserved (8) + major (1) + minor (1) */
@@ -168,11 +219,32 @@ static void require(int ok, const char *what)
 }
 
 /*
+ * Read what is available into output[]. When the buffer is full, the older
+ * half is dropped so the newest text is kept.
+ */
+static ssize_t read_output(int fd, size_t *used)
+{
+	ssize_t n;
+
+	if (*used == sizeof(output) - 1) {
+		size_t keep = *used / 2;
+
+		memmove(output, output + *used - keep, keep);
+		*used = keep;
+	}
+	n = read(fd, output + *used, sizeof(output) - 1 - *used);
+	if (n > 0)
+		*used += n;
+	return n;
+}
+
+/*
  * Run argv with stdin from /dev/null, stdout and stderr into output[].
- * extra_env (may be NULL) is one "NAME=value" added to the environment.
+ * env (may be NULL) is a NULL-terminated list of "NAME=value" entries added
+ * to the environment.
  * Returns the exit status, 128 + signal, or -1 when the run times out.
  */
-static int run(char *const argv[], const char *extra_env)
+static int run_env(char *const argv[], char *const env[])
 {
 	int pipefd[2], status, devnull;
 	size_t used = 0;
@@ -188,8 +260,9 @@ static int run(char *const argv[], const char *extra_env)
 		    dup2(pipefd[1], 1) < 0 || dup2(pipefd[1], 2) < 0)
 			_exit(127);
 		close(pipefd[0]);
-		if (extra_env && putenv((char *)extra_env))
-			_exit(127);
+		for (; env && *env; env++)
+			if (putenv(*env))
+				_exit(127);
 		setenv("LC_ALL", "C", 1);
 		execv(argv[0], argv);
 		_exit(127);
@@ -197,17 +270,9 @@ static int run(char *const argv[], const char *extra_env)
 	close(pipefd[1]);
 	fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
 	for (;;) {
-		ssize_t n = read(pipefd[0], output + used,
-				 sizeof(output) - 1 - used);
+		ssize_t n;
 
-		if (n > 0) {
-			used += n;
-			if (used == sizeof(output) - 1)
-				used = 0;	/* keep only the newest text */
-			continue;
-		}
-		if (waitpid(pid, &status, WNOHANG) == pid)
-			break;
+		/* Checked on every pass, so steady output cannot hold the test. */
 		if (time(NULL) - start > RUN_TIMEOUT) {
 			kill(pid, SIGKILL);
 			waitpid(pid, &status, 0);
@@ -215,22 +280,28 @@ static int run(char *const argv[], const char *extra_env)
 			output[used] = '\0';
 			return -1;
 		}
+		n = read_output(pipefd[0], &used);
+		if (n > 0)
+			continue;
+		if (waitpid(pid, &status, WNOHANG) == pid)
+			break;
 		usleep(10000);
 	}
 	/* Collect what was written just before the exit. */
-	for (;;) {
-		ssize_t n = read(pipefd[0], output + used,
-				 sizeof(output) - 1 - used);
-
-		if (n <= 0 || used + n >= sizeof(output) - 1)
-			break;
-		used += n;
-	}
+	while (read_output(pipefd[0], &used) > 0)
+		;
 	close(pipefd[0]);
 	output[used] = '\0';
 	if (WIFEXITED(status))
 		return WEXITSTATUS(status);
 	return 128 + WTERMSIG(status);
+}
+
+static int run(char *const argv[], const char *extra_env)
+{
+	char *env[] = { (char *)extra_env, NULL };
+
+	return run_env(argv, env);
 }
 
 static int run_ntfsck2(const char *a, const char *image, const char *env)
@@ -456,6 +527,224 @@ static void damage_record(const char *image, unsigned int number)
 	close(fd);
 }
 
+static unsigned int le32(const unsigned char *p)
+{
+	return p[0] | p[1] << 8 | p[2] << 16 | (unsigned int)p[3] << 24;
+}
+
+static void put_le(unsigned char *p, unsigned long long v, int bytes)
+{
+	int i;
+
+	for (i = 0; i < bytes; i++, v >>= 8)
+		p[i] = v & 0xff;
+}
+
+/* Read MFT record `number` from the copy at `base` and undo its fixups. */
+static void read_record(int fd, const struct geometry *g, unsigned long long base,
+			unsigned int number, unsigned char *rec)
+{
+	unsigned int usa, count, i;
+
+	require(g->record <= 4096, "record size");
+	require(pread(fd, rec, g->record, base + (unsigned long long)number * g->record) ==
+		(ssize_t)g->record, "read record");
+	require(!memcmp(rec, "FILE", 4), "missing FILE record");
+	usa = le16(rec + 4);
+	count = le16(rec + 6);
+	require(count == g->record / g->sector + 1 && usa + count * 2 <= g->record,
+		"update sequence bounds");
+	for (i = 1; i < count; i++) {
+		unsigned int tail = i * g->sector - 2;
+
+		require(!memcmp(rec + tail, rec + usa, 2), "update sequence tail");
+		memcpy(rec + tail, rec + usa + 2 * i, 2);
+	}
+}
+
+/* Apply the fixups of `rec` again, with the same sequence number, and write it. */
+static void write_record(int fd, const struct geometry *g, unsigned long long base,
+			 unsigned int number, const unsigned char *rec)
+{
+	unsigned char raw[4096];
+	unsigned int usa = le16(rec + 4), count = le16(rec + 6), i;
+
+	memcpy(raw, rec, g->record);
+	for (i = 1; i < count; i++) {
+		unsigned int tail = i * g->sector - 2;
+
+		memcpy(raw + usa + 2 * i, rec + tail, 2);
+		memcpy(raw + tail, rec + usa, 2);
+	}
+	require(pwrite(fd, raw, g->record, base + (unsigned long long)number * g->record) ==
+		(ssize_t)g->record, "write record");
+}
+
+/* Offset of the unnamed non-resident $DATA attribute of a record. */
+static unsigned int data_attribute(const struct geometry *g, const unsigned char *rec)
+{
+	unsigned int pos = le16(rec + 20), used = le32(rec + 24);
+
+	require(48 <= pos && pos < used && used <= g->record, "attribute bounds");
+	while (pos + 24 <= used) {
+		unsigned int kind = le32(rec + pos), length = le32(rec + pos + 4);
+
+		if (kind == 0xffffffff)
+			break;
+		require(24 <= length && length <= used - pos, "attribute length");
+		if (kind == 0x80 && rec[pos + 8] == 1 && rec[pos + 9] == 0)
+			return pos;
+		pos += length;
+	}
+	require(0, "missing non-resident $DATA");
+	return 0;
+}
+
+/* The one run of a $DATA attribute that fresh mkntfs writes as a single run. */
+static void single_run(const unsigned char *rec, unsigned int attr,
+		       unsigned long long *lcn, unsigned long long *length)
+{
+	const unsigned char *p = rec + attr + le16(rec + attr + 32);
+	int ls = p[0] & 15, os = p[0] >> 4, i;
+
+	require(ls && os && ls <= 8 && os <= 8, "mapping pairs header");
+	*length = 0;
+	*lcn = 0;
+	for (i = ls - 1; i >= 0; i--)
+		*length = *length << 8 | p[1 + i];
+	for (i = os - 1; i >= 0; i--)
+		*lcn = *lcn << 8 | p[1 + ls + i];
+	require(p[1 + ls + os] == 0, "expected a single run");
+}
+
+/* Bytes of a signed value in a mapping pair. */
+static int pair_bytes(long long v)
+{
+	int n = 1;
+
+	while (n < 8 && (v < -(1LL << (8 * n - 1)) || v >= (1LL << (8 * n - 1))))
+		n++;
+	return n;
+}
+
+static int put_pair(unsigned char *p, long long length, long long delta)
+{
+	int ls = pair_bytes(length), os = pair_bytes(delta);
+
+	p[0] = os << 4 | ls;
+	put_le(p + 1, length, ls);
+	put_le(p + 1 + ls, delta, os);
+	return 1 + ls + os;
+}
+
+struct split {
+	unsigned long long first_start, first_end;	/* bytes of the first run */
+	unsigned long long second_start, second_end;	/* bytes of the second run */
+};
+
+/*
+ * Make $UpCase a two-run file: the first half stays in place, the second half
+ * moves to free clusters near the end of the volume, followed by two spare
+ * allocated clusters. $Bitmap is updated to match. Then entry 'A' of the table
+ * is damaged, so the next repair writes the whole table through both runs.
+ */
+static void split_upcase(const char *image, struct split *sp)
+{
+	struct geometry g;
+	unsigned char rec[4096], *bitmap, *moved;
+	unsigned long long bm_lcn, bm_len, lcn, len, first, second, target = 0, total;
+	unsigned long long x;
+	unsigned int attr, length, mpo, used, grow;
+	unsigned char pairs[40];
+	int fd, n;
+
+	geometry(image, &g);
+	total = (unsigned long long)IMAGE_SIZE / g.cluster;
+	fd = open(image, O_RDWR);
+	require(fd >= 0, image);
+
+	read_record(fd, &g, g.mft, 6, rec);			/* $Bitmap */
+	single_run(rec, data_attribute(&g, rec), &bm_lcn, &bm_len);
+	bitmap = malloc(bm_len * g.cluster);
+	require(bitmap != NULL, "malloc");
+	require(pread(fd, bitmap, bm_len * g.cluster, bm_lcn * g.cluster) ==
+		(ssize_t)(bm_len * g.cluster), "read $Bitmap");
+#define IN_USE(c) (bitmap[(c) >> 3] >> ((c) & 7) & 1)
+
+	read_record(fd, &g, g.mft, 10, rec);			/* $UpCase */
+	attr = data_attribute(&g, rec);
+	single_run(rec, attr, &lcn, &len);
+	require(len >= 4, "$UpCase too small to split");
+	first = len / 2;
+	second = len - first + 2;
+	for (x = total - second - 8; x > lcn + len + 4 && !target; x--) {
+		unsigned long long c;
+
+		for (c = x; c < x + second && !IN_USE(c); c++)
+			;
+		if (c == x + second)
+			target = x;
+	}
+	require(target != 0, "no free clusters for the second run");
+
+	moved = calloc(second, g.cluster);
+	require(moved != NULL, "calloc");
+	require(pread(fd, moved, (len - first) * g.cluster, (lcn + first) * g.cluster) ==
+		(ssize_t)((len - first) * g.cluster), "read $UpCase tail");
+	require(pwrite(fd, moved, second * g.cluster, target * g.cluster) ==
+		(ssize_t)(second * g.cluster), "write $UpCase tail");
+	free(moved);
+	for (x = lcn + first; x < lcn + len; x++)
+		bitmap[x >> 3] &= ~(1 << (x & 7));
+	for (x = target; x < target + second; x++)
+		bitmap[x >> 3] |= 1 << (x & 7);
+#undef IN_USE
+	require(pwrite(fd, bitmap, bm_len * g.cluster, bm_lcn * g.cluster) ==
+		(ssize_t)(bm_len * g.cluster), "write $Bitmap");
+	free(bitmap);
+
+	n = put_pair(pairs, first, lcn);
+	n += put_pair(pairs + n, second, (long long)target - (long long)lcn);
+	pairs[n++] = 0;
+	length = le32(rec + attr + 4);
+	mpo = le16(rec + attr + 32);
+	used = le32(rec + 24);
+	if (mpo + n > length) {
+		grow = (mpo + n - length + 7) & ~7u;
+		require(used + grow <= g.record, "no room to grow $UpCase record");
+		memmove(rec + attr + length + grow, rec + attr + length,
+			used - attr - length);
+		length += grow;
+		put_le(rec + attr + 4, length, 4);
+		put_le(rec + 24, used + grow, 4);
+	}
+	memset(rec + attr + mpo, 0, length - mpo);
+	memcpy(rec + attr + mpo, pairs, n);
+	put_le(rec + attr + 24, first + second - 1, 8);		/* highest VCN */
+	put_le(rec + attr + 40, (first + second) * g.cluster, 8);	/* allocated */
+	write_record(fd, &g, g.mft, 10, rec);
+
+	require(pwrite(fd, "\x34\x12", 2, lcn * g.cluster + 'A' * 2) == 2,
+		"damage $UpCase");
+	close(fd);
+	sp->first_start = lcn * g.cluster;
+	sp->first_end = (lcn + first) * g.cluster;
+	sp->second_start = target * g.cluster;
+	sp->second_end = (target + second) * g.cluster;
+}
+
+/* Read `count` bytes at `pos` of an image into a new buffer. */
+static unsigned char *read_range(const char *image, unsigned long long pos, size_t count)
+{
+	unsigned char *b = malloc(count);
+	int fd = open(image, O_RDONLY);
+
+	require(b != NULL && fd >= 0, "read range");
+	require(pread(fd, b, count, pos) == (ssize_t)count, "read range");
+	close(fd);
+	return b;
+}
+
 /* Extract the one .img of a corpus case into its own directory. */
 static void corpus_image(char *dst, const char *name)
 {
@@ -655,6 +944,235 @@ static void test_zero_link_count(void)
 	check(run_ntfsck2("-n", image, NULL) == 0, "recheck after the repair: expected 0");
 }
 
+/*
+ * A repair write that the device ends early, without an error, on a file in
+ * two runs. The write must stop there: data meant for the first run must not
+ * be written into the second, and the run must not end as clean.
+ */
+static void test_short_write_on_split_file(void)
+{
+	char image[PATH_MAX], preload[PATH_MAX + 16], spec[160];
+	char *env[] = { preload, spec, NULL };
+	char *argv[] = { ntfsck, "-a", "-f", image, NULL };
+	unsigned char *before, *after;
+	struct geometry g;
+	struct split sp;
+	struct stat st;
+	size_t second;
+	int rc;
+
+	clone(image, "short-write.img");
+	geometry(image, &g);
+	split_upcase(image, &sp);
+	second = sp.second_end - sp.second_start;
+	before = read_range(image, sp.second_start, second);
+	require(stat(image, &st) == 0, "stat image");
+	require(snprintf(preload, sizeof(preload), "LD_PRELOAD=%s", shim) <
+		(int)sizeof(preload), "path length");
+	require(snprintf(spec, sizeof(spec), "FAILURE_STATUS_SHORT_WRITE=%llu:%llu:%llu:%llu:%u",
+		(unsigned long long)st.st_dev, (unsigned long long)st.st_ino,
+		sp.first_start, sp.first_end, g.cluster) < (int)sizeof(spec), "spec length");
+	rc = run_env(argv, env);
+	check(has("SHORT_WRITE\n"), "short write was not reached");
+	check(rc == 8, "expected exit status 8");
+	assert_operational();
+	after = read_range(image, sp.second_start, second);
+	check(!memcmp(before, after, second),
+	      "data meant for the first run was written into the second run");
+	free(before);
+	free(after);
+}
+
+/*
+ * $Volume with a header error in both MFT copies that the check can repair.
+ * The repair must fix the record in memory, check it again, and write it to
+ * both copies.
+ */
+static void test_header_error_in_both_copies(void)
+{
+	char image[PATH_MAX];
+	unsigned char rec[4096], copy[2][4096];
+	struct geometry g;
+	int fd, i;
+
+	clone(image, "both-copies.img");
+	geometry(image, &g);
+	fd = open(image, O_RDWR);
+	require(fd >= 0, image);
+	for (i = 0; i < 2; i++) {
+		unsigned long long base = i ? g.mirror : g.mft;
+
+		read_record(fd, &g, base, VOLUME_RECORD, rec);
+		put_le(rec + 28, g.record - 1, 4);		/* bytes allocated */
+		write_record(fd, &g, base, VOLUME_RECORD, rec);
+	}
+	close(fd);
+	check(run_ntfsck2("-n", image, NULL) == 4, "-n: expected exit status 4");
+	check(has_summary(), "-n: no errors-left summary");
+	check(run_ntfsck2("-a", image, NULL) == 1, "-a: expected exit status 1 (repaired)");
+	fd = open(image, O_RDONLY);
+	require(fd >= 0, image);
+	read_record(fd, &g, g.mft, VOLUME_RECORD, copy[0]);
+	read_record(fd, &g, g.mirror, VOLUME_RECORD, copy[1]);
+	close(fd);
+	check(le32(copy[0] + 28) == g.record && le32(copy[1] + 28) == g.record,
+	      "bytes allocated not repaired in both copies");
+	check(!memcmp(copy[0], copy[1], g.record), "the two copies differ after the repair");
+	check(run_ntfsck2("-n", image, NULL) == 0, "recheck after the repair: expected 0");
+}
+
+/*
+ * Both copies of $Volume have a header error, and the $MFT copy is also an
+ * extent record (base_mft_record 5), which a system file never is. The
+ * repair must use the mirror copy.
+ */
+static void test_both_copies_prefer_sound_mirror(void)
+{
+	char image[PATH_MAX];
+	unsigned char rec[4096], copy[2][4096];
+	struct geometry g;
+	int fd, i;
+
+	clone(image, "sound-mirror.img");
+	geometry(image, &g);
+	fd = open(image, O_RDWR);
+	require(fd >= 0, image);
+	for (i = 0; i < 2; i++) {
+		unsigned long long base = i ? g.mirror : g.mft;
+
+		read_record(fd, &g, base, VOLUME_RECORD, rec);
+		put_le(rec + 28, g.record - 1, 4);		/* bytes allocated */
+		if (!i)
+			put_le(rec + 32, 5, 8);			/* base_mft_record */
+		write_record(fd, &g, base, VOLUME_RECORD, rec);
+	}
+	close(fd);
+	check(run_ntfsck2("-a", image, NULL) == 1, "-a: expected exit status 1 (repaired)");
+	fd = open(image, O_RDONLY);
+	require(fd >= 0, image);
+	read_record(fd, &g, g.mft, VOLUME_RECORD, copy[0]);
+	read_record(fd, &g, g.mirror, VOLUME_RECORD, copy[1]);
+	close(fd);
+	check(le64(copy[0] + 32) == 0 && le64(copy[1] + 32) == 0,
+	      "the extent copy was written over $Volume");
+	check(!memcmp(copy[0], copy[1], g.record), "the two copies differ after the repair");
+	check(run_ntfsck2("-n", image, NULL) == 0, "recheck after the repair: expected 0");
+}
+
+/*
+ * Both copies of $Volume have a header error and the mirror copy of
+ * $MFTMirr differs from $MFT, which is rewritten first. $Volume must be
+ * repaired, with the dirty flag, before that write; both are repaired.
+ */
+static void test_volume_repaired_before_other_mount_repairs(void)
+{
+	char image[PATH_MAX];
+	unsigned char rec[4096];
+	unsigned int flags[2];
+	struct geometry g;
+	int fd, i;
+
+	clone(image, "volume-first.img");
+	geometry(image, &g);
+	fd = open(image, O_RDWR);
+	require(fd >= 0, image);
+	for (i = 0; i < 2; i++) {
+		unsigned long long base = i ? g.mirror : g.mft;
+
+		read_record(fd, &g, base, VOLUME_RECORD, rec);
+		put_le(rec + 28, g.record - 1, 4);		/* bytes allocated */
+		write_record(fd, &g, base, VOLUME_RECORD, rec);
+	}
+	read_record(fd, &g, g.mirror, MFTMIRR_RECORD, rec);
+	put_le(rec + 8, 0x1234, 8);				/* LSN */
+	write_record(fd, &g, g.mirror, MFTMIRR_RECORD, rec);
+	close(fd);
+	check(run_ntfsck2("-a", image, NULL) == 1, "-a: expected exit status 1 (repaired)");
+	volume_flags(image, flags);
+	check(!(flags[0] & VOLUME_IS_DIRTY) && !(flags[1] & VOLUME_IS_DIRTY),
+	      "dirty flag left set after a complete repair");
+	check(run_ntfsck2("-n", image, NULL) == 0, "recheck after the repair: expected 0");
+}
+
+/*
+ * A repair during mount that the device ends early: here the mirror copy of
+ * $MFTMirr differs from $MFT and its rewrite is cut short. The volume must
+ * already be marked dirty on disk, so -C reports it.
+ */
+static void test_failed_mount_repair_leaves_volume_dirty(void)
+{
+	char image[PATH_MAX], preload[PATH_MAX + 16], spec[160];
+	char *env[] = { preload, spec, NULL };
+	char *argv[] = { ntfsck, "-a", image, NULL };
+	unsigned char rec[4096];
+	unsigned long long at;
+	unsigned int flags[2];
+	struct geometry g;
+	struct stat st;
+	int fd, rc;
+
+	clone(image, "mount-repair.img");
+	geometry(image, &g);
+	fd = open(image, O_RDWR);
+	require(fd >= 0, image);
+	read_record(fd, &g, g.mirror, MFTMIRR_RECORD, rec);
+	put_le(rec + 8, 0x1234, 8);				/* LSN */
+	write_record(fd, &g, g.mirror, MFTMIRR_RECORD, rec);
+	close(fd);
+	at = g.mirror + (unsigned long long)MFTMIRR_RECORD * g.record;
+	require(stat(image, &st) == 0, "stat image");
+	require(snprintf(preload, sizeof(preload), "LD_PRELOAD=%s", shim) <
+		(int)sizeof(preload), "path length");
+	require(snprintf(spec, sizeof(spec), "FAILURE_STATUS_SHORT_WRITE=%llu:%llu:%llu:%llu:%u",
+		(unsigned long long)st.st_dev, (unsigned long long)st.st_ino,
+		at, at + g.record, g.sector) < (int)sizeof(spec), "spec length");
+	rc = run_env(argv, env);
+	check(has("SHORT_WRITE\n"), "short write was not reached");
+	check(rc == 8, "expected exit status 8");
+	assert_operational();
+	volume_flags(image, flags);
+	check((flags[0] & VOLUME_IS_DIRTY) && (flags[1] & VOLUME_IS_DIRTY),
+	      "volume not marked dirty after a failed mount repair");
+	check(run_ntfsck2("-C", image, NULL) == 4, "-C: expected exit status 4 (dirty)");
+}
+
+/*
+ * The $MFT copy of record 0 has no FILE magic, so $MFT is loaded from the
+ * mirror and record 0 is rewritten before anything else; that write is cut
+ * short. The volume must be marked dirty before it.
+ */
+static void test_failed_mft_load_repair_leaves_volume_dirty(void)
+{
+	char image[PATH_MAX], preload[PATH_MAX + 16], spec[160];
+	char *env[] = { preload, spec, NULL };
+	char *argv[] = { ntfsck, "-a", "-f", image, NULL };
+	unsigned int flags[2];
+	struct geometry g;
+	struct stat st;
+	int fd, rc;
+
+	clone(image, "mft-load.img");
+	geometry(image, &g);
+	fd = open(image, O_WRONLY);
+	require(fd >= 0, image);
+	require(pwrite(fd, "XXXX", 4, g.mft) == 4, "damage $MFT record 0");
+	close(fd);
+	require(stat(image, &st) == 0, "stat image");
+	require(snprintf(preload, sizeof(preload), "LD_PRELOAD=%s", shim) <
+		(int)sizeof(preload), "path length");
+	require(snprintf(spec, sizeof(spec), "FAILURE_STATUS_SHORT_WRITE=%llu:%llu:%llu:%llu:%u",
+		(unsigned long long)st.st_dev, (unsigned long long)st.st_ino,
+		g.mft, g.mft + g.record, g.sector) < (int)sizeof(spec), "spec length");
+	rc = run_env(argv, env);
+	check(has("SHORT_WRITE\n"), "short write was not reached");
+	check(rc == 8, "expected exit status 8");
+	assert_operational();
+	volume_flags(image, flags);
+	check((flags[0] & VOLUME_IS_DIRTY) && (flags[1] & VOLUME_IS_DIRTY),
+	      "volume not marked dirty after a failed $MFT repair");
+	check(run_ntfsck2("-C", image, NULL) == 4, "-C: expected exit status 4 (dirty)");
+}
+
 static void run_case(const char *name, void (*fn)(void))
 {
 	current = name;
@@ -687,6 +1205,12 @@ static const struct {
 	{ "damaged_journal_with_n_scans_read_only", journal_n },
 	{ "preserved_journal_with_forced_repair_reports_errors_left", journal_af },
 	{ "zero_link_count_of_mft_is_left_with_n_and_repaired_with_a", test_zero_link_count },
+	{ "short_write_on_a_split_file_stops_the_repair", test_short_write_on_split_file },
+	{ "header_error_in_both_mft_copies_is_repaired", test_header_error_in_both_copies },
+	{ "header_error_in_both_copies_uses_the_sound_mirror", test_both_copies_prefer_sound_mirror },
+	{ "volume_is_repaired_before_other_mount_repairs", test_volume_repaired_before_other_mount_repairs },
+	{ "failed_mount_repair_leaves_volume_dirty", test_failed_mount_repair_leaves_volume_dirty },
+	{ "failed_mft_load_repair_leaves_volume_dirty", test_failed_mft_load_repair_leaves_volume_dirty },
 };
 
 static void absolute(char *dst, const char *src, const char *what)

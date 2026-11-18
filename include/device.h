@@ -90,6 +90,13 @@ struct ntfs_device {
 						   heads or -1. */
 	int d_sectors_per_track;		/* Disk geometry: number of
 						   sectors per track or -1. */
+	/*
+	 * Called by ntfs_pwrite() before the first write, and cleared before
+	 * the call, so it runs once and not for its own writes. ntfsck sets
+	 * it to mark the volume dirty before anything else reaches the disk.
+	 */
+	int (*d_before_write)(struct ntfs_device *dev);
+	void *d_before_write_data;
 };
 
 struct stat;
@@ -122,6 +129,7 @@ extern int ntfs_device_sync(struct ntfs_device *dev);
 
 extern s64 ntfs_pread(struct ntfs_device *dev, const s64 pos, s64 count,
 		void *b);
+extern void ntfs_device_write_failed(struct ntfs_device *dev);
 extern s64 ntfs_pwrite(struct ntfs_device *dev, const s64 pos, s64 count,
 		const void *b);
 

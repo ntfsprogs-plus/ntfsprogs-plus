@@ -8760,6 +8760,23 @@ static int ntfsck_begin_repair(ntfs_volume *vol)
 	return STATUS_OK;
 }
 
+/*
+ * Write the inodes the volume keeps open, which unmount would otherwise
+ * write after the dirty flag is cleared: a repair kept in memory, such as a
+ * changed $MFT record, must reach the disk while the volume is still dirty.
+ */
+static int ntfsck_sync_open_inodes(ntfs_volume *vol)
+{
+	ntfs_inode *open[] = { vol->lcnbmp_ni, vol->mft_ni, vol->mftmirr_ni,
+			vol->secure_ni, badclus.ni };
+	unsigned int i;
+
+	for (i = 0; i < sizeof(open) / sizeof(open[0]); i++)
+		if (open[i] && NInoDirty(open[i]) && ntfs_inode_sync(open[i]))
+			return STATUS_ERROR;
+	return STATUS_OK;
+}
+
 static int ntfsck_reset_dirty(ntfs_volume *vol)
 {
 	le16 flags;
@@ -8768,6 +8785,12 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 		return STATUS_OK;
 
 	ntfs_log_verbose("Resetting dirty flag.\n");
+
+	if (ntfsck_sync_open_inodes(vol)) {
+		ntfs_log_error("Failed to write open inodes before clearing "
+				"the dirty flag.\n");
+		return STATUS_ERROR;
+	}
 
 	/*
 	 * Commit point of the repair transaction: every repair write must be

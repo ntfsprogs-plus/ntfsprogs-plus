@@ -428,6 +428,8 @@ extern int ntfs_volume_invalidate_hiberfile(ntfs_volume *vol);
 extern int ntfs_logfile_reset(ntfs_volume *vol);
 
 extern int ntfs_volume_write_flags(ntfs_volume *vol, const le16 flags);
+extern int ntfs_volume_keep_dirty(ntfs_volume *vol, MFT_REF mref,
+		MFT_RECORD *m);
 
 extern int ntfs_volume_error(int err);
 extern void ntfs_mount_error(const char *vol, const char *mntpoint, int err);

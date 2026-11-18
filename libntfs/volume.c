@@ -198,6 +198,8 @@ static int __ntfs_volume_release(ntfs_volume *v)
 	if (v->dev) {
 		struct ntfs_device *dev = v->dev;
 
+		/* The volume is going away; nothing may call back into it. */
+		dev->d_before_write = NULL;
 		if (dev->d_ops->sync(dev))
 			ntfs_release_error(v, &err);
 		if (dev->d_ops->close(dev))
@@ -246,6 +248,41 @@ static int ntfs_mount_record_check(ntfs_volume *vol, MFT_REF mref, MFT_RECORD *m
 	if (fsck)
 		NVolSetFsck(vol);
 	return ret;
+}
+
+static BOOL ntfs_mftmirr_semantic_valid(ntfs_volume *vol, MFT_RECORD *m,
+		u64 mftno);
+
+/*
+ * Both copies of a record failed the check. Repair a copy of each candidate
+ * in memory, $MFT first, and keep the first one that then passes the check
+ * without repairs and, for a named system file, the system-record checks
+ * (in use, base record, linked). Nothing is written here. Counts from a candidate that is
+ * not kept are undone, since that repair is discarded.
+ *
+ * Returns 0 with the repaired record in @out, or -1 if neither copy can be
+ * repaired.
+ */
+static int ntfs_mount_record_repair(ntfs_volume *vol, MFT_REF mref,
+		const MFT_RECORD *mrec, const MFT_RECORD *mrec2, MFT_RECORD *out)
+{
+	const MFT_RECORD *cand[2] = { mrec, mrec2 };
+	int errors = fsck_errors, fixes = fsck_fixes;
+	int k;
+
+	if (!NVolFsck(vol))
+		return -1;
+	for (k = 0; k < 2; k++) {
+		memcpy(out, cand[k], vol->mft_record_size);
+		if (!ntfs_mft_record_check_in_memory(vol, mref, out) &&
+				!ntfs_mount_record_check(vol, mref, out) &&
+				(mref >= 12 ||
+				 ntfs_mftmirr_semantic_valid(vol, out, mref)))
+			return 0;
+		fsck_errors = errors;
+		fsck_fixes = fixes;
+	}
+	return -1;
 }
 
 /**
@@ -627,6 +664,8 @@ error_exit:
  *	Returns 0 on success, -1 for an unusable candidate, -2 on commit failure.
  */
 
+static int ntfs_volume_before_write(struct ntfs_device *dev);
+
 static int ntfsck_fix_boot_sector(ntfs_volume *vol, char *full_bs,
 		s64 read_sector, s64 fix_sectors, s32 sector_size)
 {
@@ -844,6 +883,127 @@ static int ntfs_recover_mft(ntfs_volume *vol, MFT_RECORD *src_mrec, LCN dest_mft
 	return 0;
 }
 
+/*
+ * Set VOLUME_IS_DIRTY in the volume information of a $Volume record.
+ * Returns 1 if it was already set, 0 if it is set now, or -1 if the record
+ * has no usable volume information.
+ */
+static int ntfs_mount_set_dirty(ntfs_volume *vol, MFT_RECORD *m)
+{
+	u32 used = le32_to_cpu(m->bytes_in_use);
+	u32 off = le16_to_cpu(m->attrs_offset);
+	u32 len, vlen;
+	u16 voff;
+	ATTR_RECORD *a;
+	VOLUME_INFORMATION *vi;
+
+	if (used > vol->mft_record_size)
+		return -1;
+	while (off + offsetof(ATTR_RECORD, flags) <= used) {
+		a = (ATTR_RECORD *)((u8 *)m + off);
+		if (a->type == AT_END)
+			break;
+		len = le32_to_cpu(a->length);
+		if (!len || len > used - off)
+			break;
+		if (a->type == AT_VOLUME_INFORMATION && !a->non_resident &&
+				len >= offsetof(ATTR_RECORD, resident_end)) {
+			voff = le16_to_cpu(a->value_offset);
+			vlen = le32_to_cpu(a->value_length);
+			if (vlen < offsetof(VOLUME_INFORMATION, flags) + 2 ||
+					voff > len || vlen > len - voff)
+				return -1;
+			vi = (VOLUME_INFORMATION *)((u8 *)a + voff);
+			if (vi->flags & VOLUME_IS_DIRTY)
+				return 1;
+			vi->flags |= VOLUME_IS_DIRTY;
+			return 0;
+		}
+		off += len;
+	}
+	return -1;
+}
+
+/* No copy of $Volume can carry the dirty flag: write nothing. */
+static int ntfs_mount_no_mark(void)
+{
+	ntfs_log_error("Cannot mark the volume dirty; not repairing.\n");
+	errno = EIO;
+	return -1;
+}
+
+/*
+ * Set VOLUME_IS_DIRTY in each copy of $Volume on disk (the $MFT and the
+ * $MFTMirr copy) that passes the check, and write and flush it. A copy that
+ * already carries the flag is not written again. If neither copy passes,
+ * repair $Volume first, as the mount would when it reaches it, and write it
+ * with the flag to both copies. The records are read and written directly,
+ * so this works before $MFT is loaded.
+ *
+ * Returns 0 when the volume is marked, or -1 with errno set.
+ */
+static int ntfs_mount_mark_dirty_from_disk(ntfs_volume *vol)
+{
+	LCN lcn[2] = { vol->mft_lcn, vol->mftmirr_lcn };
+	MFT_RECORD *copy[2], *fix;
+	u8 *buf;
+	int k, n = 0, ret = -1;
+
+	if (vol->mftmirr_size <= FILE_Volume || !vol->mft_record_size)
+		return ntfs_mount_no_mark();
+	buf = ntfs_calloc(3 * vol->mft_record_size);
+	if (!buf)
+		return -1;
+	fix = (MFT_RECORD *)(buf + 2 * vol->mft_record_size);
+	for (k = 0; k < 2; k++) {
+		int set;
+
+		copy[k] = (MFT_RECORD *)(buf + k * vol->mft_record_size);
+		/* A copy that cannot be read fails the check. */
+		if (ntfs_mst_pread(vol->dev, (lcn[k] << vol->cluster_size_bits) +
+					FILE_Volume * vol->mft_record_size, 1,
+					vol->mft_record_size, copy[k]) != 1)
+			memset(copy[k], 0, vol->mft_record_size);
+		if (ntfs_mount_record_check(vol, FILE_Volume, copy[k]))
+			continue;
+		set = ntfs_mount_set_dirty(vol, copy[k]);
+		if (set < 0)
+			continue;
+		if (!set && ntfs_recover_mft(vol, copy[k], lcn[k], FILE_Volume))
+			goto out;
+		n++;
+	}
+	if (n) {
+		ret = 0;
+		goto out;
+	}
+	if (ntfs_mount_record_repair(vol, FILE_Volume, copy[0], copy[1], fix) ||
+			ntfs_mount_set_dirty(vol, fix) < 0) {
+		ret = ntfs_mount_no_mark();
+		goto out;
+	}
+	for (k = 0; k < 2; k++)
+		if (ntfs_recover_mft(vol, fix, lcn[k], FILE_Volume))
+			goto out;
+	ret = 0;
+out:
+	free(buf);
+	return ret;
+}
+
+/*
+ * Write a record repaired during mount. The volume is marked dirty before
+ * the first write (ntfs_volume_before_write()). A $Volume record written
+ * here carries the flag too, so it cannot clear that mark.
+ */
+static int ntfs_mount_recover(ntfs_volume *vol, MFT_RECORD *src, LCN dest,
+		u64 mftno)
+{
+	if (mftno == FILE_Volume && ntfs_mount_set_dirty(vol, src) < 0)
+		return ntfs_mount_no_mark();
+	return ntfs_recover_mft(vol, src, dest, mftno);
+}
+
 static int ntfs_recover_mft_from_mftmirr(ntfs_volume *vol, const u64 mftno)
 {
 	MFT_RECORD *mrec;
@@ -962,6 +1122,11 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 	}
 	/* Attach the device to the volume. */
 	vol->dev = dev;
+	/* A run that may repair marks the volume dirty before its first write. */
+	if (NVolFsck(vol) && !NVolFsNoRepair(vol) && !NVolReadOnly(vol)) {
+		dev->d_before_write = ntfs_volume_before_write;
+		dev->d_before_write_data = vol;
+	}
 
 	if (ntfsck_verify_boot_sector(vol)) {
 		errno = EOPNOTSUPP;
@@ -1452,6 +1617,45 @@ static int ntfs_mount_stream_ready(ntfs_volume *vol, ntfs_attr *na, s64 bytes)
 	return 0;
 }
 
+/*
+ * ntfs_pwrite() calls this before the first write of a run that may repair
+ * the volume, whatever makes that write. Set
+ * VOLUME_IS_DIRTY in each copy of $Volume on disk and flush it first, so a
+ * write that fails or is cut short, or a crash after it, leaves the volume
+ * marked. The records are written directly, so this works at any point of
+ * the mount, before $MFT or $Volume is loaded. A loaded $Volume gets the
+ * flag in memory too, so its next write keeps it.
+ *
+ * Returns 0 when the volume is marked, or -1 with errno set.
+ */
+static int ntfs_volume_before_write(struct ntfs_device *dev)
+{
+	ntfs_volume *vol = dev->d_before_write_data;
+
+	if (ntfs_mount_mark_dirty_from_disk(vol))
+		return -1;
+	if (vol->vol_ni) {
+		if (ntfs_mount_set_dirty(vol, vol->vol_ni->mrec) < 0)
+			return ntfs_mount_no_mark();
+		vol->flags |= VOLUME_IS_DIRTY;
+	}
+	return 0;
+}
+
+/*
+ * ntfs_mft_record_check() writes a record it repaired at once. A repaired
+ * $Volume record must carry the dirty flag, or writing it would clear the
+ * mark ntfs_volume_before_write() has set.
+ *
+ * Returns 0, or -1 with errno set if the record has no volume information.
+ */
+int ntfs_volume_keep_dirty(ntfs_volume *vol, MFT_REF mref, MFT_RECORD *m)
+{
+	if (MREF(mref) == FILE_Volume && ntfs_mount_set_dirty(vol, m) < 0)
+		return ntfs_mount_no_mark();
+	return 0;
+}
+
 static int ntfs_mount_stream_repair(ntfs_volume *vol, MFT_REF file,
 		const void *data, s64 bytes)
 {
@@ -1867,6 +2071,7 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 	s64 l;
 	ntfs_volume *vol;
 	u8 *m = NULL, *m2 = NULL;
+	MFT_RECORD *repair_buf = NULL;
 	ntfs_attr_search_ctx *ctx = NULL;
 	ntfs_inode *ni;
 	ntfs_attr *na;
@@ -1955,7 +2160,8 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 					ntfs_mftmirr_semantic_valid(vol, mrec2, FILE_MFT + i)) {
 				fsck_err_found();
 				if (ntfs_fix_problem(vol, PR_MOUNT_REPAIRED_MFTMIRR_CORRUPTED, &pctx)) {
-					if (ntfs_recover_mft(vol, mrec2, vol->mft_lcn, FILE_MFT + i)) {
+					if (ntfs_mount_recover(vol, mrec2, vol->mft_lcn,
+								FILE_MFT + i)) {
 						ntfs_log_perror("Error correcting $MFT record : %d", i);
 						goto io_error_exit;
 					}
@@ -1967,7 +2173,8 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 
 			fsck_err_found();
 			if (ntfs_fix_problem(vol, PR_MOUNT_MFT_MFTMIRR_MISMATCH, &pctx)) {
-				if (ntfs_recover_mft(vol, mrec, vol->mftmirr_lcn, FILE_MFT + i)) {
+				if (ntfs_mount_recover(vol, mrec, vol->mftmirr_lcn,
+							FILE_MFT + i)) {
 					ntfs_log_perror("Error correcting $MFTMirror record : %d", i);
 					goto io_error_exit;
 				}
@@ -1981,6 +2188,24 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 			use_mirr = TRUE;
 
 		if (use_mirr == FALSE) {
+			/*
+			 * Neither copy passes. If one can be repaired in memory and then
+			 * passes, write that repaired record once to each copy.
+			 */
+			if (!repair_buf)
+				repair_buf = ntfs_malloc(vol->mft_record_size);
+			if (repair_buf &&
+					!ntfs_mount_record_repair(vol, FILE_MFT + i, mrec,
+						mrec2, repair_buf)) {
+				if (ntfs_mount_recover(vol, repair_buf, vol->mft_lcn,
+							FILE_MFT + i) ||
+						ntfs_mount_recover(vol, repair_buf,
+							vol->mftmirr_lcn, FILE_MFT + i)) {
+					ntfs_log_perror("Error correcting $MFT/$MFTMirr record : %d", i);
+					goto io_error_exit;
+				}
+				continue;
+			}
 			ntfs_log_error("Both $MFT/$MFTmirr error: Invalid mft record for '%s'\n",
 					s);
 			fsck_err_found();
@@ -1988,7 +2213,8 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 		}
 		fsck_err_found();
 		if (ntfs_fix_problem(vol, PR_MOUNT_REPAIRED_MFTMIRR_CORRUPTED, &pctx)) {
-			if (ntfs_recover_mft(vol, mrec2, vol->mft_lcn, FILE_MFT + i)) {
+			if (ntfs_mount_recover(vol, mrec2, vol->mft_lcn,
+						FILE_MFT + i)) {
 				ntfs_log_perror("Error correcting $MFT record : %d", i);
 				goto io_error_exit;
 			}
@@ -1998,6 +2224,8 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 		}
 	}
 
+	free(repair_buf);
+	repair_buf = NULL;
 	free(m2);
 	free(m);
 	m = m2 = NULL;
@@ -2337,6 +2565,7 @@ error_exit:
 		free(m);
 	if (m2)
 		free(m2);
+	free(repair_buf);
 	__ntfs_volume_release(vol);
 	errno = eo;
 	return NULL;
@@ -2710,16 +2939,27 @@ int ntfs_volume_write_flags(ntfs_volume *vol, const le16 flags)
 	ATTR_RECORD *a;
 	VOLUME_INFORMATION *c;
 	ntfs_attr_search_ctx *ctx;
+	int (*before)(struct ntfs_device *);
+	BOOL was_dirty;
 	int ret = -1;	/* failure */
 
 	if (!vol || !vol->vol_ni) {
 		errno = EINVAL;
 		return -1;
 	}
+	/*
+	 * This write is $Volume itself. When it sets the dirty flag it is the
+	 * mark ntfs_pwrite() would make, and when it clears a set flag the
+	 * repair is over; either way no mark is made any more. For another
+	 * change, no mark is made inside this write, but one stays due.
+	 */
+	before = vol->dev->d_before_write;
+	vol->dev->d_before_write = NULL;
+	was_dirty = !!(vol->flags & VOLUME_IS_DIRTY);
 	/* Get a pointer to the volume information attribute. */
 	ctx = ntfs_attr_get_search_ctx(vol->vol_ni, NULL);
 	if (!ctx)
-		return -1;
+		goto out;
 
 	if (ntfs_attr_lookup(AT_VOLUME_INFORMATION, AT_UNNAMED, 0, 0, 0, NULL,
 				0, ctx)) {
@@ -2757,6 +2997,9 @@ int ntfs_volume_write_flags(ntfs_volume *vol, const le16 flags)
 	ret = 0; /* success */
 err_out:
 	ntfs_attr_put_search_ctx(ctx);
+out:
+	if (before && !(flags & VOLUME_IS_DIRTY) && !was_dirty)
+		vol->dev->d_before_write = before;
 	return ret;
 }
 

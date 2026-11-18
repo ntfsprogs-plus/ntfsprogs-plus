@@ -137,6 +137,8 @@ struct ntfs_device *ntfs_device_alloc(const char *name, const long state,
 		dev->d_private = priv_data;
 		dev->d_heads = -1;
 		dev->d_sectors_per_track = -1;
+		dev->d_before_write = NULL;
+		dev->d_before_write_data = NULL;
 	}
 	return dev;
 }
@@ -217,6 +219,19 @@ s64 ntfs_pread(struct ntfs_device *dev, const s64 pos, s64 count, void *b)
 	return total;
 }
 
+/*
+ * The device did not store everything it was asked to: it failed, wrote only
+ * part of the data, or failed to flush it. Count the failure here, where it
+ * is seen, so a caller that only checks for -1 cannot miss it, and write
+ * nothing more to the device.
+ */
+void ntfs_device_write_failed(struct ntfs_device *dev)
+{
+	fsck_write_failures++;
+	fsck_operational_errors++;
+	NDevSetReadOnly(dev);
+}
+
 /**
  * ntfs_pwrite - positioned write to disk
  * @dev:	device to write to
@@ -240,6 +255,7 @@ s64 ntfs_pwrite(struct ntfs_device *dev, const s64 pos, s64 count,
 		const void *b)
 {
 	s64 written, total, ret = -1;
+	s64 wanted = count;
 	struct ntfs_device_operations *dops;
 
 	ntfs_log_trace("pos %lld, count %lld\n",(long long)pos,(long long)count);
@@ -253,6 +269,20 @@ s64 ntfs_pwrite(struct ntfs_device *dev, const s64 pos, s64 count,
 	if (NDevReadOnly(dev)) {
 		errno = EROFS;
 		goto out;
+	}
+	if (dev->d_before_write) {
+		int (*before)(struct ntfs_device *) = dev->d_before_write;
+
+		dev->d_before_write = NULL;
+		if (before(dev)) {
+			int eo = errno;
+
+			ntfs_log_error("Nothing written to %s: the volume could "
+				       "not be marked dirty first\n", dev->d_name);
+			ntfs_device_write_failed(dev);
+			errno = eo ? eo : EIO;
+			goto out;
+		}
 	}
 
 	dops = dev->d_ops;
@@ -273,8 +303,19 @@ s64 ntfs_pwrite(struct ntfs_device *dev, const s64 pos, s64 count,
 		total = written;
 		break;
 	}
-	if (NDevSync(dev) && total && dops->sync(dev)) {
+	if (NDevSync(dev) && total > 0 && dops->sync(dev)) {
 		total--; /* on sync error, return partially written */
+	}
+	if (total != wanted) {
+		int eo = errno;
+
+		if (total >= 0)
+			ntfs_log_error("Short write to device %s: %lld of %lld "
+				       "bytes at %lld\n", dev->d_name,
+				       (long long)total, (long long)wanted,
+				       (long long)pos);
+		ntfs_device_write_failed(dev);
+		errno = total >= 0 ? EIO : eo;
 	}
 	ret = total;
 out:

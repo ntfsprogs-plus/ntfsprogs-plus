@@ -379,9 +379,11 @@ static int ntfs_device_unix_io_sync(struct ntfs_device *dev)
 
 	if (!NDevReadOnly(dev)) {
 		res = ntfs_fsync(DEV_FD(dev));
-		if (res)
+		if (res) {
 			ntfs_log_perror("Failed to sync device %s", dev->d_name);
-		else
+			/* Counted here for every caller, also one that flushes directly. */
+			ntfs_device_write_failed(dev);
+		} else
 			NDevClearDirty(dev);
 	}
 	return res;

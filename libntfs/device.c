@@ -76,6 +76,7 @@
 #include "mst.h"
 #include "debug.h"
 #include "device.h"
+#include "volume.h"
 #include "logging.h"
 #include "misc.h"
 
@@ -125,6 +126,8 @@ struct ntfs_device *ntfs_device_alloc(const char *name, const long state,
 	if (dev) {
 		if (!(dev->d_name = strdup(name))) {
 			int eo = errno;
+			/* An allocation failure, counted like ntfs_malloc(). */
+			fsck_operational_errors++;
 			free(dev);
 			errno = eo;
 			return NULL;

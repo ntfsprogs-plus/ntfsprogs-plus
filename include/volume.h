@@ -56,6 +56,8 @@ extern int fsck_errors;
 extern int fsck_fixes;
 /* Repair writes or flushes that failed; non-zero means an operational error. */
 extern int fsck_write_failures;
+/* Failed opens, allocations and repair writes or flushes; counted, never reset in a run. */
+extern int fsck_operational_errors;
 extern BOOL fsck_step_header_open;
 
 /* It is called when found filesystem inconsistency */

@@ -88,6 +88,7 @@ static const char *fallback_readonly_msg =
 int fsck_errors;
 int fsck_fixes;
 int fsck_write_failures;
+int fsck_operational_errors;
 
 /*
  * A repair write or flush failed: stop writing to the volume and count the
@@ -97,6 +98,7 @@ int fsck_write_failures;
 static void ntfs_repair_write_failed(ntfs_volume *vol)
 {
 	fsck_write_failures++;
+	fsck_operational_errors++;
 	NVolSetReadOnly(vol);
 	if (vol->dev)
 		NDevSetReadOnly(vol->dev);
@@ -2467,14 +2469,28 @@ static int ntfs_mntent_check(const char *file, unsigned long *mnt_flags)
 		err = errno;
 		goto exit;
 	}
+	/*
+	 * An entry that cannot be read or resolved for lack of memory may be
+	 * this device: report the check as failed rather than "not mounted".
+	 */
+	errno = 0;
 	while ((mnt = getmntent(f))) {
-		if (!ntfs_realpath_canonicalize(mnt->mnt_fsname, real_fsname))
+		if (!ntfs_realpath_canonicalize(mnt->mnt_fsname, real_fsname)) {
+			if (errno == ENOMEM) {
+				err = ENOMEM;
+				break;
+			}
+			errno = 0;
 			continue;
+		}
 		if (!strcmp(real_file, real_fsname))
 			break;
+		errno = 0;
 	}
+	if (!mnt && !err && errno == ENOMEM)
+		err = ENOMEM;
 	endmntent(f);
-	if (!mnt)
+	if (err || !mnt)
 		goto exit;
 	*mnt_flags = NTFS_MF_MOUNTED;
 	if (!strcmp(mnt->mnt_dir, "/"))

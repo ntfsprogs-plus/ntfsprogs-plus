@@ -87,6 +87,20 @@ static const char *fallback_readonly_msg =
 
 int fsck_errors;
 int fsck_fixes;
+int fsck_write_failures;
+
+/*
+ * A repair write or flush failed: stop writing to the volume and count the
+ * failure, so the caller can report an operational error even after the
+ * volume object is gone. Checks that only find damage do not count here.
+ */
+static void ntfs_repair_write_failed(ntfs_volume *vol)
+{
+	fsck_write_failures++;
+	NVolSetReadOnly(vol);
+	if (vol->dev)
+		NDevSetReadOnly(vol->dev);
+}
 
 /**
  * ntfs_volume_alloc - Create an NTFS volume object and initialise it
@@ -651,8 +665,7 @@ static int ntfsck_fix_boot_sector(ntfs_volume *vol, char *full_bs,
 			if (bw == sector_size) {
 				if (vol->dev->d_ops->sync(vol->dev)) {
 					ntfs_log_perror("Failed to flush repaired boot sector");
-					NVolSetReadOnly(vol);
-					NDevSetReadOnly(vol->dev);
+					ntfs_repair_write_failed(vol);
 					return -2;
 				}
 				res = 0;
@@ -664,8 +677,7 @@ static int ntfsck_fix_boot_sector(ntfs_volume *vol, char *full_bs,
 					ntfs_log_error("Failed to rewrite the bootsector (size=0)\n");
 				else
 					ntfs_log_perror("Error rewriting the bootsector");
-				NVolSetReadOnly(vol);
-				NDevSetReadOnly(vol->dev);
+				ntfs_repair_write_failed(vol);
 				return -2;
 			}
 		}
@@ -805,15 +817,13 @@ static int ntfs_recover_mft(ntfs_volume *vol, MFT_RECORD *src_mrec, LCN dest_mft
 				vol->mft_record_size, mwrite) != 1) {
 		ntfs_log_perror("Error correcting mft record(%"PRIu64") of (%"PRIu64").",
 				mftno, dest_mft);
-		NVolSetReadOnly(vol);
-		NDevSetReadOnly(vol->dev);
+		ntfs_repair_write_failed(vol);
 		ntfs_free(mwrite);
 		return -EIO;
 	}
 	if (vol->dev->d_ops->sync(vol->dev)) {
 		ntfs_log_perror("Failed to flush recovered mft record(%"PRIu64")", mftno);
-		NVolSetReadOnly(vol);
-		NDevSetReadOnly(vol->dev);
+		ntfs_repair_write_failed(vol);
 		ntfs_free(mwrite);
 		return -EIO;
 	}
@@ -1448,6 +1458,7 @@ static int ntfs_mount_stream_repair(ntfs_volume *vol, MFT_REF file,
 	ntfs_attr_search_ctx *ctx = NULL;
 	int ret = -1;
 	int err;
+	BOOL wrote = FALSE;
 
 	ni = ntfs_inode_open(vol, file);
 	if (!ni)
@@ -1478,6 +1489,7 @@ static int ntfs_mount_stream_repair(ntfs_volume *vol, MFT_REF file,
 			}
 			memcpy(wbuf, data, bytes);
 		}
+		wrote = TRUE;
 		wr = ntfs_rl_pwrite(vol, na->rl, 0, 0, wbytes, wbuf);
 		if (wbuf != (void *)data)
 			ntfs_free(wbuf);
@@ -1509,7 +1521,8 @@ out:
 		ntfs_attr_put_search_ctx(ctx);
 	if (na)
 		ntfs_attr_close(na);
-	if (ret) {
+	/* After a failed write, the inode close below must not write either. */
+	if (ret && wrote) {
 		NVolSetReadOnly(vol);
 		NDevSetReadOnly(vol->dev);
 	}
@@ -1522,10 +1535,14 @@ out:
 		ret = -1;
 	}
 	if (ret) {
-		NVolSetReadOnly(vol);
-		NDevSetReadOnly(vol->dev);
 		errno = err ? err : EIO;
-		ntfs_log_perror("Failed to complete the stream repair while mounting");
+		if (wrote) {
+			ntfs_log_perror("Failed to complete the stream repair while mounting");
+			ntfs_repair_write_failed(vol);
+		} else {
+			/* Nothing was written: the damage is left, not an I/O failure. */
+			ntfs_log_perror("Cannot repair this stream while mounting");
+		}
 	}
 	return ret;
 }
@@ -2228,19 +2245,25 @@ upcase_ok:
 	 */
 	if (!vol->attrdef || !ntfs_attrdef_check(vol)) {
 		if (NVolFsck(vol)) {
+			int write_failures = fsck_write_failures;
+
 			fsck_err_found();
-			if (ntfs_fix_problem(vol, PR_ATTRDEF_CORRUPTED, &pctx)) {
-				if (ntfs_attrdef_repair(vol)) {
-					if (!errno)
-						errno = EIO;
-					ntfs_log_perror("Failed to repair $AttrDef");
-					goto error_exit;
-				}
+			if (!ntfs_fix_problem(vol, PR_ATTRDEF_CORRUPTED, &pctx)) {
+				ntfs_log_error("Corrupted file $AttrDef\n");
+			} else if (!ntfs_attrdef_repair(vol)) {
 				ntfs_log_info("$AttrDef regenerated from the "
 						"default table\n");
 				fsck_err_fixed();
-			} else
+			} else if (fsck_write_failures != write_failures) {
+				/* A write failed: stop, do not go on with the mount. */
+				if (!errno)
+					errno = EIO;
+				ntfs_log_perror("Failed to repair $AttrDef");
+				goto error_exit;
+			} else {
+				/* Nothing written: carry on with the in-core table. */
 				ntfs_log_error("Corrupted file $AttrDef\n");
+			}
 		}
 		if (!vol->attrdef) {
 			errno = EIO;

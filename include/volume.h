@@ -54,6 +54,8 @@ typedef struct _ntfs_volume ntfs_volume;
 
 extern int fsck_errors;
 extern int fsck_fixes;
+/* Repair writes or flushes that failed; non-zero means an operational error. */
+extern int fsck_write_failures;
 extern BOOL fsck_step_header_open;
 
 /* It is called when found filesystem inconsistency */

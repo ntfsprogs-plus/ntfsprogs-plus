@@ -31,6 +31,10 @@ jobs:
       run: python3 tests/test_fsck_repairs.py --build-dir .
     - name: check journal recovery
       run: python3 tests/test_fsck_journal.py --build-dir .
+    - name: check volume flags
+      run: |
+        cc -O2 -Wall -Wextra -Werror -o tests/test_volume_flags tests/test_volume_flags.c
+        tests/test_volume_flags --build-dir . --temp-dir "$RUNNER_TEMP"
     - name: check security descriptor layouts
       run: python3 tests/test_secure_descriptors.py --build-dir .
     - name: check external image runner

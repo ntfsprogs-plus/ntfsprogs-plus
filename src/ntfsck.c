@@ -8838,14 +8838,15 @@ static int ntfsck_replay_log(const char *path)
 	}
 	if (!probe) {
 		/*
-		 * The boot sector or the records needed to reach the journal
-		 * could not be read or repaired. That is an operational error,
-		 * the same as a failed mount in main(), not a journal that was
-		 * left unreplayed.
+		 * A failed repair write or flush on the boot sector or the
+		 * records needed to reach the journal is an operational error.
+		 * A volume that is only damaged (nothing failed to write) keeps
+		 * the errors-left status.
 		 */
 		ntfs_device_free(dev);
 		fsck_err_found();
-		return RETURN_OPERATIONAL_ERROR;
+		return fsck_write_failures ? RETURN_OPERATIONAL_ERROR :
+			STATUS_ERROR;
 	}
 	fsck_start_step("Recover logfile.");
 	if (option.flags & NTFS_MNT_FS_NO_REPAIR) {
@@ -12222,7 +12223,10 @@ conflict_option:
 			fsck_err_found();
 		}
 
-		goto operational_error;
+		/* Only a failed repair write makes this an operational error. */
+		if (fsck_write_failures)
+			goto operational_error;
+		goto err_out;
 	}
 
 	/* Just return the volume dirty flags when '-C' option is specified. */

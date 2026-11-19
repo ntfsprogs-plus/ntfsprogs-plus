@@ -361,7 +361,7 @@ static int ntfsck_note_cluster_dup_attr(ntfs_attr *na)
 	}
 
 	name_size = na->name_len * sizeof(ntfschar);
-	entry = malloc(sizeof(*entry) + name_size);
+	entry = ntfs_malloc(sizeof(*entry) + name_size);
 	if (!entry)
 		return STATUS_ERROR;
 	entry->mft_no = na->ni->mft_no;
@@ -383,7 +383,7 @@ static void ntfsck_note_rebuilt_index(u64 mft_no)
 		if (entry->mft_no == mft_no)
 			return;
 	}
-	entry = malloc(sizeof(*entry));
+	entry = ntfs_malloc(sizeof(*entry));
 	if (!entry) {
 		ntfs_log_error("Could not remember rebuilt directory index "
 				"%"PRIu64"\n", mft_no);
@@ -1601,6 +1601,10 @@ static int ntfsck_close_inode(ntfs_inode *ni)
 {
 	u64 mft_no;
 
+	/* Cleanup paths pass the inode of a failed open: nothing to close. */
+	if (!ni)
+		return STATUS_OK;
+
 	mft_no = ni->mft_no;
 
 	if (ntfsck_opened_ni_vol(mft_no) == TRUE)
@@ -1762,7 +1766,7 @@ static int ntfsck_collect_attrlist_items(ntfs_inode *base_ni,
 			if (count == capacity) {
 				size_t new_capacity = capacity ? capacity * 2 : 16;
 
-				new_items = realloc(collected,
+				new_items = ntfs_realloc(collected,
 						new_capacity * sizeof(*collected));
 				if (!new_items) {
 					ntfs_attr_put_search_ctx(ctx);
@@ -3233,7 +3237,7 @@ static void ntfsck_add_unopenable_mft(s64 mft_no)
 {
 	struct unopenable_mft *entry;
 
-	entry = malloc(sizeof(*entry));
+	entry = ntfs_malloc(sizeof(*entry));
 	if (!entry) {
 		ntfs_log_error("Could not remember unreadable MFT record %"PRId64
 				" for aggregate repair\n", mft_no);
@@ -3334,7 +3338,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		 */
 	}
 
-	of = (struct orphan_mft *)calloc(1, sizeof(struct orphan_mft));
+	of = (struct orphan_mft *)ntfs_calloc(sizeof(struct orphan_mft));
 	if (!of) {
 		ntfs_log_error("orphan_mft malloc failed");
 		return;
@@ -3490,7 +3494,7 @@ static int ntfsck_defer_index_repair(enum ntfsck_deferred_index_type type,
 {
 	struct ntfsck_deferred_index *repair;
 
-	repair = malloc(sizeof(*repair) + data_len);
+	repair = ntfs_malloc(sizeof(*repair) + data_len);
 	if (!repair)
 		return STATUS_ERROR;
 	repair->type = type;
@@ -3510,7 +3514,7 @@ static int ntfsck_defer_reparse_repair(ntfs_inode *ni, le32 reparse_tag)
 {
 	struct ntfsck_deferred_reparse *repair;
 
-	repair = malloc(sizeof(*repair));
+	repair = ntfs_malloc(sizeof(*repair));
 	if (!repair)
 		return STATUS_ERROR;
 	repair->mft_no = ni->mft_no;
@@ -4120,7 +4124,7 @@ static runlist *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 				sle64_to_cpu(attr->data_size) == 0 &&
 				sle64_to_cpu(attr->initialized_size) == 0) {
 
-			rl = malloc(sizeof(runlist_element));
+			rl = ntfs_malloc(sizeof(runlist_element));
 			if (!rl) {
 				ntfs_attr_put_search_ctx(actx);
 				return NULL;
@@ -5993,7 +5997,7 @@ static void ntfsck_check_reparse_index(ntfs_volume *vol)
 
 				alloc_stale = alloc_stale ?
 					alloc_stale * 2 : 16;
-				tmp = realloc(stale,
+				tmp = ntfs_realloc(stale,
 						alloc_stale * sizeof(*stale));
 				if (!tmp)
 					break;
@@ -6083,7 +6087,7 @@ static int ntfsck_collect_deleted(void *dirent, const ntfschar *name,
 		int na = c->alloc ? c->alloc * 2 : 16;
 		struct ntfsck_deleted_ent *tmp;
 
-		tmp = realloc(c->ents, na * sizeof(*tmp));
+		tmp = ntfs_realloc(c->ents, na * sizeof(*tmp));
 		if (!tmp)
 			return -1;
 		c->ents = tmp;
@@ -6260,7 +6264,7 @@ static void ntfsck_check_compressed(ntfs_inode *ni)
 		size = na->data_size;
 
 		if (cb_size > buf_size) {
-			u8 *nbuf = realloc(buf, cb_size);
+			u8 *nbuf = ntfs_realloc(buf, cb_size);
 
 			if (!nbuf) {
 				ntfs_attr_close(na);
@@ -6779,7 +6783,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 					fn_size_repair_apply_pass ||
 					index_reserved_repair_apply_pass) &&
 					ntfsck_is_directory(ie_fn)) {
-				dir = (struct dir *)calloc(1, sizeof(struct dir));
+				dir = (struct dir *)ntfs_calloc(sizeof(struct dir));
 				if (!dir) {
 					ntfs_log_error("Failed to allocate for subdir.\n");
 					ntfsck_close_inode(ni);
@@ -6834,7 +6838,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		}
 
 		if (ntfsck_is_directory(ie_fn) && is_mft_checked == FALSE) {
-			dir = (struct dir *)calloc(1, sizeof(struct dir));
+			dir = (struct dir *)ntfs_calloc(sizeof(struct dir));
 			if (!dir) {
 				ntfs_log_error("Failed to allocate for subdir.\n");
 				ntfsck_close_inode(ni);
@@ -7204,7 +7208,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 			goto out;
 		}
 
-		bmp_buf = malloc(bmp_na->data_size);
+		bmp_buf = ntfs_malloc(bmp_na->data_size);
 		if (!bmp_buf) {
 			ntfs_log_error("Failed to allocate bitmap buffer\n");
 			goto out;
@@ -7239,7 +7243,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	}
 	ir_entries_len = ir_size - ir_entries_offset;
 
-	ir_buf = malloc(ir_entries_len ? ir_entries_len : 1);
+	ir_buf = ntfs_malloc(ir_entries_len ? ir_entries_len : 1);
 	if (!ir_buf) {
 		ntfs_log_error("Failed to allocate ir buffer\n");
 		goto out;
@@ -7929,7 +7933,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 	ntfs_attr *bm_na = NULL;
 	int ret;
 
-	dir = (struct dir *)calloc(1, sizeof(struct dir));
+	dir = (struct dir *)ntfs_calloc(sizeof(struct dir));
 	if (!dir) {
 		ntfs_log_error("Failed to allocate for subdir.\n");
 		return -1;
@@ -8726,6 +8730,17 @@ static int ntfsck_begin_repair(ntfs_volume *vol)
 	if (!ntfsck_repair_enabled())
 		return STATUS_OK;
 
+	/*
+	 * A volume that could only be opened read-only cannot be repaired:
+	 * its writes would be skipped and the repairs reported as done.
+	 */
+	if (NVolReadOnly(vol) || NDevReadOnly(vol->dev)) {
+		ntfs_log_error("Cannot repair %s: it could only be opened "
+				"read-only.\n", vol->dev->d_name);
+		fsck_operational_errors++;
+		return STATUS_ERROR;
+	}
+
 	if (!(vol->flags & VOLUME_IS_DIRTY)) {
 		le16 flags = vol->flags | VOLUME_IS_DIRTY;
 
@@ -8823,6 +8838,7 @@ static int ntfsck_replay_log(const char *path)
 	struct ntfs_journal_replay *replay = NULL;
 	ntfs_volume *probe;
 	int saved_errors = fsck_errors, saved_fixes = fsck_fixes;
+	int saved_operational = fsck_operational_errors;
 	int ret;
 
 	dev = ntfs_device_alloc(path, 0, &ntfs_device_default_io_ops, NULL);
@@ -8838,15 +8854,21 @@ static int ntfsck_replay_log(const char *path)
 	}
 	if (!probe) {
 		/*
-		 * A failed repair write or flush on the boot sector or the
-		 * records needed to reach the journal is an operational error.
-		 * A volume that is only damaged (nothing failed to write) keeps
-		 * the errors-left status.
+		 * A failed open, allocation or repair write during the probe is
+		 * an operational error. Otherwise the volume failed to load,
+		 * which is taken as damage left, reported through the summary.
 		 */
+		int operational = fsck_operational_errors != saved_operational;
+		int err = errno;
+
 		ntfs_device_free(dev);
+		if (operational) {
+			errno = err;
+			ntfs_log_perror("Cannot start the check on %s", path);
+			return RETURN_OPERATIONAL_ERROR;
+		}
 		fsck_err_found();
-		return fsck_write_failures ? RETURN_OPERATIONAL_ERROR :
-			STATUS_ERROR;
+		return STATUS_ERROR;
 	}
 	fsck_start_step("Recover logfile.");
 	if (option.flags & NTFS_MNT_FS_NO_REPAIR) {
@@ -9809,6 +9831,8 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	int ret = STATUS_ERROR;
 	int is_used;
 	BOOL trivial;	/* represent system file is trivial or not */
+	int errors_at_file;	/* fsck_errors when this file's checks began */
+	u64 stale_at_file;	/* stale_index_sequence_entries at the same point */
 
 	fsck_start_step("Check system files.");
 
@@ -9845,6 +9869,8 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	 */
 	for (mft_num = FILE_MFT; mft_num < FILE_first_user; mft_num++) {
 		progress_update(&prog, mft_num + 2);
+		errors_at_file = fsck_errors;
+		stale_at_file = stale_index_sequence_entries;
 		if (vol->major_ver < 3 && mft_num == FILE_Extend)
 			continue;
 
@@ -9863,6 +9889,8 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 			if (!sys_ni) {
 				ntfs_log_error("Failed to open system file(%"PRId64")\n",
 						mft_num);
+				/* A reserved record that cannot be opened is damage left. */
+				fsck_err_found();
 				continue;
 			}
 			trivial = TRUE;
@@ -9975,6 +10003,8 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 		ie_fn = (FILE_NAME_ATTR *)&ie->key.file_name;
 		ntfs_attr_put_search_ctx(sys_ctx);
 
+		/* As for other files: repair a wrong link count before the field checks. */
+		ntfsck_check_link_count(sys_ni);
 		if (ntfsck_check_inode_fields(root_ni, sys_ni, ie, ictx) ||
 				ntfsck_check_file_type(sys_ni, ictx, ie_fn) < 0 ||
 				ntfsck_check_file_name_attr(sys_ni, ie_fn, ictx) < 0) {
@@ -9990,6 +10020,13 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 		continue;
 
 check_trivial:
+		/*
+		 * A failed check that recorded nothing is still damage left. A stale
+		 * index sequence number is counted later by its own repair.
+		 */
+		if (fsck_errors == errors_at_file &&
+				stale_index_sequence_entries == stale_at_file)
+			fsck_err_found();
 		if (trivial == FALSE) {
 			ret = STATUS_ERROR;
 			goto put_index_ctx;
@@ -10334,7 +10371,7 @@ static int ntfsck_badclus_add_range(ntfs_volume *vol, LCN lcn, s64 length)
 	}
 	if (badclus.count == badclus.capacity) {
 		capacity = badclus.capacity ? badclus.capacity * 2 : 16;
-		ranges = realloc(badclus.ranges, capacity * sizeof(*ranges));
+		ranges = ntfs_realloc(badclus.ranges, capacity * sizeof(*ranges));
 		if (!ranges)
 			return STATUS_ERROR;
 		badclus.ranges = ranges;
@@ -12028,6 +12065,7 @@ int main(int argc, char **argv)
 	 * report what the whole run did.
 	 */
 	int total_errors = 0, total_fixes = 0;
+	int operational_before_mount;
 	unsigned long mnt_flags;
 	BOOL check_dirty_only = FALSE;
 
@@ -12187,22 +12225,37 @@ conflict_option:
 				exit(1);
 			}
 		}
-	} else
+	} else {
+		/*
+		 * Checking or repairing a volume that may be mounted is unsafe
+		 * and its result unreliable: stop before touching it.
+		 */
 		ntfs_log_perror("Failed to determine whether %s is mounted",
 				path);
+		return RETURN_OPERATIONAL_ERROR;
+	}
 
 	if (ntfsck_check_hibernation_before_mount(path))
 		return RETURN_OPERATIONAL_ERROR;
 
 	if (!check_dirty_only) {
+		int operational_before_replay = fsck_operational_errors;
 		int replay = ntfsck_replay_log(path);
 
 		if (replay == RETURN_OPERATIONAL_ERROR)
 			return RETURN_OPERATIONAL_ERROR;
-		if (replay)
-			return RETURN_FS_ERRORS_LEFT_UNCORRECTED;
+		if (replay) {
+			/* An open, allocation or repair write that failed here is operational. */
+			if (fsck_operational_errors != operational_before_replay)
+				return RETURN_OPERATIONAL_ERROR;
+			/* Damage left: it must be counted, so the summary cannot say clean. */
+			if (fsck_errors - fsck_fixes <= 0)
+				fsck_err_found();
+			goto err_out;
+		}
 	}
 
+	operational_before_mount = fsck_operational_errors;
 	vol = ntfs_fsck_mount(path, option.flags);
 	if (!vol) {
 		/*
@@ -12218,14 +12271,17 @@ conflict_option:
 		if (check_dirty_only == TRUE) {
 			ntfs_log_info("Check volume: Volume mount failed, Consider volume is dirty.\n");
 			exit(RETURN_FS_ERRORS_LEFT_UNCORRECTED);
-		} else {
-			ntfs_log_error("ntfsck mount failed, errno : %d\n", errno);
-			fsck_err_found();
 		}
 
-		/* Only a failed repair write makes this an operational error. */
-		if (fsck_write_failures)
+		ntfs_log_error("ntfsck mount failed, errno : %d\n", errno);
+		/*
+		 * An open, allocation or repair write that failed during the mount
+		 * is an operational error. Otherwise the mount found damage, which
+		 * is left and reported through the summary.
+		 */
+		if (fsck_operational_errors != operational_before_mount)
 			goto operational_error;
+		fsck_err_found();
 		goto err_out;
 	}
 
@@ -12315,6 +12371,7 @@ conflict_option:
 		for (round = 0; ; round++) {
 			BOOL orphan_changed = FALSE;
 			u64 deferred_errors;
+			int operational_at_start = fsck_operational_errors;
 
 			vol->fsck_lcn_range_dup_count = 0;
 			ntfsck_check_backup_boot(vol);
@@ -12323,15 +12380,40 @@ conflict_option:
 			if (ntfsck_begin_repair(vol))
 				goto operational_error;
 
+			/* errno is read on failure below; clear any stale value. */
+			errno = 0;
 			if (ntfsck_run_repair_passes(vol, &orphan_changed)) {
 				/*
-				 * A failed write marks the volume read-only.
-				 * That is an operational error. Any other
-				 * failed repair step was not completed or was
-				 * declined. Its errors are reported as left.
+				 * The passes stopped before the end of the scan. An
+				 * open, allocation or repair write that failed during
+				 * this round (or an allocation failure reported by
+				 * errno) is an operational error.
 				 */
-				if (ntfsck_repair_enabled() && NVolReadOnly(vol))
+				int err = errno;
+
+				if ((ntfsck_repair_enabled() && NVolReadOnly(vol)) ||
+						fsck_operational_errors != operational_at_start ||
+						err == ENOMEM) {
+					ntfs_log_error("The check stopped before it finished.\n");
 					goto operational_error;
+				}
+				/*
+				 * Otherwise a check stopped on damage. The rest of the
+				 * volume was not checked, so the run must not end as
+				 * clean. If this round repaired something, re-check in
+				 * a fresh round: a repair can leave the in-memory state
+				 * stale. If not, the damage is left and the volume stays
+				 * marked dirty.
+				 */
+				if (fsck_fixes > 0 && round + 1 < max_rounds) {
+					ntfs_log_info("The check stopped after repairs; "
+							"re-checking.\n");
+					goto next_round;
+				}
+				ntfs_log_error("The check stopped before it finished; "
+						"the rest of the volume was not checked.\n");
+				if (fsck_errors - fsck_fixes <= 0)
+					fsck_err_failed();
 				goto err_out;
 			}
 			if (orphan_changed) {
@@ -12414,11 +12496,15 @@ conflict_option:
 			total_cnt = 0;
 			checked_cnt = 0;
 
+			operational_before_mount = fsck_operational_errors;
 			vol = ntfs_fsck_mount(path, option.flags);
 			if (!vol) {
 				ntfs_log_error("Failed to re-mount %s for repair "
 						"round %d (errno %d)\n", path,
 						round + 2, errno);
+				/* A failed open, allocation or write: operational. */
+				if (fsck_operational_errors != operational_before_mount)
+					goto operational_error;
 				fsck_err_found();
 				goto err_out;
 			}
@@ -12426,6 +12512,17 @@ conflict_option:
 	}
 
 err_out:
+	/*
+	 * An open, allocation or repair write that failed anywhere in the run,
+	 * even one its caller handled by skipping work, leaves the result
+	 * unproven: never report it as clean or clear the dirty flag.
+	 */
+	if (fsck_operational_errors) {
+		ntfs_log_error("An open, allocation or write failed during the "
+				"check; the result is not reliable.\n");
+		goto operational_error;
+	}
+
 	/*
 	 * Errors left are the ones the final round could not fix; the rounds before
 	 * it ended with their own errors already repaired. The found and fixed

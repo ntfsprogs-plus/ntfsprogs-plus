@@ -39,3 +39,5 @@ jobs:
       run: |
         cd tests
         ./test_all_images.sh
+    - name: check failure exit status
+      run: python3 tests/test_failure_status.py --build-dir . --temp-dir "$RUNNER_TEMP" --corpus tests/ntfs_corrupted_images/created_manually

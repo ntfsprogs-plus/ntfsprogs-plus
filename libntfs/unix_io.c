@@ -126,6 +126,8 @@ static int ntfs_device_unix_io_open(struct ntfs_device *dev, int flags)
 	}
 	if (stat(dev->d_name, &sbuf)) {
 		ntfs_log_perror("Failed to access '%s'", dev->d_name);
+		/* A missing or unreadable file is a failed open (ENOENT, EACCES). */
+		fsck_operational_errors++;
 		return -1;
 	}
 	if (S_ISBLK(sbuf.st_mode))
@@ -151,6 +153,9 @@ static int ntfs_device_unix_io_open(struct ntfs_device *dev, int flags)
 			ntfs_log_perror("Failed open device %s", dev->d_name);
 			exit(8);
 		}
+		/* EROFS may be retried read-only by the caller: count only a final failure. */
+		if (err != EROFS)
+			fsck_operational_errors++;
 		goto err_out;
 	}
 #ifdef HAVE_LINUX_FS_H
@@ -183,6 +188,8 @@ static int ntfs_device_unix_io_open(struct ntfs_device *dev, int flags)
 		err = errno;
 		ntfs_log_perror("Failed to %s lock '%s'", NDevReadOnly(dev) ?
 				"read" : "write", dev->d_name);
+		/* Another process holds the device: a failed open. */
+		fsck_operational_errors++;
 		if (close(DEV_FD(dev)))
 			ntfs_log_perror("Failed to close '%s'", dev->d_name);
 		goto err_out;

@@ -254,8 +254,8 @@ int ntfs_mft_records_write(const ntfs_volume *vol, const MFT_REF mref,
  *		-1 with errno = EIO otherwise
  */
 
-int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
-		MFT_RECORD *m)
+static int __ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
+		MFT_RECORD *m, BOOL write_fixed)
 {
 	ATTR_RECORD *a;
 	int ret = -1;
@@ -485,7 +485,7 @@ err_out:
 	if (is_fsck && mref <= FILE_MFTMirr)
 		NVolSetFsck(vol);
 
-	if (fixed) {
+	if (fixed && write_fixed) {
 		if (ntfs_mft_record_write(vol, mref, m))
 			ret = -1;
 	}
@@ -493,6 +493,23 @@ err_out:
 	if (ret)
 		errno = EIO;
 	return ret;
+}
+
+int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
+		MFT_RECORD *m)
+{
+	return __ntfs_mft_record_check(vol, mref, m, TRUE);
+}
+
+/*
+ * Same checks and repairs as ntfs_mft_record_check(), but a repaired record
+ * is only changed in memory at @m. The caller decides whether and where to
+ * write it.
+ */
+int ntfs_mft_record_check_in_memory(ntfs_volume *vol, const MFT_REF mref,
+		MFT_RECORD *m)
+{
+	return __ntfs_mft_record_check(vol, mref, m, FALSE);
 }
 
 /**

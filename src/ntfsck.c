@@ -288,11 +288,6 @@ struct orphan_mft {
 	struct ntfs_list_head ot_list;	/* Orphan Tree list */
 } orphan_mft_t;
 
-struct ntfsck_rebuilt_index {
-	struct ntfs_list_head list;
-	u64 mft_no;
-};
-
 struct ntfsck_cluster_dup_attr {
 	struct ntfs_list_head list;
 	u64 mft_no;
@@ -311,20 +306,6 @@ static void ntfsck_clear_orphan_list(void)
 		entry = ntfs_list_entry(oc_list_head.next,
 				struct orphan_mft, oc_list);
 		ntfs_list_del(&entry->oc_list);
-		free(entry);
-	}
-}
-
-NTFS_LIST_HEAD(ntfsck_rebuilt_indexes);
-
-static void ntfsck_clear_rebuilt_indexes(void)
-{
-	struct ntfsck_rebuilt_index *entry;
-
-	while (!ntfs_list_empty(&ntfsck_rebuilt_indexes)) {
-		entry = ntfs_list_entry(ntfsck_rebuilt_indexes.next,
-				struct ntfsck_rebuilt_index, list);
-		ntfs_list_del(&entry->list);
 		free(entry);
 	}
 }
@@ -371,39 +352,6 @@ static int ntfsck_note_cluster_dup_attr(ntfs_attr *na)
 		memcpy(entry->name, na->name, name_size);
 	ntfs_list_add_tail(&entry->list, &ntfsck_cluster_dup_attrs);
 	return STATUS_OK;
-}
-
-static void ntfsck_note_rebuilt_index(u64 mft_no)
-{
-	struct ntfsck_rebuilt_index *entry;
-	struct ntfs_list_head *pos;
-
-	ntfs_list_for_each(pos, &ntfsck_rebuilt_indexes) {
-		entry = ntfs_list_entry(pos, struct ntfsck_rebuilt_index, list);
-		if (entry->mft_no == mft_no)
-			return;
-	}
-	entry = ntfs_malloc(sizeof(*entry));
-	if (!entry) {
-		ntfs_log_error("Could not remember rebuilt directory index "
-				"%"PRIu64"\n", mft_no);
-		return;
-	}
-	entry->mft_no = mft_no;
-	ntfs_list_add_tail(&entry->list, &ntfsck_rebuilt_indexes);
-}
-
-static BOOL ntfsck_index_was_rebuilt(u64 mft_no)
-{
-	struct ntfsck_rebuilt_index *entry;
-	struct ntfs_list_head *pos;
-
-	ntfs_list_for_each(pos, &ntfsck_rebuilt_indexes) {
-		entry = ntfs_list_entry(pos, struct ntfsck_rebuilt_index, list);
-		if (entry->mft_no == mft_no)
-			return TRUE;
-	}
-	return FALSE;
 }
 
 struct unopenable_mft {
@@ -3012,15 +2960,6 @@ stack_of:
 					le16_to_cpu(ctx->attr->value_offset));
 
 			parent_no = le64_to_cpu(fn->parent_directory);
-			if (ntfsck_index_was_rebuilt(MREF(parent_no))) {
-				/*
-				 * Rebuilding a corrupt parent index invalidates every old reachability
-				 * claim below it. Do not repopulate that index while it is still being
-				 * repaired; keep the record reachable through the known-good lost+found
-				 * directory instead.
-				 */
-				goto add_to_lostfound;
-			}
 
 			/*
 			 * Consider that the parent could be orphaned.
@@ -4491,9 +4430,6 @@ static int ntfsck_initialize_named_index_attr(ntfs_inode *ni,
 	ir_na = NULL;
 
 	ntfs_inode_mark_dirty(ni);
-	if (name_len == 4 && !memcmp(name, NTFS_INDEX_I30,
-				4 * sizeof(ntfschar)))
-		ntfsck_note_rebuilt_index(ni->mft_no);
 
 	ret = STATUS_OK;
 out:
@@ -11900,7 +11836,6 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	orphan_filename_removals = 0;
 	orphan_recovery_changed = FALSE;
 	ntfsck_clear_orphan_list();
-	ntfsck_clear_rebuilt_indexes();
 	orphan_cnt = 0;
 	corrupt_nonresident_runlists = 0;
 	saved_fixup_suppress = NVolFsckSuppressFixupWarn(vol);

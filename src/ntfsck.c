@@ -4346,6 +4346,8 @@ static int ntfsck_init_root(ntfs_volume *vol, ntfs_inode *ni, ntfs_index_context
 out:
 	if (ir)
 		ntfs_attr_put_search_ctx(ctx);
+	/* The index block buffer is ours on every path; it was never freed. */
+	ntfs_free(ib);
 	if (bm)
 		ntfs_free(bm);
 	if (bm_na)

@@ -125,11 +125,11 @@ static struct {
 } option;
 
 /*
- * Ceiling for a plausible index_block_size: Windows and mkntfs only ever use
- * 4096, but accept any power of two up to 64K so an unusual yet walkable
- * volume is still checked; anything beyond is a corrupt field, not geometry.
+ * Ceiling for a plausible index_block_size. The value is defined by the index
+ * format (see NTFS_MAX_INDEX_BLOCK_SIZE); the tool keeps a local name because
+ * it says what the checks below use it for.
  */
-#define NTFSCK_MAX_INDEX_BLOCK_SIZE	(64 * 1024)
+#define NTFSCK_MAX_INDEX_BLOCK_SIZE	NTFS_MAX_INDEX_BLOCK_SIZE
 
 /*
  * Salvage-aggressive mode. When set, ntfsck is allowed to take destructive
@@ -5164,6 +5164,38 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni, BOOL ondisk_mft_bmp_set)
 }
 
 /*
+ * Number of MFT records the scans visit. A record is reachable only below both
+ * initialized_size and data_size of $MFT/$DATA, and only inside its allocation
+ * (see ntfsck_check_mft_size()). Those sizes come from $MFT itself; when their
+ * repair is declined (as with -n), a damaged initialized_size would make every
+ * loop over the records walk billions of records that are not there, so the
+ * scans stop at the smallest of the three.
+ */
+static s64 ntfsck_mft_reachable_records(ntfs_volume *vol)
+{
+	s64 reach = vol->mft_na->initialized_size;
+
+	if (vol->mft_na->data_size < reach)
+		reach = vol->mft_na->data_size;
+	if (vol->mft_na->allocated_size < reach)
+		reach = vol->mft_na->allocated_size;
+	return reach >> vol->mft_record_size_bits;
+}
+
+/*
+ * Size of the volume in bytes: the largest size a file on it can have. The
+ * attribute sizes read from the disk are used to size buffers, bitmaps and
+ * repairs, and a value above this describes a file that does not fit the
+ * volume, so those places bound themselves with it before allocating. The
+ * mount refuses a cluster count above what an NTFS volume can have, so the
+ * product below is bounded.
+ */
+static u64 ntfsck_volume_size(ntfs_volume *vol)
+{
+	return (u64)vol->nr_clusters << vol->cluster_size_bits;
+}
+
+/*
  * check all cluster runlist of non-resident attributes of a inode
  */
 static int ntfsck_check_inode_non_resident(ntfs_inode *ni, int set_bit)
@@ -5254,8 +5286,7 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 	if (ctx->base_ntfs_ino && ni != ctx->base_ntfs_ino)
 		return STATUS_ERROR;
 
-	nr_mft_records = (u64)(ni->vol->mft_na->initialized_size >>
-			ni->vol->mft_record_size_bits);
+	nr_mft_records = (u64)ntfsck_mft_reachable_records(ni->vol);
 
 	ntfs_init_problem_ctx(&pctx, ni, NULL, ctx, NULL, ctx->mrec, ctx->attr, NULL);
 	al_start = ni->attr_list;
@@ -7217,6 +7248,19 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 			goto out;
 		}
 
+		/*
+		 * One bit per index block, so the bitmap of an index is a small part
+		 * of the volume. data_size comes from the disk and sizes the buffer
+		 * below: a value above the volume describes a file that is not there.
+		 */
+		if (bmp_na->data_size < 0 ||
+				(u64)bmp_na->data_size > ntfsck_volume_size(vol)) {
+			ntfs_log_error("Index bitmap size (%"PRId64") does not fit "
+					"the volume; skipping the index of inode "
+					"%"PRIu64"\n", bmp_na->data_size, ni->mft_no);
+			goto out;
+		}
+
 		bmp_buf = ntfs_malloc(bmp_na->data_size);
 		if (!bmp_buf) {
 			ntfs_log_error("Failed to allocate bitmap buffer\n");
@@ -8233,8 +8277,7 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	}
 
 	// For each mft record, verify that it contains a valid file record.
-	nr_mft_records = vol->mft_na->initialized_size >>
-		vol->mft_record_size_bits;
+	nr_mft_records = ntfsck_mft_reachable_records(vol);
 	ntfs_log_verbose("Checking %"PRId64" MFT records.\n", nr_mft_records);
 
 	progress_init(&prog, 0, nr_mft_records, 1000, pb_flags);
@@ -8348,8 +8391,7 @@ static void ntfsck_verify_extent_records(ntfs_volume *vol)
 	if (!m)
 		return;
 
-	nr_mft_records = vol->mft_na->initialized_size >>
-		vol->mft_record_size_bits;
+	nr_mft_records = ntfsck_mft_reachable_records(vol);
 	for (mft_no = FILE_first_user; mft_no < nr_mft_records; mft_no++) {
 		ntfs_inode *base_ni = NULL;
 		MFT_REF base_ref;
@@ -8491,8 +8533,7 @@ static void ntfsck_verify_file_name_index_links(ntfs_volume *vol)
 	if (namespace_walk_failed)
 		return;
 
-	nr_mft_records = vol->mft_na->initialized_size >>
-		vol->mft_record_size_bits;
+	nr_mft_records = ntfsck_mft_reachable_records(vol);
 	for (mft_no = FILE_first_user; mft_no < nr_mft_records; mft_no++) {
 		ntfs_inode *ni;
 		ntfs_attr_search_ctx *ctx;
@@ -8621,8 +8662,7 @@ static void ntfsck_verify_namespace_reachability(ntfs_volume *vol)
 	if (!m)
 		return;
 
-	nr_mft_records = vol->mft_na->initialized_size >>
-		vol->mft_record_size_bits;
+	nr_mft_records = ntfsck_mft_reachable_records(vol);
 	for (mft_no = FILE_MFT; mft_no < nr_mft_records; mft_no++) {
 		problem_context_t pctx = {0, };
 
@@ -9827,6 +9867,24 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 		ntfs_log_verbose("max_lcnbmp_size : %"PRId64", "
 				"lcnbmp data_size : %"PRId64"\n",
 				max_lcnbmp_size, vol->lcnbmp_na->data_size);
+		/*
+		 * $Bitmap holds one bit per cluster of this volume, so it cannot be
+		 * longer than the volume itself. data_size comes from the disk: a
+		 * value outside that range (a sign bit set, or more bytes than the
+		 * volume has) makes the difference below meaningless, and the
+		 * difference is what the repair allocates. Leave such a size to the
+		 * checks that read the attribute itself.
+		 */
+		if (vol->lcnbmp_na->data_size < 0 ||
+				(u64)vol->lcnbmp_na->data_size >
+				ntfsck_volume_size(vol)) {
+			ntfs_log_error("$Bitmap size (%"PRId64") does not fit the "
+					"volume (%"PRIu64" bytes); leaving it "
+					"unchanged\n", vol->lcnbmp_na->data_size,
+					ntfsck_volume_size(vol));
+			fsck_err_found();
+			return -EIO;
+		}
 		if (max_lcnbmp_size > vol->lcnbmp_na->data_size) {
 			u8 *zero_bm;
 			s64 written;
@@ -11492,9 +11550,26 @@ static void ntfsck_check_mft_bitmap_size(ntfs_volume *vol)
 	MFT_RECORD mrec;
 	problem_context_t pctx = {0, };
 	s64 nr_recs, end, expected, aligned, covered, tail_size, rec;
+	s64 max_recs;
 	u8 *tail;
 
 	nr_recs = vol->mft_na->data_size >> vol->mft_record_size_bits;
+	/*
+	 * $MFT and its bitmap live in the volume, so neither can be larger than it:
+	 * $MFT cannot hold more records than the volume has room for, and $MFT/$BITMAP
+	 * cannot be longer than the volume. Both sizes come from the disk, and the
+	 * tail buffer below is sized from them.
+	 */
+	max_recs = ntfsck_volume_size(vol) >> vol->mft_record_size_bits;
+	if (nr_recs < 0 || nr_recs > max_recs)
+		nr_recs = max_recs;
+	if (bm_na->data_size < 0 ||
+			(u64)bm_na->data_size > ntfsck_volume_size(vol)) {
+		ntfs_log_error("$MFT/$BITMAP size (%"PRId64") does not fit the "
+				"volume; leaving it unchanged\n", bm_na->data_size);
+		fsck_err_found();
+		return;
+	}
 	expected = (nr_recs + 7) >> 3;
 	if (bm_na->data_size >= expected)
 		return;
@@ -11562,9 +11637,8 @@ static void ntfsck_scan_mft_records(ntfs_volume *vol)
 
 	fsck_start_step("Scan mft entries in volume.");
 
-	// For each mft record, verify that it contains a valid file record.
-	nr_mft_records = vol->mft_na->initialized_size >>
-		vol->mft_record_size_bits;
+	/* For each reachable mft record, verify that it is a valid file record. */
+	nr_mft_records = ntfsck_mft_reachable_records(vol);
 	ntfs_log_verbose("Scanning maximum %"PRId64" MFT records.\n", nr_mft_records);
 
 	ntfs_print_message(vol, PR_PRE_SCAN_MFT, &pctx);

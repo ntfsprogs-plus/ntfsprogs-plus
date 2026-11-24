@@ -933,6 +933,27 @@ ntfs_volume *ntfs_fsck_mount(const char *path __attribute__((unused)),
 	if (!vol)
 		return NULL;
 
+	/*
+	 * The cluster bitmap arrays below are sized from nr_clusters, which
+	 * comes from the boot sector's sector count. A damaged count in the
+	 * order of 2^60 asks for terabytes for these arrays. The count is not
+	 * compared with the device: a volume may be a little larger than the
+	 * image or partition that holds it (a truncated image, a partition
+	 * shrunk below its file system), and ntfsck repairs such volumes.
+	 * Windows supports at most 2^32 - 1 clusters on a volume, so a larger
+	 * count describes no NTFS volume; the arrays for that maximum take
+	 * well under a megabyte.
+	 */
+	if (vol->nr_clusters > 0xffffffffLL) {
+		ntfs_log_error("The boot sector describes %"PRId64" clusters, more "
+				"than an NTFS volume can have; refusing to size "
+				"the cluster bitmaps from it\n",
+				vol->nr_clusters);
+		ntfs_umount(vol, FALSE);
+		errno = EINVAL;
+		return NULL;
+	}
+
 	/* Read-only all-ones payload shared by every FB_ONES sentinel block. */
 	memset(ones_bm, 0xff, NTFS_BUF_SIZE);
 

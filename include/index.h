@@ -139,6 +139,13 @@ extern ntfs_index_context *ntfs_index_ctx_get(ntfs_inode *ni,
 extern void ntfs_index_ctx_put(ntfs_index_context *ictx);
 extern void ntfs_index_ctx_reinit(ntfs_index_context *ictx);
 
+/*
+ * Largest index record NTFS describes (64 KiB). An index record is a power of
+ * two of at least the sector size, and every buffer of an index walk is sized
+ * from the value the index root carries, so a larger one is damage, not a size.
+ */
+#define NTFS_MAX_INDEX_BLOCK_SIZE	(64 * 1024)
+
 extern int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 		INDEX_BLOCK *ib, u32 block_size, u64 inum, VCN vcn);
 extern int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,

@@ -987,10 +987,20 @@ int ntfs_index_lookup(const void *key, const int key_len, ntfs_index_context *ic
 	}
 
 	icx->block_size = le32_to_cpu(ir->index_block_size);
-	if (icx->block_size < NTFS_BLOCK_SIZE) {
+	/*
+	 * Every block buffer of the walk below is allocated with this size, and
+	 * the value comes from the disk. An index record is a power-of-two
+	 * multiple of the sector, no larger than NTFS_MAX_INDEX_BLOCK_SIZE; a
+	 * value outside that range describes a record that cannot exist.
+	 */
+	if (icx->block_size < NTFS_BLOCK_SIZE ||
+			icx->block_size > NTFS_MAX_INDEX_BLOCK_SIZE ||
+			(icx->block_size & (icx->block_size - 1))) {
 		errno = EINVAL;
-		ntfs_log_perror("Index block size (%d) is smaller than the "
-				"sector size (%d)", icx->block_size, NTFS_BLOCK_SIZE);
+		ntfs_log_perror("Index block size (%d) is not a power of two "
+				"between the sector size (%d) and %d",
+				icx->block_size, NTFS_BLOCK_SIZE,
+				NTFS_MAX_INDEX_BLOCK_SIZE);
 		goto err_out;
 	}
 

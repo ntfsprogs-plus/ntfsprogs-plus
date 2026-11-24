@@ -3687,6 +3687,29 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 			}
 		}
 
+		/*
+		 * name_offset and name_length come from the disk. A name that
+		 * ends past the attribute was always refused below (value_off
+		 * would have to exceed attr_len), except when name_offset is
+		 * near 0xffff: name_end then does not fit the u16 value_offset,
+		 * the repair below stores a truncated value_offset that passes
+		 * every later check, and readers of the name (the $I30 test in
+		 * the MFT record check) read up to 64 KiB past the record.
+		 * As for a non-resident attribute, the name must end inside the
+		 * attribute; where it really is cannot be known, so it is not
+		 * repaired.
+		 */
+		if ((u32)le16_to_cpu(a->name_offset) +
+				a->name_length * sizeof(ntfschar) > attr_len) {
+			ntfs_log_error("Corrupt resident attribute name"
+					" 0x%x in MFT record %lld\n",
+					(int)le32_to_cpu(a->type),
+					(long long)inum);
+			errno = EIO;
+			ret = -1;
+			goto out;
+		}
+
 		if (name_end > value_off) {
 			if (NVolFsck(vol)) {
 				fsck_err_found();

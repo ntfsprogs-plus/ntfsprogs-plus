@@ -216,6 +216,64 @@ VCN ntfs_ie_get_vcn(INDEX_ENTRY *ie)
 	return sle64_to_cpup(ntfs_ie_get_vcn_addr(ie));
 }
 
+/**
+ * ntfs_ie_fits - check that an index entry can be read inside its buffer
+ * @ie:		the entry
+ * @end:	first byte past the used part of the index buffer
+ *
+ * Index entries are reached by stepping through the previous entry's length
+ * or by the header's entries_offset, and both values come straight from the
+ * disk. A damaged value can put @ie outside the buffer, or give it a length
+ * that is too small: ntfs_ie_get_vcn() then reads the sub-node VCN before
+ * the entry, and a zero length makes a walk stop advancing. An entry can be
+ * read only if its fixed header lies before @end, its length covers that
+ * header (and, for a node entry, the 8-byte sub-node VCN kept in its last
+ * eight bytes), and the whole entry ends by @end.
+ *
+ * Return TRUE if @ie can be read, FALSE if it must be treated as corrupt.
+ */
+BOOL ntfs_ie_fits(const INDEX_ENTRY *ie, const u8 *end)
+{
+	u32 len, min = sizeof(INDEX_ENTRY_HEADER);
+
+	if (!ie || !end || (const u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > end)
+		return FALSE;
+	len = le16_to_cpu(ie->length);
+	if (ie->ie_flags & INDEX_ENTRY_NODE)
+		min += sizeof(leVCN);
+	return len >= min && len <= (u32)(end - (const u8 *)ie);
+}
+
+/*
+ * End of the used part of the index buffer the context is in: the index
+ * root in the MFT record, or the current index block. index_length comes
+ * from the disk, so for the root the end is also kept inside the record the
+ * root lives in, and for a block inside the block.
+ */
+static u8 *ntfs_ictx_index_end(ntfs_index_context *icx)
+{
+	INDEX_HEADER *ih;
+	u8 *end, *limit;
+
+	if (icx->is_in_root) {
+		MFT_RECORD *m = icx->actx ? icx->actx->mrec : icx->ni->mrec;
+
+		if (!icx->ir)
+			return NULL;
+		ih = &icx->ir->index;
+		limit = (u8 *)m + icx->ni->vol->mft_record_size;
+		if ((u8 *)ih < (u8 *)m || (u8 *)ih >= limit)
+			limit = NULL;	/* root not in this record: no record bound */
+	} else {
+		if (!icx->ib)
+			return NULL;
+		ih = &icx->ib->index;
+		limit = (u8 *)icx->ib + icx->block_size;
+	}
+	end = (u8 *)ih + le32_to_cpu(ih->index_length);
+	return (limit && end > limit) ? limit : end;
+}
+
 static INDEX_ENTRY *ntfs_ie_get_first(INDEX_HEADER *ih)
 {
 	return (INDEX_ENTRY *)((u8 *)ih + le32_to_cpu(ih->entries_offset));
@@ -715,9 +773,12 @@ static int ntfs_ie_lookup(const void *key, const int key_len,
 	 * reach the last entry.
 	 */
 	for (ie = ntfs_ie_get_first(ih); ; ie = ntfs_ie_get_next(ie)) {
-		/* Bounds checks. */
-		if ((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end ||
-				(u8 *)ie + le16_to_cpu(ie->length) > index_end) {
+		/*
+		 * Bounds checks. The entry must end inside the node and be long
+		 * enough to hold its header (a zero length would not advance
+		 * this loop) and, for a node entry, the sub-node VCN.
+		 */
+		if (!ntfs_ie_fits(ie, index_end)) {
 			errno = ERANGE;
 			ntfs_log_error("Index entry out of bounds in inode "
 					"%llu.\n",
@@ -2283,12 +2344,25 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 	entry = ie;
 
 	do {
+		/*
+		 * The sub-node VCN is read from the last eight bytes of the
+		 * entry, so the entry must lie inside the current buffer and
+		 * be long enough to hold it.
+		 */
+		if (!ntfs_ie_fits(entry, ntfs_ictx_index_end(ictx))) {
+			ntfs_log_error("Index entry out of bounds in inode %llu\n",
+					(unsigned long long)ictx->ni->mft_no);
+			errno = EIO;
+			return NULL;
+		}
 		vcn = ntfs_ie_get_vcn(entry);
 		if (ictx->is_in_root) {
 
 			/* down from level zero */
 
 			ictx->ib = (INDEX_BLOCK*)ntfs_malloc(ictx->block_size);
+			if (!ictx->ib)
+				return NULL;
 			ictx->pindex = 1;
 			ictx->is_in_root = FALSE;
 		} else {
@@ -2305,6 +2379,14 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 
 			ictx->entry = ntfs_ie_get_first(&ictx->ib->index);
 			entry = ictx->entry;
+			/* entries_offset comes from the disk as well. */
+			if (!ntfs_ie_fits(entry, ntfs_ictx_index_end(ictx))) {
+				ntfs_log_error("First index entry out of bounds in "
+						"inode %llu\n",
+						(unsigned long long)ictx->ni->mft_no);
+				errno = EIO;
+				return NULL;
+			}
 			ret = ntfs_index_entry_inconsistent(ictx->ni->vol, entry,
 					ictx->ir->collation_rule, ictx->ni->mft_no,
 					ictx);
@@ -2430,6 +2512,18 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 
 		next = (INDEX_ENTRY*)((char*)ie + le16_to_cpu(ie->length));
 		++ictx->parent_pos[ictx->pindex];
+
+		/*
+		 * The step above uses the current entry's length from the
+		 * disk; the entry it lands on must lie inside the buffer
+		 * before any of its fields is read.
+		 */
+		if (!ntfs_ie_fits(next, ntfs_ictx_index_end(ictx))) {
+			ntfs_log_error("Index entry out of bounds in inode %llu\n",
+					(unsigned long long)ictx->ni->mft_no);
+			errno = EIO;
+			return NULL;
+		}
 
 		ret = ntfs_index_entry_inconsistent(vol, next, cr,
 				ictx->ni->mft_no, ictx);

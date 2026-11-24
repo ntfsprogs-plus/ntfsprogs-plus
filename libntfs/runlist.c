@@ -1053,15 +1053,23 @@ mpa_err:
 		 * rl freed in ntfs_runlists_merge() when success,
 		 * but in case of failure, nothing to free.
 		 * should handle this case.
+		 *
+		 * On a failed merge (e.g. the mapping pairs of an extent
+		 * overlap runs already mapped, ERANGE) both runlists are left
+		 * unmodified. @old_rl is not ours: it is the caller's runlist
+		 * (na->rl in ntfs_attr_map_runlist(), vol->mft_na->rl in
+		 * ntfs_mft_load()) which the caller keeps on error and frees
+		 * later in ntfs_attr_close(). Freeing it here, as this code
+		 * did, left na->rl dangling, giving a use-after-free in
+		 * ntfs_attr_find_vcn() and a double free in ntfs_attr_close().
+		 * Only free our own @rl and keep @old_rl, as documented above.
+		 * Only ntfs_decompress_cluster_run() (@part_rl given) takes
+		 * ownership of @old_rl on error, through *@part_rl.
 		 */
 		temp_rl = old_rl;
 		old_rl = ntfs_runlists_merge(old_rl, rl);
-		if (!old_rl) {
-			if (NVolIsOnFsck(vol))
-				goto err_out_fsck;
-			else
-				free(temp_rl);
-		}
+		if (!old_rl && NVolIsOnFsck(vol) && part_rl)
+			goto err_out_fsck;
 	} else
 		free(rl);
 
@@ -1082,7 +1090,15 @@ err_out:
 			(unsigned long long)rl[rlpos].length,
 			(unsigned long long)vcn);
 
-	if (NVolIsOnFsck(vol)) {
+	/*
+	 * Merging the partial runlist into @old_rl consumes @old_rl (it is
+	 * reallocated by ntfs_runlists_merge(), or freed at err_out_fsck),
+	 * so it may only be done when the caller takes the result back
+	 * through @part_rl. Plain ntfs_mapping_pairs_decompress() callers
+	 * pass no @part_rl and keep using @old_rl (their na->rl) after an
+	 * error, so for them @old_rl must stay untouched: only free @rl.
+	 */
+	if (NVolIsOnFsck(vol) && part_rl) {
 		/* Setup terminating runlist element */
 		rl[rlpos].lcn = (LCN)LCN_ENOENT;
 		rl[rlpos].vcn = rlpos ? rl[rlpos - 1].vcn + rl[rlpos - 1].length : 0;
@@ -1106,10 +1122,7 @@ err_out_fsck:
 		}
 		ntfs_debug_runlist_dump(rl);
 
-		if (part_rl)
-			*part_rl = rl;
-		else if (rl)
-			free(rl);
+		*part_rl = rl;
 	} else if (rl)
 		free(rl);
 

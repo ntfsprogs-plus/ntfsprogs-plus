@@ -6765,6 +6765,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	u64 mft_no;
 	int ret = STATUS_OK;
 	FILE_NAME_ATTR *ie_fn = &ie->key.file_name;
+	u16 key_len;
 
 	if (!ie)
 		return STATUS_ERROR;
@@ -6904,9 +6905,28 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 remove_index:
 		fsck_err_found();
 		corrupt_index_entries++;
+		/*
+		 * The key is copied so the entry can be found again and removed
+		 * later, and that lookup collates the file name inside it.
+		 * key_length and file_name_length come from the disk, and the
+		 * walk only proved the entry itself lies inside its buffer: a
+		 * key_length larger than the entry made the copy read past the
+		 * index (up to 64 KiB). Copy the key only when it and its file
+		 * name lie inside the entry; otherwise queue no key, so the
+		 * entry is still counted as corrupt and reported as not
+		 * removed.
+		 */
+		key_len = le16_to_cpu(ie->key_length);
+		if ((u32)key_len + offsetof(INDEX_ENTRY, key) >
+				le16_to_cpu(ie->length) ||
+				key_len < offsetof(FILE_NAME_ATTR, file_name) ||
+				offsetof(FILE_NAME_ATTR, file_name) +
+				ie_fn->file_name_length * sizeof(ntfschar) >
+				key_len)
+			key_len = 0;
 		if (ntfsck_defer_index_repair(NTFSCK_DEFER_CORRUPT_ENTRY,
 				ictx->ni->mft_no, ie->indexed_file, ie_fn,
-				le16_to_cpu(ie->key_length), 0, 0,
+				key_len, 0, 0, key_len &&
 				ntfsck_cmp_parent_mft_sequence(ictx->ni, ie_fn)))
 			ret = STATUS_ERROR;
 		else
@@ -11734,7 +11754,10 @@ static void ntfsck_apply_deferred_index_repairs(ntfs_volume *vol,
 			failed_corrupt_entries++;
 			continue;
 		}
-		if (!ntfs_index_lookup(repair->data, repair->data_len, ictx) &&
+		/* No key was queued when the entry's key was not readable. */
+		if (repair->data_len &&
+				!ntfs_index_lookup(repair->data,
+					repair->data_len, ictx) &&
 				ictx->entry->indexed_file == repair->indexed_file) {
 			if (!ntfs_index_rm(ictx)) {
 				fixed = TRUE;

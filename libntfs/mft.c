@@ -420,6 +420,22 @@ static int __ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 		}
 
 		/*
+		 * The loop stops once fewer than resident_end bytes are left,
+		 * so @a may now have no room even for its type: attrs_offset
+		 * from the disk may equal the record size (the check above
+		 * allows it), the attributes may end within four bytes of the
+		 * record end, or a repaired attribute length may run past it
+		 * (space < 0). Reading the type there reads past the record;
+		 * a record with no room for its AT_END marker is corrupt.
+		 */
+		if (space < (s32)sizeof(ATTR_TYPES)) {
+			ntfs_log_error("Corrupted MFT record %llu: no room for "
+					"the attribute end marker\n",
+					(unsigned long long)MREF(mref));
+			goto err_out;
+		}
+
+		/*
 		 * We are supposed to reach an AT_END. Check bytes_in_use value.
 		 * +8 mean the attribute terminator.
 		 */

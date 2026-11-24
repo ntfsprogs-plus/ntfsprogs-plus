@@ -233,6 +233,49 @@ static void ntfs_fsck_scratch_free(ntfs_volume *vol)
  * mft_no : mft number to set on mft bitmap
  * value : 1 if set, 0 if clear
  */
+/*
+ * -n leaves a record as found. A record that is checked while mounting and
+ * again by the pass 1 scan would then be counted and printed twice, and
+ * once more for each further read. Remember, for each record and check,
+ * that it has been reported. A repair changes the record, so it is not
+ * asked to remember anything there.
+ *
+ * Returns TRUE if the finding is to be reported now. A record number that
+ * cannot be tracked, or a failed allocation, also returns TRUE: reporting
+ * twice is better than not reporting.
+ */
+BOOL ntfs_fsck_first_report(ntfs_volume *vol, u64 mft_no, int what)
+{
+	const u64 max_pages = (u64)1 << 17;	/* covers 2^32 records, 2 bits each */
+	u64 bit = mft_no * FSCK_REPORT_KINDS + what;
+	u64 page = bit >> (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
+	s64 in_page = bit - (page << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS));
+
+	if (!NVolFsNoRepair(vol))
+		return TRUE;
+	if (mft_no >= ((u64)1 << 32) || page >= max_pages)
+		return TRUE;
+	if (page >= vol->fsck_err_seen_pages) {
+		u8 **pages = ntfs_realloc(vol->fsck_err_seen, (page + 1) * sizeof(u8 *));
+
+		if (!pages)
+			return TRUE;
+		memset(pages + vol->fsck_err_seen_pages, 0,
+				(page + 1 - vol->fsck_err_seen_pages) * sizeof(u8 *));
+		vol->fsck_err_seen = pages;
+		vol->fsck_err_seen_pages = page + 1;
+	}
+	if (!vol->fsck_err_seen[page]) {
+		vol->fsck_err_seen[page] = (u8 *)ntfs_calloc(NTFS_BUF_SIZE);
+		if (!vol->fsck_err_seen[page])
+			return TRUE;
+	}
+	if (ntfs_bit_get(vol->fsck_err_seen[page], in_page))
+		return FALSE;
+	ntfs_bit_set(vol->fsck_err_seen[page], in_page, 1);
+	return TRUE;
+}
+
 int ntfs_fsck_set_mftbmp_value(ntfs_volume *vol, u64 mft_no, int value)
 {
 	u32 bm_i = FB_ROUND_DOWN(mft_no >> NTFSCK_BYTE_TO_BITS);

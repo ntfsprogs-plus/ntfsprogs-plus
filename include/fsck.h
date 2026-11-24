@@ -31,6 +31,14 @@ enum {
 	FSCK_BMP_FINAL = 0,
 };
 
+/* Checks of an MFT record whose finding is reported once per run with -n. */
+enum {
+	FSCK_REPORT_MFT_FLAGS,
+	FSCK_REPORT_MFT_NEXT_INSTANCE,
+	FSCK_REPORT_KINDS,
+};
+
+BOOL ntfs_fsck_first_report(ntfs_volume *vol, u64 mft_no, int what);
 int ntfs_fsck_set_mftbmp_value(ntfs_volume *vol, u64 mft_no, int value);
 char ntfs_fsck_mftbmp_get(ntfs_volume *vol, const u64 bit);
 int ntfs_fsck_mftbmp_clear(ntfs_volume *vol, u64 mft_no);

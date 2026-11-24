@@ -53,6 +53,7 @@
 #include "dir.h"
 #include "inode.h"
 #include "volume.h"
+#include "fsck.h"
 #include "layout.h"
 #include "lcnalloc.h"
 #include "mft.h"
@@ -439,33 +440,45 @@ static int __ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 						le16_to_cpu(MFT_RECORD_IS_DIRECTORY);
 			}
 			expected_flags &= valid_flags;
-			if (is_fsck && !NVolFsNoRepair(vol) &&
+			/*
+			 * These two checks run in a read-only check too, so -n
+			 * reports what a repair would change; only a repair
+			 * changes the record.
+			 */
+			if (is_fsck &&
 					(current_flags != expected_flags) &&
-					(can_derive_directory || (current_flags & ~valid_flags))) {
+					(can_derive_directory || (current_flags & ~valid_flags)) &&
+					ntfs_fsck_first_report(vol, MREF(mref), FSCK_REPORT_MFT_FLAGS)) {
 				fsck_err_found();
-				ntfs_log_error("Inode(%llu): MFT flags are corrupted (0x%x <> 0x%x). Fixed.\n",
+				ntfs_log_error("Inode(%llu): MFT flags are corrupted (0x%x <> 0x%x).%s\n",
 						(unsigned long long)MREF(mref),
 						(unsigned int)current_flags,
-						(unsigned int)expected_flags);
-				m->flags = cpu_to_le16(expected_flags);
-				fixed = TRUE;
-				fsck_err_fixed();
+						(unsigned int)expected_flags,
+						NVolFsNoRepair(vol) ? "" : " Fixed.");
+				if (!NVolFsNoRepair(vol)) {
+					m->flags = cpu_to_le16(expected_flags);
+					fixed = TRUE;
+					fsck_err_fixed();
+				}
 			}
 			expected_next_attr_instance = saw_attr
 					? (u16)((max_attr_instance + 1) & 0xffff)
 					: 0;
-			if (is_fsck && !NVolFsNoRepair(vol) &&
+			if (is_fsck &&
 					(MREF(mref) > FILE_MFTMirr || vol->mftmirr_na) &&
 					(le16_to_cpu(m->next_attr_instance) <=
 					 max_attr_instance) &&
 					(le16_to_cpu(m->next_attr_instance) !=
-					 expected_next_attr_instance)) {
+					 expected_next_attr_instance) &&
+					ntfs_fsck_first_report(vol, MREF(mref), FSCK_REPORT_MFT_NEXT_INSTANCE)) {
 				fsck_err_found();
 				vol->fsck_mft_next_attr_instance_fix_count++;
-				m->next_attr_instance =
-						cpu_to_le16(expected_next_attr_instance);
-				fixed = TRUE;
-				fsck_err_fixed();
+				if (!NVolFsNoRepair(vol)) {
+					m->next_attr_instance =
+							cpu_to_le16(expected_next_attr_instance);
+					fixed = TRUE;
+					fsck_err_fixed();
+				}
 			}
 			if (biu_needs_fix || (biu != offset + 8)) {
 				fsck_err_found();

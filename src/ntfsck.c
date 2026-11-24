@@ -11904,12 +11904,6 @@ static int ntfsck_run_repair_passes(ntfs_volume *vol, BOOL *orphan_changed)
 	cluster_dup_clusters = 0;
 	cluster_dup_attr_list_incomplete = FALSE;
 	ntfsck_clear_cluster_dup_attrs();
-	vol->fsck_mft_next_attr_instance_fix_count = 0;
-	vol->fsck_mft_in_use_flag_fix_count = 0;
-	vol->fsck_mft_not_in_use_flag_fix_count = 0;
-	vol->fsck_missing_standard_information_count = 0;
-	vol->fsck_corrupt_mft_record_count = 0;
-	vol->fsck_mft_seqno_mismatch_count = 0;
 	clear_mft_cnt = 0;
 	orphan_missing_parent_references = 0;
 	orphan_parent_add_failures = 0;
@@ -12050,8 +12044,9 @@ out:
 				vol->fsck_mft_seqno_mismatch_count);
 	if (vol->fsck_mft_next_attr_instance_fix_count) {
 		ntfs_log_error("  * MFT next attribute instance: %"PRIu64" corrupted "
-				"record(s) were fixed.\n",
-				vol->fsck_mft_next_attr_instance_fix_count);
+				"record(s) were %s.\n",
+				vol->fsck_mft_next_attr_instance_fix_count,
+				NVolFsNoRepair(vol) ? "found" : "fixed");
 	}
 	if (vol->fsck_mft_in_use_flag_fix_count) {
 		ntfs_log_error("  * MFT in-use flag: %"PRIu64" record(s) were restored "
@@ -12063,6 +12058,17 @@ out:
 				"are missing the attribute.\n",
 				vol->fsck_missing_standard_information_count);
 	}
+	/*
+	 * The record counts above include records checked while the volume
+	 * was mounted, before this round's passes; reset them only once they
+	 * are reported.
+	 */
+	vol->fsck_mft_next_attr_instance_fix_count = 0;
+	vol->fsck_mft_in_use_flag_fix_count = 0;
+	vol->fsck_mft_not_in_use_flag_fix_count = 0;
+	vol->fsck_missing_standard_information_count = 0;
+	vol->fsck_corrupt_mft_record_count = 0;
+	vol->fsck_mft_seqno_mismatch_count = 0;
 	if (fixup_salvage_candidates) {
 		ntfs_log_error("NTFS fixup: %"PRIu64" salvageable MFT record(s) "
 				"were found", fixup_salvage_candidates);

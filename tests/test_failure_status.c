@@ -200,6 +200,7 @@ void *calloc(size_t n, size_t m)
 #define IMAGE_SIZE		(64LL * 1024 * 1024)
 #define MFTMIRR_RECORD		1	/* $MFTMirr */
 #define ATTRDEF_RECORD		4	/* $AttrDef */
+#define ROOT_RECORD		5	/* root directory */
 #define BITMAP_RECORD		6	/* $Bitmap */
 #define VOLUME_RECORD		3	/* $Volume */
 #define VOLUME_INFORMATION	0x70
@@ -1521,6 +1522,109 @@ static void test_crash_after_each_write_leaves_volume_dirty(void)
 	check(!dirty[total], "the last write did not clear the flag");
 }
 
+/* Clear the directory bit of the root directory record. */
+static void clear_root_directory_bit(const char *image, const struct geometry *g)
+{
+	unsigned char rec[4096];
+	int fd = open(image, O_RDWR);
+
+	require(fd >= 0, image);
+	read_record(fd, g, g->mft, ROOT_RECORD, rec);
+	require(le16(rec + 22) == 3, "root record flags");
+	put_le(rec + 22, 1, 2);
+	write_record(fd, g, g->mft, ROOT_RECORD, rec);
+	close(fd);
+}
+
+/*
+ * -n must report what -a would change and change nothing: exit 4 with the
+ * report, the image unchanged; -a then repairs it (exit 1) and a recheck is
+ * clean.
+ */
+static void read_only_reports_repair(const char *name,
+		void (*damage)(const char *, const struct geometry *),
+		const char *report, const char *summary)
+{
+	char image[PATH_MAX], before[PATH_MAX];
+	struct geometry g;
+
+	clone(image, name);
+	geometry(image, &g);
+	damage(image, &g);
+	path_in(before, work, "read-only-before.img");
+	copy_file(image, before);
+	check(run_ntfsck2("-n", image, NULL) == 4, "-n: expected exit status 4 (errors left)");
+	check(has(report), "-n did not report the error");
+	check(has_summary(), "-n: no errors-left summary");
+	/* One damaged record is one error, however often it is read. */
+	check(!summary || has(summary), "-n: the record was not counted exactly once");
+	check(same_file(image, before), "-n changed the image");
+	check(run_ntfsck2("-a", image, NULL) == 1, "-a: expected exit status 1 (repaired)");
+	check(run_ntfsck2("-n", image, NULL) == 0, "recheck after the repair: expected 0");
+}
+
+static void test_read_only_reports_next_attribute_instance(void)
+{
+	read_only_reports_repair("n-next-instance.img", damage_next_instance,
+		"MFT next attribute instance: 1 corrupted record(s) were found.", NULL);
+}
+
+static void test_read_only_reports_directory_bit(void)
+{
+	read_only_reports_repair("n-directory-bit.img", clear_root_directory_bit,
+		"Inode(5): MFT flags are corrupted (0x1 <> 0x3).\n", NULL);
+}
+
+/*
+ * $AttrDef is checked while mounting and read again by the pass 1 scan. With -n
+ * the record stays as found, so each check must report it only once.
+ */
+static void damage_attrdef_next_instance(const char *image, const struct geometry *g)
+{
+	unsigned char rec[4096];
+	unsigned int mirrored = g->cluster / g->record;
+	int fd = open(image, O_RDWR);
+
+	require(fd >= 0, image);
+	read_record(fd, g, g->mft, ATTRDEF_RECORD, rec);
+	require(le16(rec + 40) > 1, "next attribute instance");
+	put_le(rec + 40, 0, 2);
+	write_record(fd, g, g->mft, ATTRDEF_RECORD, rec);
+	if (mirrored > ATTRDEF_RECORD)
+		write_record(fd, g, g->mirror, ATTRDEF_RECORD, rec);
+	close(fd);
+}
+
+static void damage_attrdef_flags(const char *image, const struct geometry *g)
+{
+	unsigned char rec[4096];
+	unsigned int mirrored = g->cluster / g->record;
+	int fd = open(image, O_RDWR);
+
+	require(fd >= 0, image);
+	read_record(fd, g, g->mft, ATTRDEF_RECORD, rec);
+	require(le16(rec + 22) == 1, "$AttrDef record flags");
+	put_le(rec + 22, 0x11, 2);	/* a flag bit that no record may carry */
+	write_record(fd, g, g->mft, ATTRDEF_RECORD, rec);
+	if (mirrored > ATTRDEF_RECORD)
+		write_record(fd, g, g->mirror, ATTRDEF_RECORD, rec);
+	close(fd);
+}
+
+static void test_read_only_counts_attrdef_next_instance_once(void)
+{
+	read_only_reports_repair("n-attrdef-instance.img", damage_attrdef_next_instance,
+		"MFT next attribute instance: 1 corrupted record(s) were found.",
+		"1 errors left (errors:1, fixed:0)");
+}
+
+static void test_read_only_counts_attrdef_flags_once(void)
+{
+	read_only_reports_repair("n-attrdef-flags.img", damage_attrdef_flags,
+		"Inode(4): MFT flags are corrupted (0x11 <> 0x1).\n",
+		"1 errors left (errors:1, fixed:0)");
+}
+
 static void run_case(const char *name, void (*fn)(void))
 {
 	current = name;
@@ -1568,6 +1672,11 @@ static const struct {
 	  test_crash_after_first_mount_write_leaves_volume_dirty },
 	{ "crash_after_each_write_leaves_volume_dirty",
 	  test_crash_after_each_write_leaves_volume_dirty },
+	{ "read_only_reports_next_attribute_instance",
+	  test_read_only_reports_next_attribute_instance },
+	{ "read_only_reports_directory_bit", test_read_only_reports_directory_bit },
+	{ "read_only_counts_attrdef_next_instance_once", test_read_only_counts_attrdef_next_instance_once },
+	{ "read_only_counts_attrdef_flags_once", test_read_only_counts_attrdef_flags_once },
 };
 
 static void absolute(char *dst, const char *src, const char *what)

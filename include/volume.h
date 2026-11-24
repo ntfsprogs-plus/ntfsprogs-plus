@@ -389,6 +389,8 @@ struct _ntfs_volume {
 	u32 *fsck_alloc_setcnt;	/* per-block set-bit counts, for all-ones collapse */
 	u8 **fsck_mft_bitmap;	/* mft bitmap of fsck */
 	u64 max_fmb_cnt;
+	u8 **fsck_err_seen;	/* pages of "already reported" bits, see ntfs_fsck_first_report() */
+	u32 fsck_err_seen_pages;	/* number of entries in fsck_err_seen */
 	ntfs_mount_flags option_flags;	/* fsck option flags */
 
 #ifdef XATTR_MAPPINGS

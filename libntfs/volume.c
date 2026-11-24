@@ -207,6 +207,9 @@ static int __ntfs_volume_release(ntfs_volume *v)
 	}
 
 	ntfs_free_lru_caches(v);
+	while (v->fsck_err_seen_pages)
+		free(v->fsck_err_seen[--v->fsck_err_seen_pages]);
+	free(v->fsck_err_seen);
 	free(v->vol_name);
 	free(v->upcase);
 	if (v->locase) free(v->locase);

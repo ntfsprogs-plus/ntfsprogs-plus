@@ -9321,6 +9321,17 @@ static BOOL ntfsck_secure_index_present(ntfs_index_context *ictx,
 }
 
 /*
+ * $Secure:$SDS is walked in blocks up to its data_size, which comes from the
+ * disk. A real stream fits its allocation and the volume; a damaged size
+ * made the walks read billions of blocks. Return FALSE for such a size.
+ */
+static BOOL ntfsck_sds_size_valid(ntfs_attr *na)
+{
+	return na->data_size >= 0 && na->data_size <= na->allocated_size &&
+		(u64)na->data_size <= ntfsck_volume_size(na->ni->vol);
+}
+
+/*
  * ntfsck_rebuild_secure_sdh - regenerate $Secure's $SDH index from $SDS/$SII.
  *
  * $SDH is a pure accelerator: it maps a descriptor's hash to the same
@@ -9354,7 +9365,7 @@ static int ntfsck_rebuild_secure_sdh(ntfs_inode *ni, ntfs_index_context *sii)
 		return -1;
 
 	na = ntfs_attr_open(ni, AT_DATA, STREAM_SDS, 4);
-	if (!na)
+	if (!na || !ntfsck_sds_size_valid(na))
 		goto out;
 	data_size = na->data_size;
 
@@ -9480,6 +9491,13 @@ static void ntfsck_check_secure(ntfs_inode *ni)
 	if (!na)
 		return;		/* no $SDS stream - nothing to validate */
 
+	if (!ntfsck_sds_size_valid(na)) {
+		fsck_err_found();
+		ntfs_log_error("$Secure $SDS size (%"PRId64") does not fit its "
+				"allocation or the volume; not checking it\n",
+				na->data_size);
+		goto out;
+	}
 	data_size = na->data_size;
 	if (data_size < (s64)NTFSCK_SDS_HDR)
 		goto out;
@@ -10180,6 +10198,26 @@ typedef u8 *(*get_bmp_func)(ntfs_volume *, s64);
  * Count clusters that the on-disk $Bitmap marks in-use but the fsck-computed
  * bitmap marks free. These are the clusters a FINAL apply would release.
  */
+/*
+ * Bytes of $Bitmap or $MFT/$BITMAP that describe something: one bit per
+ * cluster of the volume, or per record that can exist (see
+ * ntfsck_mft_reachable_records()). The loops that compare, count or write
+ * these bitmaps walk them in blocks up to their data_size, which comes from
+ * the disk; when its repair is declined, a damaged value made them read, and
+ * ask for working blocks, far past both, for hours. They stop here instead;
+ * the size itself is reported by the checks of $Bitmap and $MFT/$BITMAP.
+ */
+static s64 ntfsck_bitmap_bytes(ntfs_volume *vol, ntfs_attr *na)
+{
+	s64 bound;
+
+	if (na == vol->lcnbmp_na)
+		bound = (vol->nr_clusters + 7) >> 3;
+	else
+		bound = (ntfsck_mft_reachable_records(vol) + 7) >> 3;
+	return na->data_size < bound ? na->data_size : bound;
+}
+
 static s64 ntfsck_bitmap_count_to_free(ntfs_volume *vol, ntfs_attr *na,
 		get_bmp_func func)
 {
@@ -10194,7 +10232,7 @@ static s64 ntfsck_bitmap_count_to_free(ntfs_volume *vol, ntfs_attr *na,
 
 	pos = 0;
 	count = NTFS_BUF_SIZE;
-	total = na->data_size;
+	total = ntfsck_bitmap_bytes(vol, na);
 	remain = total;
 	if (total < count)
 		count = total;
@@ -10290,12 +10328,12 @@ static int ntfsck_count_bitmap_mismatches(ntfs_volume *vol, ntfs_attr *na,
 
 	pos = 0;
 	count = NTFS_BUF_SIZE;
-	total = na->data_size;
+	total = ntfsck_bitmap_bytes(vol, na);
 	remain = total;
 	if (total < count)
 		count = total;
 
-	while (remain) {
+	while (remain > 0) {
 		rcnt = ntfs_attr_pread(na, pos, count, disk_bm);
 		if (rcnt != count) {
 			ntfs_log_error("Couldn't get $Bitmap while counting mismatches\n");
@@ -10359,7 +10397,7 @@ static int ntfsck_apply_bitmap(ntfs_volume *vol, ntfs_attr *na, get_bmp_func fun
 
 	pos = 0;
 	count = NTFS_BUF_SIZE;
-	total = na->data_size;
+	total = ntfsck_bitmap_bytes(vol, na);
 	remain = total;
 
 	if (total < count)

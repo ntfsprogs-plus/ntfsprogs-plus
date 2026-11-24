@@ -277,7 +277,26 @@ INDEX_ENTRY * __ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
 		goto put_err_out;
 	}
 
-	/* Consistency check of ir done while fetching attribute */
+	/*
+	 * entries_offset and index_length come from the disk. Under fsck,
+	 * ntfs_attr_inconsistent() leaves the INDEX_ROOT header unchecked so
+	 * that ntfsck can repair it field by field later, but this lookup
+	 * also runs before that repair (hiberfil.sys at mount). Unbounded,
+	 * the two 32-bit values put index_end and the first entry gigabytes
+	 * past the MFT record, and the walk below reads there. The entry
+	 * table must lie inside the root's value, which the attribute check
+	 * keeps inside the MFT record.
+	 */
+	if (le32_to_cpu(ctx->attr->value_length) < sizeof(INDEX_ROOT) ||
+			le32_to_cpu(ir->index.index_length) >
+			le32_to_cpu(ctx->attr->value_length) -
+			offsetof(INDEX_ROOT, index) ||
+			le32_to_cpu(ir->index.entries_offset) >
+			le32_to_cpu(ir->index.index_length)) {
+		ntfs_log_error("Index root is corrupt in inode %lld\n",
+				(unsigned long long)dir_ni->mft_no);
+		goto put_err_out;
+	}
 	index_end = (u8*)&ir->index + le32_to_cpu(ir->index.index_length);
 
 	/* The first index entry. */

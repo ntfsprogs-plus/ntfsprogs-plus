@@ -35,6 +35,10 @@ jobs:
       run: |
         cc -O2 -Wall -Wextra -Werror -o tests/test_volume_flags tests/test_volume_flags.c
         tests/test_volume_flags --build-dir . --temp-dir "$RUNNER_TEMP"
+    - name: check index entry bounds and on-disk sizes
+      run: |
+        cc -O2 -Wall -Wextra -Werror -o tests/test_index_entry_bounds tests/test_index_entry_bounds.c
+        tests/test_index_entry_bounds --build-dir . --temp-dir "$RUNNER_TEMP"
     - name: check security descriptor layouts
       run: python3 tests/test_secure_descriptors.py --build-dir .
     - name: check external image runner

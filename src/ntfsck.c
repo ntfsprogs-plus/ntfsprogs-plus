@@ -7266,9 +7266,12 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	index_end = (u8 *)ir_buf + ir_entries_len;
 	for (; (u8 *)ie < index_end;
 			ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
-		/* check length bound */
-		if ((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end ||
-				(u8 *)ie + le16_to_cpu(ie->length) > index_end) {
+		/*
+		 * Check the entry bounds before reading it. The length must also
+		 * cover the entry header and, for a node entry, the sub-node VCN
+		 * read below; a zero length would not advance this loop.
+		 */
+		if (!ntfs_ie_fits(ie, index_end)) {
 			ntfs_log_error("Index root entry out of bounds in"
 					" inode %"PRId64"\n", ni->mft_no);
 			goto initialize_index;
@@ -7447,9 +7450,7 @@ bad_root_subnode:
 			 * ie->ie_flags or the sub-node VCN first would over-read the index block
 			 * buffer.
 			 */
-			if (((u8 *)ie < (u8 *)ia) ||
-					((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end) ||
-					((u8 *)ie + le16_to_cpu(ie->length) > index_end)) {
+			if (((u8 *)ie < (u8 *)ia) || !ntfs_ie_fits(ie, index_end)) {
 				ntfs_log_error("Index entry out of bounds in inode "
 						"(%"PRId64")\n", ni->mft_no);
 				goto initialize_index;
@@ -8060,6 +8061,19 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		/* The first index entry. */
 		next = (INDEX_ENTRY *)((u8 *)&ir->index +
 				le32_to_cpu(ir->index.entries_offset));
+
+		/*
+		 * entries_offset and index_length come from the disk: the first
+		 * entry must lie inside the root's value before it is read.
+		 */
+		if (!ntfs_ie_fits(next, min((u8 *)&ir->index +
+					le32_to_cpu(ir->index.index_length),
+					(u8 *)ctx->attr + le32_to_cpu(ctx->attr->length)))) {
+			ntfs_log_error("Index root entry out of bounds in inode "
+					"%"PRIu64"\n", dir_ni->mft_no);
+			namespace_walk_failed = TRUE;
+			goto err_continue;
+		}
 
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
 			/* read $IA */

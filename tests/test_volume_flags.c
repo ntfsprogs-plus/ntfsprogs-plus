@@ -26,6 +26,7 @@
 #include <sys/wait.h>
 
 #define IMAGE_SIZE		(64LL * 1024 * 1024)
+#define MFTMIRR_RECORD		1	/* $MFTMirr */
 #define VOLUME_RECORD		3	/* $Volume */
 #define VOLUME_INFORMATION	0x70
 #define FLAGS_OFFSET		10	/* reserved (8) + major (1) + minor (1) */
@@ -279,7 +280,31 @@ static void set_flags(const char *image, unsigned int value)
 }
 
 /* Set `before`, run ntfsck -a, expect exit 0 and `after` in both copies. */
-static void flags_case(unsigned int before, unsigned int after)
+/*
+ * Change the log sequence number of the mirror copy of the $MFTMirr record,
+ * so the copies differ and the mount rewrites the mirror from $MFT. The LSN
+ * is in the first sector, away from the update sequence tails.
+ */
+static void desync_mftmirr_copy(const char *image)
+{
+	unsigned char boot[512], lsn[8] = { 0x34, 0x12 };
+	unsigned int cluster, record;
+	signed char code;
+	int fd;
+
+	fd = open(image, O_RDWR);
+	require(fd >= 0 && pread(fd, boot, 512, 0) == 512, "read boot sector");
+	cluster = le16(boot + 11) * boot[13];
+	code = (signed char)boot[64];
+	record = code < 0 ? 1u << -code : (unsigned int)code * cluster;
+	require(pwrite(fd, lsn, 8, le64(boot + 56) * cluster +
+		       (unsigned long long)MFTMIRR_RECORD * record + 8) == 8,
+		"change $MFTMirr LSN");
+	close(fd);
+}
+
+static void flags_case_with(unsigned int before, unsigned int after,
+			    void (*damage)(const char *), int status)
 {
 	char image[PATH_MAX], *argv[] = { ntfsck, "-a", image, NULL };
 	unsigned int flags[2];
@@ -290,7 +315,10 @@ static void flags_case(unsigned int before, unsigned int after)
 	set_flags(image, before);
 	read_flags(image, flags);
 	require(flags[0] == before && flags[1] == before, "flags were not set");
-	check(run(argv) == 0, "expected exit status 0");
+	if (damage)
+		damage(image);
+	snprintf(what, sizeof(what), "expected exit status %d", status);
+	check(run(argv) == status, what);
 	read_flags(image, flags);
 	snprintf(what, sizeof(what), "$MFT copy: expected 0x%04x, found 0x%04x",
 		 after, flags[0]);
@@ -298,6 +326,11 @@ static void flags_case(unsigned int before, unsigned int after)
 	snprintf(what, sizeof(what), "$MFTMirr copy: expected 0x%04x, found 0x%04x",
 		 after, flags[1]);
 	check(flags[1] == after, what);
+}
+
+static void flags_case(unsigned int before, unsigned int after)
+{
+	flags_case_with(before, after, NULL, 0);
 }
 
 /* A dirty-only volume has no error or fix, so the exit status is 0. */
@@ -323,6 +356,17 @@ static void dirty_clear_keeps_bit_0200(void)
 	flags_case(VOLUME_IS_DIRTY | BIT_0080 | BIT_0200, BIT_0080 | BIT_0200);
 }
 
+/*
+ * A repair during mount: the volume is marked dirty on disk before the
+ * first repair write, and cleared at the end. Both writes keep the bits
+ * outside the mask.
+ */
+static void mount_repair_keeps_bits_0080_and_0200(void)
+{
+	flags_case_with(BIT_0080 | BIT_0200, BIT_0080 | BIT_0200,
+			desync_mftmirr_copy, 1);
+}
+
 static const struct {
 	const char *name;
 	void (*fn)(void);
@@ -331,6 +375,7 @@ static const struct {
 	{ "clean_volume_keeps_bit_0080", clean_volume_keeps_bit_0080 },
 	{ "clean_volume_keeps_bits_0100_and_0200", clean_volume_keeps_bits_0100_and_0200 },
 	{ "dirty_clear_keeps_bit_0200", dirty_clear_keeps_bit_0200 },
+	{ "mount_repair_keeps_bits_0080_and_0200", mount_repair_keeps_bits_0080_and_0200 },
 };
 
 int main(int argc, char **argv)

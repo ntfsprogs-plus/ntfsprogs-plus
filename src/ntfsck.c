@@ -7224,6 +7224,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 {
 	problem_code_t init_problem = PR_INDEX_INITIALIZE;
 	ntfs_attr *bmp_na = NULL;
+	s64 bmp_len = 0;
 	INDEX_ALLOCATION *ia;
 	INDEX_ENTRY *ie;
 	INDEX_HEADER *ih;
@@ -7271,32 +7272,41 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		}
 
 		/*
-		 * One bit per index block, so the bitmap of an index is a small part
-		 * of the volume. data_size comes from the disk and sizes the buffer
-		 * below: a value above the volume describes a file that is not there.
+		 * One bit per index block, and NTFS pads a bitmap to a multiple of
+		 * eight bytes. Only the bits of the blocks that $INDEX_ALLOCATION
+		 * holds are ever looked at, so read no more than those: data_size
+		 * comes from the disk and sizes the buffers below, and a value far
+		 * above what the allocation needs would ask for a bitmap as large as
+		 * the volume for a small index. A bitmap longer than that is read as
+		 * far as the allocation reaches, the rest has no blocks to describe.
 		 */
-		if (bmp_na->data_size < 0 ||
-				(u64)bmp_na->data_size > ntfsck_volume_size(vol)) {
-			ntfs_log_error("Index bitmap size (%"PRId64") does not fit "
-					"the volume; skipping the index of inode "
-					"%"PRIu64"\n", bmp_na->data_size, ni->mft_no);
+		if (bmp_na->data_size < 0 || ictx->ia_na->data_size < 0 ||
+				(u64)ictx->ia_na->data_size > ntfsck_volume_size(vol)) {
+			ntfs_log_error("Index sizes (bitmap %"PRId64", allocation "
+					"%"PRId64") do not fit the volume; skipping "
+					"the index of inode %"PRIu64"\n",
+					bmp_na->data_size, ictx->ia_na->data_size,
+					ni->mft_no);
 			goto out;
 		}
+		bmp_len = (((u64)ictx->ia_na->data_size / ictx->block_size + 63) /
+				64) * 8;
+		if (bmp_len > bmp_na->data_size)
+			bmp_len = bmp_na->data_size;
 
-		bmp_buf = ntfs_malloc(bmp_na->data_size);
+		bmp_buf = ntfs_malloc(bmp_len ? bmp_len : 1);
 		if (!bmp_buf) {
 			ntfs_log_error("Failed to allocate bitmap buffer\n");
 			goto out;
 		}
 
-		if (ntfs_attr_pread(bmp_na, 0, bmp_na->data_size, bmp_buf) !=
-				bmp_na->data_size) {
+		if (ntfs_attr_pread(bmp_na, 0, bmp_len, bmp_buf) != bmp_len) {
 			ntfs_log_perror("Failed to read $BITMAP");
 			goto out;
 		}
 
 		/* Needed by the sub-node bound checks in both walks below. */
-		max_ib_bits = bmp_na->data_size << NTFSCK_BYTE_TO_BITS;
+		max_ib_bits = bmp_len << NTFSCK_BYTE_TO_BITS;
 	}
 
 	/*
@@ -7624,7 +7634,7 @@ bad_root_subnode:
 		};
 		int order_ret = STATUS_OK;
 
-		ow.visited = ntfs_calloc(bmp_na->data_size);
+		ow.visited = ntfs_calloc(bmp_len ? bmp_len : 1);
 		/* Large enough for any key: key_length is 16 bits. */
 		ow.prev_key = ntfs_malloc(1 << 16);
 		if (ow.visited && ow.prev_key)

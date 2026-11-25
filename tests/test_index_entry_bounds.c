@@ -222,6 +222,36 @@ static void copy_file(const char *src, const char *dst)
 	close(out);
 }
 
+/*
+ * Byte-for-byte comparison, for the -n runs that must write nothing. The
+ * images are sparse, so read them through the file system rather than
+ * comparing apparent contents.
+ */
+static int files_differ(const char *a, const char *b)
+{
+	char ba[65536], bb[65536];
+	ssize_t na, nb;
+	int fa, fb, differ = 0;
+
+	fa = open(a, O_RDONLY);
+	fb = open(b, O_RDONLY);
+	require(fa >= 0 && fb >= 0, "open for comparison");
+	for (;;) {
+		na = read(fa, ba, sizeof(ba));
+		nb = read(fb, bb, sizeof(bb));
+		require(na >= 0 && nb >= 0, "read for comparison");
+		if (na != nb || (na > 0 && memcmp(ba, bb, (size_t)na))) {
+			differ = 1;
+			break;
+		}
+		if (!na)
+			break;
+	}
+	close(fa);
+	close(fb);
+	return differ;
+}
+
 static unsigned int le16(const unsigned char *p)
 {
 	return p[0] | p[1] << 8;
@@ -451,6 +481,8 @@ enum damage {
 	ROOT_ENTRY_LENGTH_ZERO,
 	ROOT_ENTRIES_OFFSET_BEYOND_ROOT,
 	ROOT_ENTRIES_OFFSET_MISALIGNED,
+	ROOT_ENTRIES_OFFSET_ZERO,
+	ROOT_ENTRIES_OFFSET_IN_HEADER,
 	ROOT_INDEX_BLOCK_SIZE_HUGE,
 	MFT_BITMAP_SIZE_HUGE,
 	BITMAP_SIZE_HUGE,
@@ -469,39 +501,47 @@ static const struct {
 	const char *what;
 	int status_n;	/* -n: damage found, nothing repaired */
 	int status_a;	/* -a: what the repair pass makes of it */
+	const char *marker;	/* -n: text only the bounded walk prints */
 } cases[] = {
 	{ "root_entry_length_beyond_root", ROOT_ENTRY_LENGTH_BEYOND_ROOT,
-	  "an entry whose length runs past the entry table", 4, 1 },
+	  "an entry whose length runs past the entry table", 4, 1, NULL },
 	{ "root_entry_length_zero", ROOT_ENTRY_LENGTH_ZERO,
-	  "an entry of length zero, which the walk cannot step over", 4, 1 },
+	  "an entry of length zero, which the walk cannot step over", 4, 1, NULL },
 	{ "root_entries_offset_beyond_root", ROOT_ENTRIES_OFFSET_BEYOND_ROOT,
-	  "an entries_offset past the entry table", 4, 1 },
+	  "an entries_offset past the entry table", 4, 1, NULL },
 	{ "root_entries_offset_misaligned", ROOT_ENTRIES_OFFSET_MISALIGNED,
-	  "an entries_offset that lands inside the first entry", 4, 1 },
+	  "an entries_offset that lands inside the first entry", 4, 1, NULL },
+	{ "root_entries_offset_zero", ROOT_ENTRIES_OFFSET_ZERO,
+	  "an entries_offset of zero, which puts the first entry on the header",
+	  4, 1, "Index root is corrupt in inode" },
+	{ "root_entries_offset_in_header", ROOT_ENTRIES_OFFSET_IN_HEADER,
+	  "an entries_offset inside the index header, which aliases its bytes",
+	  4, 1, "Index root is corrupt in inode" },
 	{ "root_index_block_size_huge", ROOT_INDEX_BLOCK_SIZE_HUGE,
-	  "an index_block_size the block buffers would be sized from", 4, 1 },
+	  "an index_block_size the block buffers would be sized from", 4, 1,
+	  "Index block size 1048576 is invalid." },
 	{ "mft_bitmap_size_huge", MFT_BITMAP_SIZE_HUGE,
-	  "a $MFT/$BITMAP size larger than the volume", 4, 4 },
+	  "a $MFT/$BITMAP size larger than the volume", 4, 4, NULL },
 	{ "bitmap_size_huge", BITMAP_SIZE_HUGE,
-	  "a $Bitmap size larger than the volume", 4, 4 },
+	  "a $Bitmap size larger than the volume", 4, 4, NULL },
 	{ "boot_sectors_beyond_ntfs_limit", BOOT_SECTORS_BEYOND_NTFS_LIMIT,
 	  "a boot sector describing more clusters than an NTFS volume can have",
-	  4, 4 },
+	  4, 4, NULL },
 	{ "mft_data_allocated_size_partial", MFT_DATA_ALLOCATED_SIZE_PARTIAL,
-	  "a $MFT/$DATA allocated_size half a cluster past its runs", 4, 1 },
+	  "a $MFT/$DATA allocated_size half a cluster past its runs", 4, 1, NULL },
 	{ "mft_bitmap_type_data", MFT_BITMAP_TYPE_DATA,
-	  "a second $MFT/$DATA extent overlapping the first", 4, 1 },
+	  "a second $MFT/$DATA extent overlapping the first", 4, 1, NULL },
 	{ "root_index_header_beyond_record", ROOT_INDEX_HEADER_BEYOND_RECORD,
 	  "an index root entry table gigabytes past the record, read by the "
-	  "hiberfil.sys lookup at mount", 4, 1 },
+	  "hiberfil.sys lookup at mount", 4, 1, NULL },
 	{ "record_attrs_offset_at_end", RECORD_ATTRS_OFFSET_AT_END,
-	  "an attrs_offset equal to the record size", 4, 4 },
+	  "an attrs_offset equal to the record size", 4, 4, NULL },
 	{ "attr_name_offset_beyond_record", ATTR_NAME_OFFSET_BEYOND_RECORD,
-	  "a resident attribute name_offset of 0xffff", 4, 4 },
+	  "a resident attribute name_offset of 0xffff", 4, 4, NULL },
 	{ "extend_entry_key_length_beyond_entry",
 	  EXTEND_ENTRY_KEY_LENGTH_BEYOND_ENTRY,
 	  "an entry of a missing inode whose key_length runs past the entry",
-	  4, 1 },
+	  4, 1, NULL },
 };
 
 /*
@@ -536,9 +576,19 @@ static void damage(const struct layout *L, enum damage kind, off_t *off,
 		put32(bytes, L->root_entries_offset + 4);
 		*len = 4;
 		break;
+	case ROOT_ENTRIES_OFFSET_ZERO:
+		*off = L->root_value + IROOT_INDEX + IH_ENTRIES_OFFSET;
+		*len = 4;
+		break;
+	case ROOT_ENTRIES_OFFSET_IN_HEADER:
+		*off = L->root_value + IROOT_INDEX + IH_ENTRIES_OFFSET;
+		put32(bytes, 8);
+		*len = 4;
+		break;
 	case ROOT_INDEX_BLOCK_SIZE_HUGE:
+		/* A power of two above NTFS_MAX_INDEX_BLOCK_SIZE (64 KiB). */
 		*off = L->root_value + 8;
-		put32(bytes, 0xff001000);
+		put32(bytes, 0x00100000);
 		*len = 4;
 		break;
 	case MFT_BITMAP_SIZE_HUGE:
@@ -618,7 +668,8 @@ static void damage(const struct layout *L, enum damage kind, off_t *off,
 }
 
 static void run_case(const struct layout *L, const char *name, enum damage
-		kind, const char *what, int expected_n, int expected_a)
+		kind, const char *what, int expected_n, int expected_a,
+		const char *marker)
 {
 	/*
 	 * -a runs with -f: damage to the root directory's index also hides
@@ -626,7 +677,7 @@ static void run_case(const struct layout *L, const char *name, enum damage
 	 * cannot verify only when forced.
 	 */
 	static const char *modes[] = { "-n", "-a" };
-	char image[PATH_MAX], what_[256];
+	char image[PATH_MAX], damaged[PATH_MAX], what_[256];
 	unsigned char bytes[16];
 	off_t off;
 	size_t len;
@@ -647,8 +698,16 @@ static void run_case(const struct layout *L, const char *name, enum damage
 		require(fd >= 0 && pwrite(fd, bytes, len, off) == (ssize_t)len,
 			"apply damage");
 		close(fd);
+		path_in(damaged, work, "damaged.img");
+		copy_file(image, damaged);
 
 		status = run(argv);
+		/* A read-only scan must leave every byte as it was. */
+		if (i == 0) {
+			snprintf(what_, sizeof(what_), "%s, -n: the image was "
+				 "modified by the read-only scan", what);
+			check(files_differ(image, damaged) == 0, what_);
+		}
 		snprintf(what_, sizeof(what_), "%s, %s: expected exit status "
 			 "%d, got %d", what, modes[i],
 			 i ? expected_a : expected_n, status);
@@ -656,6 +715,11 @@ static void run_case(const struct layout *L, const char *name, enum damage
 		snprintf(what_, sizeof(what_), "%s, %s: died from signal %d",
 			 what, modes[i], status - 128);
 		check(status < 128, what_);
+		if (i == 0 && marker) {
+			snprintf(what_, sizeof(what_), "%s, -n: missing \"%s\"",
+				 what, marker);
+			check(strstr(output, marker) != NULL, what_);
+		}
 		check(!strstr(output, "AddressSanitizer") &&
 		      !strstr(output, "runtime error"),
 		      "a memory error was reported");
@@ -730,7 +794,7 @@ int main(int argc, char **argv)
 
 	for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
 		run_case(&L, cases[i].name, cases[i].kind, cases[i].what,
-			 cases[i].status_n, cases[i].status_a);
+			 cases[i].status_n, cases[i].status_a, cases[i].marker);
 
 	printf("%d of %zu cases passed\n", passes, sizeof(cases) / sizeof(cases[0]));
 	return failures ? 1 : 0;

@@ -1230,6 +1230,27 @@ int ntfs_readdir(ntfs_inode *dir_ni, s64 *pos,
 		goto skip_index_root;
 	}
 
+	/*
+	 * entries_offset and index_length come from the disk, and this path
+	 * runs before the index checks (the $Deleted cleanup at mount walks
+	 * the directory with them). Unbounded, index_end and the first entry
+	 * land outside the MFT record and the walk below reads there. The
+	 * entry table must start at or past the header and lie inside the
+	 * root's value, which the attribute check keeps inside the record.
+	 */
+	if (le32_to_cpu(ctx->attr->value_length) < sizeof(INDEX_ROOT) ||
+			le32_to_cpu(ir->index.index_length) >
+			le32_to_cpu(ctx->attr->value_length) -
+			offsetof(INDEX_ROOT, index) ||
+			le32_to_cpu(ir->index.entries_offset) <
+			sizeof(INDEX_HEADER) ||
+			le32_to_cpu(ir->index.entries_offset) >
+			le32_to_cpu(ir->index.index_length)) {
+		ntfs_log_error("Index root is corrupt in inode %lld\n",
+				(unsigned long long)dir_ni->mft_no);
+		goto dir_err_out;
+	}
+
 	index_end = (u8*)&ir->index + le32_to_cpu(ir->index.index_length);
 	/* The first index entry. */
 	ie = (INDEX_ENTRY*)((u8*)&ir->index +

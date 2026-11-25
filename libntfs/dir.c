@@ -291,6 +291,8 @@ INDEX_ENTRY * __ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
 			le32_to_cpu(ir->index.index_length) >
 			le32_to_cpu(ctx->attr->value_length) -
 			offsetof(INDEX_ROOT, index) ||
+			le32_to_cpu(ir->index.entries_offset) <
+			sizeof(INDEX_HEADER) ||
 			le32_to_cpu(ir->index.entries_offset) >
 			le32_to_cpu(ir->index.index_length)) {
 		ntfs_log_error("Index root is corrupt in inode %lld\n",
